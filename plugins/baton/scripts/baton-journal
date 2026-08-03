@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Allocate the next journal id and path.
+# Both the agent and baton-lock (for takeover entries) need this number;
+# duplicating the logic is how two copies of it drift apart.
+set -euo pipefail
+
+[ $# -eq 1 ] || { echo "usage: baton-journal <slug>" >&2; exit 64; }
+slug="$1"
+
+if [ -z "$slug" ] || printf '%s' "$slug" | grep -q '[^a-z0-9-]'; then
+    echo "baton-journal: slug must be lowercase letters, digits and dashes" >&2
+    exit 64
+fi
+
+dir="docs/baton/journal"
+last=0
+for f in "$dir"/[0-9][0-9][0-9][0-9]-*.md; do
+    [ -e "$f" ] || continue
+    n="$(basename "$f" | cut -c1-4)"
+    n=$((10#$n))
+    if [ "$n" -gt "$last" ]; then
+        last="$n"
+    fi
+done
+
+next=$((last + 1))
+printf 'id=DEC-%04d\n' "$next"
+printf 'path=%s/%04d-%s.md\n' "$dir" "$next" "$slug"
