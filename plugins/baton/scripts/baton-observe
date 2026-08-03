@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Print repository facts as key=value, or list files changed since a SHA.
+# Knows nothing about any particular project: git only.
+set -euo pipefail
+
+usage() {
+    echo "usage: baton-observe [--changed-since <SHA>]" >&2
+    exit 64
+}
+
+changed_since=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --changed-since)
+            [ $# -ge 2 ] || usage
+            changed_since="$2"
+            shift 2
+            ;;
+        -h|--help) usage ;;
+        *) usage ;;
+    esac
+done
+
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    echo "baton-observe: not a git repository" >&2
+    exit 1
+fi
+
+if [ -n "$changed_since" ]; then
+    git diff --name-only "$changed_since"
+    exit 0
+fi
+
+if git rev-parse --verify -q HEAD >/dev/null 2>&1; then
+    sha="$(git rev-parse HEAD)"
+    short_sha="$(git rev-parse --short HEAD)"
+else
+    sha=""
+    short_sha=""
+fi
+
+branch="$(git symbolic-ref --short -q HEAD || echo '(detached)')"
+dirty_count="$(git status --porcelain | wc -l | tr -d ' ')"
+
+if [ "$dirty_count" = "0" ]; then
+    tree_clean=true
+else
+    tree_clean=false
+fi
+
+printf 'sha=%s\n' "$sha"
+printf 'short_sha=%s\n' "$short_sha"
+printf 'branch=%s\n' "$branch"
+printf 'tree_clean=%s\n' "$tree_clean"
+printf 'dirty_count=%s\n' "$dirty_count"
