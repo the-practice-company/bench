@@ -65,4 +65,85 @@ state_before="$(cat docs/baton/state.md)"
 assert_equals "$(cat docs/baton/state.md)" "$state_before" \
     "pre-compact never writes state.md - the lock holder is the only writer"
 
+# --- pre-compact resolves paths against the git top level, not the caller's
+# cwd. CLAUDE_PROJECT_DIR unset with cwd inside a subdirectory used to make
+# pre-compact find no docs/baton and silently record nothing - the same
+# class of bug baton-lock, baton-write and baton-journal were fixed for. ---
+rm -f .baton/precompact-facts
+mkdir -p src
+(
+    cd src
+    unset CLAUDE_PROJECT_DIR
+    "$HOOKS/pre-compact" < /dev/null >/dev/null 2>/dev/null
+)
+assert_file_exists ".baton/precompact-facts" \
+    "pre-compact invoked from a subdirectory still resolves to the repository root"
+if [ -e "src/.baton" ]; then
+    fail "pre-compact invoked from a subdirectory must not write facts under that subdirectory"
+else
+    pass "pre-compact invoked from a subdirectory must not write facts under that subdirectory"
+fi
+rm -rf src
+
+# --- the warning must not cry wolf ---
+# .baton/ is machine state, entirely gitignored by design (see the spec) -
+# do that here too so the lock/facts files this test already produced don't
+# themselves make the tree look dirty below.
+echo ".baton/" >> .gitignore
+
+# A committed file cannot state the hash of the commit that carries it - a
+# commit's hash is computed from its own content, so it cannot also declare
+# it. To build a fixture where observed_sha genuinely equals the current
+# HEAD with a clean tree, state.md has to sit outside the commit that would
+# otherwise have to predict its own hash. It was never committed in this
+# fixture (only written to the working tree above), so ignoring it here
+# does that without faking anything: the file lives in the working tree,
+# doesn't move HEAD, and doesn't count as dirty.
+echo "docs/baton/state.md" >> .gitignore
+git add .gitignore
+git commit -q -m "test fixture: gitignore machine state and state.md"
+head_now="$(git rev-parse HEAD)"
+cat > docs/baton/state.md <<EOF
+---
+schema: baton/state/v1
+observed_sha: ${head_now}
+suspect: false
+needs_human: false
+---
+
+# State
+
+**Goal:** ship the widget pipeline
+**Operating mode:** orchestrator; delegates implementation to subagents
+**Non-negotiables:** never modify the billing schema
+
+## Now
+- **Next action:** run npm test -- widget.spec.ts and fix the failing assertion
+EOF
+
+stderr_current="$( { "$HOOKS/pre-compact" < /dev/null >/dev/null; } 2>&1 )"
+assert_equals "$stderr_current" "" \
+    "pre-compact stays silent when observed_sha matches HEAD and the tree is clean"
+assert_file_exists ".baton/precompact-facts" \
+    "pre-compact still writes facts even when the checkpoint is current"
+
+echo "more work landed" > later-work.txt
+git add later-work.txt
+git commit -q -m "more work landed after the checkpoint"
+
+stderr_behind="$( { "$HOOKS/pre-compact" < /dev/null >/dev/null; } 2>&1 )"
+if [ -n "$stderr_behind" ]; then
+    pass "pre-compact warns when observed_sha is behind HEAD"
+else
+    fail "pre-compact warns when observed_sha is behind HEAD"
+fi
+assert_contains "$stderr_behind" "$head_now" \
+    "the warning names the stale observed_sha, not just that something diverged"
+
+# --- control characters in state.md must not break the emitted JSON ---
+printf -- '---\nschema: baton/state/v1\n---\n**Goal:** bell\x07here esc\x1bhere\n**Operating mode:** orchestrator\n**Non-negotiables:** none\n## Now\n- **Next action:** go\n' > docs/baton/state.md
+"$HOOKS/session-start" < /dev/null > ctrl-char-output.json
+assert_valid_json "ctrl-char-output.json" \
+    "session-start's output still parses as JSON when state.md contains a raw control character"
+
 finish

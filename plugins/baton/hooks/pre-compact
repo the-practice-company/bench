@@ -10,6 +10,21 @@ set -euo pipefail
 project="${CLAUDE_PROJECT_DIR:-$PWD}"
 cd "$project" 2>/dev/null || exit 0
 
+# CLAUDE_PROJECT_DIR is wherever the session started, not necessarily the
+# git top level -- a monorepo session can start in a subdirectory just as
+# easily as at the root. baton-lock, baton-write and baton-journal all had
+# to re-resolve to the repository root for exactly this reason (see their
+# comments): a hook invoked from a subdirectory would otherwise find no
+# docs/baton, exit as a no-op, and record nothing -- the exact bug that
+# once put two sessions in a lock landed in a subdirectory, each believing
+# it held it. A baton run is always a git run, so anything that is not
+# inside a repository at all genuinely is not our concern.
+if git rev-parse --show-toplevel >/dev/null 2>&1; then
+    cd "$(git rev-parse --show-toplevel)"
+else
+    exit 0
+fi
+
 [ -d docs/baton ] || exit 0
 
 plugin_root="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
@@ -18,11 +33,39 @@ observe="$plugin_root/scripts/baton-observe"
 
 mkdir -p .baton
 tmp=".baton/.precompact-facts.tmp.$$"
-{
+facts="$(
     printf 'recorded_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     "$observe" 2>/dev/null || true
-} > "$tmp"
+)"
+printf '%s\n' "$facts" > "$tmp"
 mv "$tmp" .baton/precompact-facts
 
-echo "baton: context is about to be compacted and no checkpoint was recorded for it. Facts saved to .baton/precompact-facts; run /baton:checkpoint before compacting if you can." >&2
+# Warn only when the warning is true. Printing "no checkpoint was recorded"
+# on every single compaction, whether or not one actually happened, teaches
+# the agent to ignore it -- and it will ignore it on the one compaction
+# where it mattered. The facts just written already carry the current SHA
+# and tree_clean; state.md carries what the last checkpoint observed.
+# Comparing them costs nothing extra and lets the warning say only what is
+# actually true.
+current_sha="$(printf '%s\n' "$facts" | sed -n 's/^sha=//p')"
+tree_clean="$(printf '%s\n' "$facts" | sed -n 's/^tree_clean=//p')"
+
+state="docs/baton/state.md"
+observed_sha=""
+if [ -f "$state" ]; then
+    # Restrict the search to the frontmatter block so a stray mention of
+    # "observed_sha" in prose further down can't be mistaken for the field.
+    observed_sha="$(sed -n '/^---$/,/^---$/p' "$state" | sed -n 's/^observed_sha: *//p' | head -1)"
+fi
+
+if [ -z "$observed_sha" ]; then
+    echo "baton: cannot tell whether the checkpoint is current - docs/baton/state.md has no readable observed_sha. Facts saved to .baton/precompact-facts." >&2
+elif [ "$observed_sha" != "$current_sha" ]; then
+    echo "baton: checkpoint is behind - state.md's observed_sha ($observed_sha) is not the repository's current HEAD ($current_sha). Facts saved to .baton/precompact-facts; run /baton:checkpoint before compacting if you can." >&2
+elif [ "$tree_clean" != "true" ]; then
+    echo "baton: checkpoint is behind - observed_sha matches HEAD, but the working tree has uncommitted changes since then. Facts saved to .baton/precompact-facts; run /baton:checkpoint before compacting if you can." >&2
+fi
+# else: observed_sha matches HEAD and the tree is clean -- the checkpoint
+# is current. Say nothing.
+
 exit 0
