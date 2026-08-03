@@ -1,26 +1,42 @@
 #!/usr/bin/env bash
 # Write stdin to a path atomically, then commit it.
 #
-# If the only difference from the committed version is the updated_at line,
-# nothing is written at all. Writing it and skipping the commit would leave
-# state dirty in the working tree - that is, outside the log - which is the
-# one thing the recoverability invariant forbids.
+# If the only difference from the committed version is the updated_at line
+# AND the working tree already matches HEAD, nothing is written at all.
+# Writing it and skipping the commit would leave state dirty in the working
+# tree - that is, outside the log - which is the one thing the
+# recoverability invariant forbids. The same invariant is why a failed
+# commit must never leave a renamed-but-uncommitted file behind: mid-merge
+# and mid-rebase are refused before anything is touched, and any other
+# commit failure (a rejecting hook, a missing identity, disk full) rolls
+# the tree back to exactly what it looked like before this run.
+#
+# Exit codes:
+#   0   success, including a declined idle write
+#   1   not a git repository
+#   3   refused before touching anything: mid-merge, mid-rebase, or empty
+#       stdin over existing non-empty committed content
+#   5   the commit failed after the file was written; the tree has been
+#       rolled back to its state before this run
+#   64  usage error
 set -euo pipefail
+
+usage() { echo "usage: baton-write [-m <msg>] <path>" >&2; exit 64; }
 
 message=""
 while [ $# -gt 0 ]; do
     case "$1" in
         -m|--message)
-            [ $# -ge 2 ] || { echo "usage: baton-write [-m <msg>] <path>" >&2; exit 64; }
+            [ $# -ge 2 ] || usage
             message="$2"
             shift 2
             ;;
-        -h|--help) echo "usage: baton-write [-m <msg>] <path>" >&2; exit 64 ;;
+        -h|--help) usage ;;
         *) break ;;
     esac
 done
 
-[ $# -eq 1 ] || { echo "usage: baton-write [-m <msg>] <path>" >&2; exit 64; }
+[ $# -eq 1 ] || usage
 target="$1"
 [ -n "$message" ] || message="baton: update $(basename "$target")"
 
@@ -29,32 +45,97 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
     exit 1
 fi
 
+# Refuse up front, before anything is touched: a partial commit of just
+# "$target" -- which is what this script always does -- is impossible
+# mid-merge or mid-rebase. Catching it here means there is nothing to roll
+# back for this particular failure: nothing has been renamed or staged yet.
+merge_head="$(git rev-parse --git-path MERGE_HEAD)"
+rebase_merge_dir="$(git rev-parse --git-path rebase-merge)"
+rebase_apply_dir="$(git rev-parse --git-path rebase-apply)"
+if [ -f "$merge_head" ]; then
+    echo "baton-write: refusing to write: an unresolved merge is in progress" >&2
+    exit 3
+fi
+if [ -d "$rebase_merge_dir" ] || [ -d "$rebase_apply_dir" ]; then
+    echo "baton-write: refusing to write: an unresolved rebase is in progress" >&2
+    exit 3
+fi
+
 dir="$(dirname "$target")"
 base="$(basename "$target")"
 mkdir -p "$dir"
 
 tmp="$dir/.$base.tmp.$$"
 head_copy="$dir/.$base.head.$$"
+# Invoked indirectly, via the trap below.
+# shellcheck disable=SC2329
 cleanup() { rm -f "$tmp" "$head_copy"; }
 trap cleanup EXIT
 
 cat > "$tmp"
 
+# Assumes updated_at: appears exactly once, in the frontmatter, per the
+# state.md schema. If the format ever grows a section that could echo that
+# literal prefix elsewhere in the file, this comparison would strip more
+# than intended -- not currently possible under the schema as specified.
 strip_timestamp() {
     grep -v '^updated_at:' "$1" || true
 }
 
+target_in_head=0
 if git cat-file -e "HEAD:$target" 2>/dev/null; then
+    target_in_head=1
     git show "HEAD:$target" > "$head_copy"
-    if diff -q <(strip_timestamp "$tmp") <(strip_timestamp "$head_copy") >/dev/null 2>&1; then
+fi
+
+# Refuse rather than silently erase: empty stdin over a path that already
+# holds real committed content is almost certainly a caller bug (a failed
+# command substitution, say), not an intentional wipe. A path with no
+# committed version yet has nothing to lose, so empty content there still
+# proceeds normally.
+if [ ! -s "$tmp" ] && [ "$target_in_head" -eq 1 ] && [ -s "$head_copy" ]; then
+    echo "baton-write: refusing to write empty content over existing committed state at $target" >&2
+    exit 3
+fi
+
+# The idle short-circuit only fires when the working tree already matches
+# HEAD. If it does not, some uncommitted edit is sitting there -- real
+# state that has not reached the log -- and it must land in the log even
+# though the incoming content itself differs from HEAD by nothing but the
+# timestamp. Falling through to a normal commit picks up that edit too.
+if [ "$target_in_head" -eq 1 ]; then
+    tree_matches_head=0
+    if [ -f "$target" ] && diff -q "$target" "$head_copy" >/dev/null 2>&1; then
+        tree_matches_head=1
+    fi
+
+    if [ "$tree_matches_head" -eq 1 ] \
+        && diff -q <(strip_timestamp "$tmp") <(strip_timestamp "$head_copy") >/dev/null 2>&1; then
         exit 0
     fi
 fi
 
-sync
+# Atomic within one filesystem because $tmp lives in $target's own
+# directory, so the rename below is what makes this atomic -- not sync.
+# Do not add a sync call here: it would flush every mounted filesystem on
+# the machine, and it buys no consistency for the git objects written
+# moments later, which this script does not fsync either.
 mv "$tmp" "$target"
-trap - EXIT
-rm -f "$head_copy"
-
 git add -- "$target"
-git commit -q -m "$message" -- "$target"
+
+if git commit -q -m "$message" -- "$target"; then
+    exit 0
+fi
+
+# The commit failed after the file was already renamed and staged. Put the
+# tree back exactly as found rather than leave a renamed-but-uncommitted
+# file behind -- a silent half-write is the one outcome this script must
+# never produce.
+if [ "$target_in_head" -eq 1 ]; then
+    git checkout -q HEAD -- "$target"
+else
+    git reset -q -- "$target"
+    rm -f "$target"
+fi
+echo "baton-write: commit failed; the tree was restored to its previous state" >&2
+exit 5
