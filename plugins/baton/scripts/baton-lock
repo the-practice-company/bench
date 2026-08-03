@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# Hold, inspect, release or take over the baton writer role.
+# The role is held for the whole session, not per write: two sessions taking
+# turns to write would remove the race but not the divergence.
+set -euo pipefail
+
+STALE_SECONDS=21600   # six hours
+
+LOCK_DIR=".baton"
+LOCK_FILE="$LOCK_DIR/lock"
+
+usage() {
+    echo "usage: baton-lock {acquire|check|release} <session-id>" >&2
+    exit 64
+}
+
+[ $# -eq 2 ] || usage
+cmd="$1"
+session="$2"
+
+read_field() {
+    sed -n "s/^$1=//p" "$LOCK_FILE" 2>/dev/null | head -1
+}
+
+# Prints one of: none | ours | live | stale
+lock_state() {
+    if [ ! -f "$LOCK_FILE" ]; then
+        echo none
+        return
+    fi
+
+    local owner pid acquired now
+    owner="$(read_field session)"
+    if [ "$owner" = "$session" ]; then
+        echo ours
+        return
+    fi
+
+    acquired="$(read_field acquired_epoch)"
+    now="$(date -u +%s)"
+    if [ -n "$acquired" ] && [ "$((now - acquired))" -ge "$STALE_SECONDS" ]; then
+        echo stale
+        return
+    fi
+
+    pid="$(read_field pid)"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        echo live
+    else
+        echo stale
+    fi
+}
+
+write_lock() {
+    mkdir -p "$LOCK_DIR"
+    local tmp="$LOCK_DIR/.lock.tmp.$$"
+    {
+        printf 'session=%s\n' "$session"
+        printf 'pid=%s\n' "$PPID"
+        printf 'acquired=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        printf 'acquired_epoch=%s\n' "$(date -u +%s)"
+    } > "$tmp"
+    mv "$tmp" "$LOCK_FILE"
+}
+
+state="$(lock_state)"
+
+case "$cmd" in
+    acquire)
+        case "$state" in
+            none|ours)
+                write_lock
+                ;;
+            stale)
+                previous="$(read_field session)"
+                write_lock
+                printf 'takeover=%s\n' "$previous"
+                ;;
+            live)
+                echo "baton-lock: held by live session $(read_field session)" >&2
+                exit 3
+                ;;
+        esac
+        ;;
+    check)
+        case "$state" in
+            ours)  exit 0 ;;
+            live)  exit 3 ;;
+            stale) exit 4 ;;
+            none)  exit 5 ;;
+        esac
+        ;;
+    release)
+        case "$state" in
+            ours) rm -f "$LOCK_FILE" ;;
+            none) : ;;
+            *)
+                echo "baton-lock: refusing to release a lock we do not hold" >&2
+                exit 3
+                ;;
+        esac
+        ;;
+    *) usage ;;
+esac
