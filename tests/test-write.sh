@@ -36,6 +36,38 @@ assert_contains "$(cat docs/baton/state.md)" "Current wave: 2" "a real change la
 assert_equals "$(git status --porcelain docs/baton | wc -l | tr -d ' ')" "0" \
     "docs/baton is clean after a real change too"
 
+# --- the fallback commit message (-m omitted) has never once run under
+# test: every call above passes -m explicitly. baton-write falls back to
+# `message="baton: update $(basename "$target")"` -- exercise it directly,
+# including through a target whose basename holds characters that would
+# matter if this were built by anything less careful than plain variable
+# expansion: a space, and a double quote. ---
+default_msg_commits_before="$(git rev-list --count HEAD)"
+printf 'updated_at: 2026-08-03T18:00:00Z\nno -m given\n' \
+    | "$WRITE" docs/baton/default-message-target.md
+
+assert_equals "$(git rev-list --count HEAD)" "$((default_msg_commits_before + 1))" \
+    "a write without -m still creates a commit"
+assert_equals "$(git log -1 --pretty=%s)" "baton: update default-message-target.md" \
+    "the fallback commit message is baton: update <basename>, exercised for the first time here"
+
+# A basename with a space: the fallback message must carry it through
+# whole, not split it into separate words somewhere along the way.
+printf 'updated_at: 2026-08-03T18:05:00Z\nspace in basename\n' \
+    | "$WRITE" "docs/baton/has space.md"
+assert_equals "$(git log -1 --pretty=%s)" "baton: update has space.md" \
+    "the fallback message preserves a basename containing a space"
+
+# A basename with a double quote: $(basename "$target") lands inside
+# message="baton: update $(...)" through plain variable expansion, never
+# eval or re-parsed as shell -- a literal quote in the byte stream must
+# stay a literal quote in the commit subject, not get shell-interpreted or
+# silently dropped.
+printf 'updated_at: 2026-08-03T18:10:00Z\nquote in basename\n' \
+    | "$WRITE" "docs/baton/weird\"name.md"
+assert_equals "$(git log -1 --pretty=%s)" 'baton: update weird"name.md' \
+    "the fallback message preserves a basename containing a double quote"
+
 # --- refuses before touching anything: mid-merge ---
 git checkout -qb merge-feature
 echo "feature" > conflict.txt
