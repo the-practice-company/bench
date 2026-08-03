@@ -102,7 +102,7 @@ runs it automatically.
 ## Requirements
 
 `git`, `bash`, and the standard Unix text tools that ship with any Linux or
-macOS install — `grep`, `sed`, `head`, `tr`, `find`, `sort`, `dirname`,
+macOS install — `grep`, `sed`, `head`, `tr`, `sort`, `dirname`,
 `basename`, `date`, `wc`. No language runtime, no package manager, no
 server. (`python3` is used by the test suite only; it never runs as part of
 the plugin itself.)
