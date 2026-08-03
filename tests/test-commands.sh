@@ -17,9 +17,14 @@ assert_contains "$init" "ratif" "init ends by asking the human to ratify"
 
 checkpoint="$(cat "$CMD/checkpoint.md")"
 assert_contains "$checkpoint" "baton-checkpoint" "checkpoint command defers to the skill"
+assert_contains "$checkpoint" "does not exist" "checkpoint covers the not-a-baton-run case"
+assert_contains "$checkpoint" "ratified" "checkpoint covers the not-yet-ratified case"
 
 status="$(cat "$CMD/status.md")"
 assert_contains "$status" "needs_human" "status surfaces a stopped run first"
 assert_contains "$status" "needs_review" "status surfaces decisions awaiting review"
+assert_contains "$status" "does not exist" "status covers the not-a-baton-run case"
+assert_contains "$status" "docs/baton/journal/" "status names the journal directory"
+assert_contains "$status" "CLAUDE_PLUGIN_ROOT" "status invokes baton-observe via the plugin root"
 
 finish
