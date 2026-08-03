@@ -154,6 +154,50 @@ assert_equals "$(wc -c < docs/baton/never-existed.md | tr -d ' ')" "0" \
 assert_equals "$(git status --porcelain docs/baton | wc -l | tr -d ' ')" "0" \
     "docs/baton is clean after the empty-but-new write"
 
+# --- whitespace-only stdin is refused exactly like empty stdin, over
+# existing committed content: `[ ! -s "$tmp" ]` (the old guard) only ever
+# caught a strictly zero-byte file, so a single newline -- the shape a
+# failed command substitution piped through `printf '%s\n'` actually
+# produces -- sailed straight past it. Reproduced: a full state.md replaced
+# by one blank line, exit 0, committed as an ordinary checkpoint. ---
+whitespace_commits_before="$(git rev-list --count HEAD)"
+before_state_content_ws="$(cat docs/baton/state.md)"
+
+set +e
+newline_stderr="$(printf '\n' | "$WRITE" -m "oops one blank line" docs/baton/state.md 2>&1 >/dev/null)"
+newline_rc=$?
+set -e
+
+assert_equals "$newline_rc" "3" "a single newline over existing committed content is refused like empty stdin"
+assert_contains "$newline_stderr" "docs/baton/state.md" "the whitespace-only refusal names the path"
+assert_equals "$(git rev-list --count HEAD)" "$whitespace_commits_before" \
+    "the refused single-newline write creates no commit"
+assert_equals "$(cat docs/baton/state.md)" "$before_state_content_ws" \
+    "the refused single-newline write leaves the committed content untouched"
+
+set +e
+printf '   \t  \t\n   \n\t\n' | "$WRITE" -m "oops spaces and tabs" docs/baton/state.md
+spaces_tabs_rc=$?
+set -e
+
+assert_equals "$spaces_tabs_rc" "3" "spaces and tabs alone over existing committed content are refused like empty stdin"
+assert_equals "$(git rev-list --count HEAD)" "$whitespace_commits_before" \
+    "the refused spaces-and-tabs write creates no commit"
+assert_equals "$(cat docs/baton/state.md)" "$before_state_content_ws" \
+    "the refused spaces-and-tabs write leaves the committed content untouched"
+
+# --- whitespace-only stdin is still fine for a path with no committed
+# version, same as strictly-empty stdin already is above ---
+set +e
+printf '\n' | "$WRITE" -m "whitespace but new" docs/baton/never-existed-ws.md
+whitespace_new_rc=$?
+set -e
+
+assert_equals "$whitespace_new_rc" "0" "whitespace-only stdin succeeds for a path absent from HEAD"
+assert_file_exists "docs/baton/never-existed-ws.md" "the whitespace-only file is created"
+assert_equals "$(cat docs/baton/never-existed-ws.md)" "" \
+    "the created file holds only the whitespace it was given"
+
 # --- refuses a gitignored target before writing anything ---
 echo "docs/baton/ignored.md" > .gitignore
 git add .gitignore

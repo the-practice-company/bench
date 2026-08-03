@@ -19,7 +19,8 @@
 #       git will not track (ignored, or outside the repository),
 #       docs/baton/constitution.md (the agent never writes the
 #       constitution -- see below), docs/baton/state.md over the 60-line
-#       cap, or empty stdin over existing non-empty committed content
+#       cap, or empty-or-whitespace-only stdin over existing non-empty
+#       committed content
 #   5   a git mutation failed after the file was written; the tree has
 #       been rolled back to its state before this run, or the commit
 #       landed but does not contain what this run wrote (see below)
@@ -251,15 +252,29 @@ if git cat-file -e "HEAD:$target" 2>/dev/null; then
     target_in_head=1
 fi
 
-# Refuse rather than silently erase: empty stdin over a path that already
-# holds real committed content is almost certainly a caller bug (a failed
-# command substitution, say), not an intentional wipe. A path with no
-# committed version yet has nothing to lose, so empty content there still
+# True if $1 has no non-whitespace byte at all. `[ ! -s "$tmp" ]` (the old
+# guard) only ever catches a strictly zero-byte file, so a single newline --
+# or any other run of spaces, tabs and newlines -- sailed straight past it:
+# reproduced with a full state.md replaced by one blank line, exit 0,
+# committed as an ordinary checkpoint. A single blank line is exactly the
+# shape a failed command substitution or an accidentally-empty heredoc
+# tends to produce (`printf '%s\n' "$maybe_unset_var"`, say), which is the
+# same caller-bug this guard exists to catch -- it just wasn't literally
+# zero bytes. `grep -q '[^[:space:]]'` looks for any single character that
+# is not whitespace; failing to find one is what "whitespace-only" means.
+is_whitespace_only() {
+    ! grep -q '[^[:space:]]' "$1" 2>/dev/null
+}
+
+# Refuse rather than silently erase: empty-or-whitespace-only stdin over a
+# path that already holds real committed content is almost certainly a
+# caller bug, not an intentional wipe. A path with no committed version yet
+# has nothing to lose, so empty-or-whitespace-only content there still
 # proceeds normally.
-if [ ! -s "$tmp" ] && [ "$target_in_head" -eq 1 ]; then
+if is_whitespace_only "$tmp" && [ "$target_in_head" -eq 1 ]; then
     head_size="$(git cat-file -s "HEAD:$target")"
     if [ "$head_size" -gt 0 ]; then
-        echo "baton-write: refusing to write empty content over existing committed state at $target" >&2
+        echo "baton-write: refusing to write empty-or-whitespace-only content over existing committed state at $target" >&2
         exit 3
     fi
 fi
