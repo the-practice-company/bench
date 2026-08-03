@@ -107,8 +107,10 @@ These thoughts mean stop — you are rationalising.
 
 ## Related skills
 
+- **baton-resume** — runs first, on a fresh or just-compacted session. This
+  skill is the model it applies once state is restored, not a step that
+  precedes it.
 - **baton-checkpoint** — persist before compaction or at the end of a stretch
-- **baton-resume** — recover after a context reset
 - **superpowers:brainstorming** — writes the per-wave spec
 - **superpowers:writing-plans** — writes the per-wave plan
 - **superpowers:subagent-driven-development** — executes the wave

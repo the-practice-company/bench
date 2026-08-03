@@ -9,27 +9,36 @@ Recover the run. Nothing else happens until this finishes.
 
 **Announce at start:** "Restoring baton state before doing anything else."
 
-Reading twice is safe. Nothing is written here except repairs to observed
-fields, so if you are unsure whether you already resumed, resume again.
+Running this twice is safe, but that no longer means nothing is written.
+Repairing observed fields is a write; raising `suspect` when this run finds a
+divergence is a write too, and both go through `baton-write` under the lease.
+What makes a second run safe is that it is idempotent: run it again after
+nothing has changed and `baton-write` has nothing new to commit, same as
+`baton-checkpoint`'s idle case. If you are unsure whether you already
+resumed, resume again — it will not double-write anything.
 
 ## The Process
 
 ```dot
 digraph resume {
     "Read constitution.md and state.md" [shape=box];
-    "baton-observe and compare" [shape=box];
+    "baton-observe; check merge-base ancestry" [shape=box];
     "Read .baton/precompact-facts if present" [shape=box];
-    "suspect or needs_human set?" [shape=diamond];
+    "suspect or needs_human already on disk?" [shape=diamond];
     "Resolve that first - report to the human" [shape=box];
     "Acquire the writer lock" [shape=box];
+    "Divergence found by this resume?" [shape=diamond];
+    "Set suspect, baton-write it, report it - stop" [shape=doublecircle];
     "Execute Next action" [shape=doublecircle];
 
-    "Read constitution.md and state.md" -> "baton-observe and compare";
-    "baton-observe and compare" -> "Read .baton/precompact-facts if present";
-    "Read .baton/precompact-facts if present" -> "suspect or needs_human set?";
-    "suspect or needs_human set?" -> "Resolve that first - report to the human" [label="yes"];
-    "suspect or needs_human set?" -> "Acquire the writer lock" [label="no"];
-    "Acquire the writer lock" -> "Execute Next action";
+    "Read constitution.md and state.md" -> "baton-observe; check merge-base ancestry";
+    "baton-observe; check merge-base ancestry" -> "Read .baton/precompact-facts if present";
+    "Read .baton/precompact-facts if present" -> "suspect or needs_human already on disk?";
+    "suspect or needs_human already on disk?" -> "Resolve that first - report to the human" [label="yes"];
+    "suspect or needs_human already on disk?" -> "Acquire the writer lock" [label="no"];
+    "Acquire the writer lock" -> "Divergence found by this resume?";
+    "Divergence found by this resume?" -> "Set suspect, baton-write it, report it - stop" [label="yes"];
+    "Divergence found by this resume?" -> "Execute Next action" [label="no"];
 }
 ```
 
@@ -52,24 +61,42 @@ ratification rather than guessing at intent.
 "${CLAUDE_PLUGIN_ROOT}/scripts/baton-observe"
 ```
 
-Compare against `observed_sha` and `observed_branch`. A wave marked `done`
-whose `closed_at_sha` is not an ancestor of `HEAD` is a divergence, not a
-rounding error:
+Compare against `observed_sha` and `observed_branch` — these are observed
+fields, repair them silently. A wave marked `done` whose `closed_at_sha` is
+not an ancestor of `HEAD` is a different kind of finding: `closed_at_sha` is
+a claimed field, so this is a divergence, not a rounding error, and it is
+never repaired silently:
 
 ```bash
 git merge-base --is-ancestor <closed_at_sha> HEAD
 ```
 
+Read the exit code; do not just ask whether it was zero:
+
+| Exit | Meaning |
+|---|---|
+| 0 | `<closed_at_sha>` is an ancestor of `HEAD`. The claim holds. |
+| 1 | It is not an ancestor. The claim diverged from the repository. |
+| 128, message starts `fatal:` | `<closed_at_sha>` is not a valid commit at all — a placeholder never filled in, or history rewritten out from under it. |
+
+Any non-zero exit — 1 or 128 alike — is the same finding: the claimed field
+diverged. 128 is not a crash to report and move past; treat it exactly like
+1. You do not hold the lease yet, so you cannot write this down until step 5
+— for now, just note it.
+
 **3. Check what happened after the last checkpoint.** If
 `.baton/precompact-facts` exists, the PreCompact hook recorded the repository
 state at compaction time. If its SHA is ahead of `observed_sha`, work landed
-that no checkpoint captured — treat `state.md` as behind and reconcile before
-continuing.
+that no checkpoint captured — treat `state.md` as behind. This is the same
+kind of finding as step 2's: note it, you still don't hold the lease.
 
-**4. Handle flags before anything else.** `suspect: true` means a claim
-diverged from the repository. `needs_human: true` means the run is stopped.
-Either one is the whole job until it is resolved; report it and stop rather
-than working around it.
+**4. Handle flags already on disk before anything else.** `suspect: true` in
+the `state.md` you read in step 1 means a claim already diverged, caught by
+an earlier session's checkpoint or resume. `needs_human: true` means the run
+is already stopped. Either one, found already set, is the whole job until a
+human resolves it; report it and stop rather than working around it. This is
+distinct from anything steps 2 and 3 just found themselves — that is handled
+next, in step 6, once you hold the lease.
 
 **5. Take the writer role.**
 
@@ -85,10 +112,26 @@ Either way, whenever the script prints `takeover=<previous session>`, record a
 journal entry of type `takeover` so a silent overlap of two sessions cannot
 happen unnoticed.
 
-**6. Execute `Next action`.** Exactly what it says. If it is too vague to act
-on, that is a checkpoint-quality failure — reconstruct from the repository and
-the wave's plan rather than guessing, and write a sharper `Next action` at the
-next checkpoint.
+**6. If this resume found a divergence, write it and stop.** Steps 2 and 3
+may have turned up something step 4's on-disk flags did not already cover: a
+`closed_at_sha` no longer an ancestor of `HEAD`, or a precompact SHA ahead of
+`observed_sha`. If either is true, now that you hold the lease:
+
+- set `suspect: true`;
+- describe the specifics in the `Suspect` line — which check failed and what
+  each side said;
+- write it through `baton-write`;
+- report it.
+
+Then stop. A suspect run does not continue to `Next action` — resolving the
+divergence is the next thing that happens here, not a background fact you
+carry into the next step.
+
+**7. Execute `Next action`.** Reached only when step 6 found nothing new.
+Exactly what it says. If it is too vague to act on, that is a
+checkpoint-quality failure — reconstruct from the repository and the wave's
+plan rather than guessing, and write a sharper `Next action` at the next
+checkpoint.
 
 ## Before implementing anything
 

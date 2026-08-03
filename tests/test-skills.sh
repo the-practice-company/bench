@@ -27,4 +27,15 @@ core="$(cat "$SKILLS/baton/SKILL.md")"
 assert_contains "$core" "Red Flags" "core skill lists the rationalisations to catch"
 assert_contains "$core" "git log" "core skill names git history as the event log"
 
+checkpoint="$(cat "$SKILLS/baton-checkpoint/SKILL.md")"
+assert_contains "$checkpoint" "60 lines" "checkpoint skill states the state.md line cap"
+assert_contains "$checkpoint" "Read the current state, whole" "checkpoint skill instructs reading the current state file first"
+assert_contains "$checkpoint" "baton-lock" "checkpoint skill mentions the lock script"
+assert_contains "$checkpoint" "release" "checkpoint skill covers releasing the lease"
+
+resume="$(cat "$SKILLS/baton-resume/SKILL.md")"
+assert_contains "$resume" "128" "resume skill explains the merge-base exit-128 case"
+assert_contains "$resume" "fatal:" "resume skill explains the merge-base fatal: message"
+assert_contains "$resume" "is an ancestor of \`HEAD\`. The claim holds." "resume skill explains merge-base exit 0"
+
 finish
