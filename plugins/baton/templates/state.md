@@ -2,7 +2,9 @@
 schema: baton/state/v1
 writer: REPLACE-WITH-SESSION-ID
 updated_at: REPLACE-WITH-ISO8601
-observed_sha: REPLACE-WITH-SHA
+# baton-observe's work_sha, not its sha: the last commit that touched
+# anything outside docs/baton/, so this checkpoint's own commit never moves it.
+observed_sha: REPLACE-WITH-WORK-SHA
 observed_branch: REPLACE-WITH-BRANCH
 tree_clean: true
 suspect: false

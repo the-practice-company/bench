@@ -61,8 +61,13 @@ ratification rather than guessing at intent.
 "${CLAUDE_PLUGIN_ROOT}/scripts/baton-observe"
 ```
 
-Compare against `observed_sha` and `observed_branch` — these are observed
-fields, repair them silently. A wave marked `done` whose `closed_at_sha` is
+Compare `observed_sha` against this run's `work_sha`, not its `sha` — `sha` is
+raw `HEAD`, which moves on every checkpoint commit, so it would never equal a
+baseline recorded by the checkpoint before it; `work_sha` is the last commit
+that touched anything outside `docs/baton/`, which a checkpoint commit never
+does, so it stays put across checkpoints and actually changes when work
+lands. Also compare `observed_branch`. Both are observed fields, repair them
+silently. A wave marked `done` whose `closed_at_sha` is
 not an ancestor of `HEAD` is a different kind of finding: `closed_at_sha` is
 a claimed field, so this is a divergence, not a rounding error, and it is
 never repaired silently:
@@ -86,9 +91,10 @@ diverged. 128 is not a crash to report and move past; treat it exactly like
 
 **3. Check what happened after the last checkpoint.** If
 `.baton/precompact-facts` exists, the PreCompact hook recorded the repository
-state at compaction time. If its SHA is ahead of `observed_sha`, work landed
-that no checkpoint captured — treat `state.md` as behind. This is the same
-kind of finding as step 2's: note it, you still don't hold the lease.
+state at compaction time. Compare its `work_sha` — not its `sha` — against
+`observed_sha`. If they differ, work landed that no checkpoint captured —
+treat `state.md` as behind. This is the same kind of finding as step 2's:
+note it, you still don't hold the lease.
 
 **4. Handle flags already on disk before anything else.** `suspect: true` in
 the `state.md` you read in step 1 means a claim already diverged, caught by
@@ -114,8 +120,9 @@ happen unnoticed.
 
 **6. If this resume found a divergence, write it and stop.** Steps 2 and 3
 may have turned up something step 4's on-disk flags did not already cover: a
-`closed_at_sha` no longer an ancestor of `HEAD`, or a precompact SHA ahead of
-`observed_sha`. If either is true, now that you hold the lease:
+`closed_at_sha` no longer an ancestor of `HEAD`, or a precompact `work_sha`
+that does not match `observed_sha`. If either is true, now that you hold the
+lease:
 
 - set `suspect: true`;
 - describe the specifics in the `Suspect` line — which check failed and what

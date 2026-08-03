@@ -43,11 +43,19 @@ mv "$tmp" .baton/precompact-facts
 # Warn only when the warning is true. Printing "no checkpoint was recorded"
 # on every single compaction, whether or not one actually happened, teaches
 # the agent to ignore it -- and it will ignore it on the one compaction
-# where it mattered. The facts just written already carry the current SHA
-# and tree_clean; state.md carries what the last checkpoint observed.
-# Comparing them costs nothing extra and lets the warning say only what is
-# actually true.
-current_sha="$(printf '%s\n' "$facts" | sed -n 's/^sha=//p')"
+# where it mattered. The facts just written already carry work_sha and
+# tree_clean; state.md carries what the last checkpoint observed. Comparing
+# them costs nothing extra and lets the warning say only what is actually
+# true.
+#
+# Compared against work_sha, not sha (raw HEAD): a checkpoint commit moves
+# HEAD by committing state.md, so observed_sha can never equal a later sha
+# even when zero work happened -- that comparison would warn on every single
+# compaction, which is the same "always on, so it's noise" failure this
+# function exists to avoid. work_sha is the last commit that touched
+# anything outside docs/baton/, which a checkpoint commit never does, so it
+# only moves when real work lands.
+current_work_sha="$(printf '%s\n' "$facts" | sed -n 's/^work_sha=//p')"
 tree_clean="$(printf '%s\n' "$facts" | sed -n 's/^tree_clean=//p')"
 
 state="docs/baton/state.md"
@@ -60,12 +68,12 @@ fi
 
 if [ -z "$observed_sha" ]; then
     echo "baton: cannot tell whether the checkpoint is current - docs/baton/state.md has no readable observed_sha. Facts saved to .baton/precompact-facts." >&2
-elif [ "$observed_sha" != "$current_sha" ]; then
-    echo "baton: checkpoint is behind - state.md's observed_sha ($observed_sha) is not the repository's current HEAD ($current_sha). Facts saved to .baton/precompact-facts; run /baton:checkpoint before compacting if you can." >&2
+elif [ "$observed_sha" != "$current_work_sha" ]; then
+    echo "baton: checkpoint is behind - state.md's observed_sha ($observed_sha) is not the repository's current work_sha ($current_work_sha) - work landed since the last checkpoint. Facts saved to .baton/precompact-facts; run /baton:checkpoint before compacting if you can." >&2
 elif [ "$tree_clean" != "true" ]; then
-    echo "baton: checkpoint is behind - observed_sha matches HEAD, but the working tree has uncommitted changes since then. Facts saved to .baton/precompact-facts; run /baton:checkpoint before compacting if you can." >&2
+    echo "baton: checkpoint is behind - observed_sha matches the current work_sha, but the working tree has uncommitted changes since then. Facts saved to .baton/precompact-facts; run /baton:checkpoint before compacting if you can." >&2
 fi
-# else: observed_sha matches HEAD and the tree is clean -- the checkpoint
-# is current. Say nothing.
+# else: observed_sha matches the current work_sha and the tree is clean --
+# the checkpoint is current. Say nothing.
 
 exit 0

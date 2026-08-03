@@ -72,10 +72,14 @@ assuming you already have the rest, from this step.
 
 **3. Reconcile.** Compare what `state.md` claims against what came back.
 Observed fields — `observed_sha`, `observed_branch`, `tree_clean` — you
-overwrite without ceremony. A claimed field that diverged — a wave marked
-`done` whose work is not in the repository — you never overwrite: set
-`suspect: true`, put the specifics in the `Suspect` line, and say so in your
-reply.
+overwrite without ceremony. Set `observed_sha` from `baton-observe`'s
+`work_sha`, not its `sha`: `sha` is raw `HEAD`, which this very checkpoint is
+about to move by committing `state.md`, so a baseline taken from it would
+already be wrong the moment it's written; `work_sha` is the last commit that
+touched anything outside `docs/baton/`, which a checkpoint commit never does.
+A claimed field that diverged — a wave marked `done` whose work is not in the
+repository — you never overwrite: set `suspect: true`, put the specifics in
+the `Suspect` line, and say so in your reply.
 
 **4. Write the narrative fields.**
 
