@@ -33,9 +33,40 @@ observe="$plugin_root/scripts/baton-observe"
 
 mkdir -p .baton
 tmp=".baton/.precompact-facts.tmp.$$"
+
+# baton-observe's own exit status decides what gets written and said below,
+# not just whatever it happened to print to stdout. The old form --
+# `"$observe" 2>/dev/null || true` -- discarded both the exit status and
+# stderr: a real git failure inside baton-observe (reproduced with an
+# unreadable .git/index) left every field empty rather than absent, and the
+# comparison further down then read the empty work_sha as a fact --
+# printing "work_sha ()" as though that were the repository's real state,
+# with the actual fatal: error that caused it thrown away and never
+# surfaced anywhere. Recording the failure plainly, and skipping the
+# comparison entirely, is what the branch below does instead.
+observe_output="" observe_rc=0
+observe_output="$("$observe" 2>&1)" || observe_rc=$?
+
+if [ "$observe_rc" -ne 0 ]; then
+    facts="$(
+        printf 'recorded_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        printf 'observe_failed=true\n'
+    )"
+    printf '%s\n' "$facts" > "$tmp"
+    mv "$tmp" .baton/precompact-facts
+
+    # Still exit 0 -- a hook must not break the session over this -- but it
+    # must not pretend to have established facts it does not have. No
+    # staleness comparison runs below: state.md's observed_sha compared
+    # against an unknown work_sha is not a fact, it is a guess dressed up
+    # as one, which is exactly what the old behaviour did.
+    echo "baton: could not establish repository facts before compaction - baton-observe failed ($observe_output). No staleness comparison can be trusted this run; observe_failed=true was recorded in .baton/precompact-facts instead of guessed-at fields." >&2
+    exit 0
+fi
+
 facts="$(
     printf 'recorded_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    "$observe" 2>/dev/null || true
+    printf '%s\n' "$observe_output"
 )"
 printf '%s\n' "$facts" > "$tmp"
 mv "$tmp" .baton/precompact-facts

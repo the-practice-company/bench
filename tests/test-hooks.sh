@@ -126,6 +126,8 @@ assert_equals "$stderr_current" "" \
     "pre-compact stays silent when observed_sha matches HEAD and the tree is clean"
 assert_file_exists ".baton/precompact-facts" \
     "pre-compact still writes facts even when the checkpoint is current"
+assert_not_contains "$(cat .baton/precompact-facts)" "observe_failed" \
+    "a successful baton-observe run never records observe_failed"
 
 echo "more work landed" > later-work.txt
 git add later-work.txt
@@ -139,6 +141,35 @@ else
 fi
 assert_contains "$stderr_behind" "$head_now" \
     "the warning names the stale observed_sha, not just that something diverged"
+
+# --- a genuine baton-observe failure must be recorded, not silently
+# reinterpreted as "no work landed". Reproduced with an unreadable
+# .git/index (which makes baton-observe itself die with a git fatal:
+# error): before the fix, pre-compact discarded both baton-observe's
+# stderr and its exit status, so every field baton-observe would have
+# printed came out empty instead of absent, and the hook warned with a
+# fabricated "work_sha ()" - the real fatal: error thrown away and never
+# surfaced anywhere. ---
+rm -f .baton/precompact-facts
+chmod 000 .git/index
+set +e
+observe_fail_stderr="$( { "$HOOKS/pre-compact" < /dev/null >/dev/null; } 2>&1 )"
+observe_fail_rc=$?
+set -e
+chmod 644 .git/index
+
+assert_equals "$observe_fail_rc" "0" \
+    "pre-compact still exits 0 when baton-observe fails - a hook must not break the session"
+assert_contains "$observe_fail_stderr" "could not establish repository facts" \
+    "pre-compact says plainly that facts could not be established, rather than guessing"
+assert_not_contains "$observe_fail_stderr" "work_sha ()" \
+    "pre-compact never fabricates a comparison against an empty work_sha when observe failed"
+assert_file_exists ".baton/precompact-facts" \
+    "pre-compact still writes a facts file when baton-observe fails"
+assert_contains "$(cat .baton/precompact-facts)" "observe_failed=true" \
+    "the facts file records that observation failed, instead of silently omitting the fields it could not get"
+assert_not_contains "$(cat .baton/precompact-facts)" "work_sha=" \
+    "the facts file carries no fabricated empty work_sha when observe genuinely failed"
 
 # --- control characters in state.md must not break the emitted JSON ---
 printf -- '---\nschema: baton/state/v1\n---\n**Goal:** bell\x07here esc\x1bhere\n**Operating mode:** orchestrator\n**Non-negotiables:** none\n## Now\n- **Next action:** go\n' > docs/baton/state.md
