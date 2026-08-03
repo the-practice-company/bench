@@ -36,6 +36,26 @@ unset CLAUDE_PLUGIN_ROOT || true
 
 mkdir -p docs/baton
 printf -- '---\nschema: baton/state/v1\n---\n\n**Goal:** g\n' > docs/baton/state.md
-assert_exit_code 0 "session-start survives an unset plugin root" "$PLUGIN/hooks/session-start"
+
+# session-start never reads CLAUDE_PLUGIN_ROOT at all (grepped above), so an
+# unset value can't exercise a fallback it doesn't have. What this actually
+# checks is narrower: the hook still runs to completion, unaided by any
+# hook-provided environment, when invoked directly.
+assert_exit_code 0 "session-start runs to completion with no CLAUDE_PLUGIN_ROOT in the environment (it never reads the variable)" "$PLUGIN/hooks/session-start"
+
+# pre-compact is the hook that DOES have a real fallback for a missing
+# CLAUDE_PLUGIN_ROOT: it resolves its own plugin root from $0 instead
+# (`${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}`), so it can still
+# find baton-observe next to itself. Unlike test-hooks.sh, which exports
+# CLAUDE_PLUGIN_ROOT once at the top and leaves it set for every call, this
+# unsets it immediately before the call below so the fallback path is
+# actually exercised, not merely present in the source and never taken.
+rm -f .baton/precompact-facts
+unset CLAUDE_PLUGIN_ROOT || true
+assert_exit_code 0 "pre-compact runs to completion with no CLAUDE_PLUGIN_ROOT in the environment" "$PLUGIN/hooks/pre-compact"
+assert_file_exists ".baton/precompact-facts" \
+    "pre-compact with no CLAUDE_PLUGIN_ROOT still locates baton-observe via \$0 and writes the facts file"
+assert_contains "$(cat .baton/precompact-facts)" "sha=" \
+    "the facts file written under the fallback holds real observed facts, not an empty stub"
 
 finish
