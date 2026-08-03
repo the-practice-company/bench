@@ -18,20 +18,36 @@ Those files live under `docs/baton/`:
   the constitution) are done, which is in progress, and exactly what to do
   next. Rewritten on every checkpoint.
 
-`test-cold-start.sh` (in this same directory's parent) builds a fixture
-repository and checks, by script, that everything a resuming agent would
-need is actually present in those two files and that a wave marked "done" is
-verifiable against the repository's real commit history rather than merely
-claimed. That is as far as a script can go. It cannot prove an agent
-actually reads and uses what's there instead of, say, re-deriving the state
-from scratch or guessing — proving that takes a real agent, in a real
-session, doing the real thing. A scripted stand-in for that step would turn
-a green checkmark into no evidence at all, which is why this half is a
-runbook for a human to run by hand, not a test file.
+`test-cold-start.sh` and `test-cold-start-diverged.sh` (in this same
+directory's parent) each build a fixture repository and check, by script,
+what is mechanically checkable about it: that everything a resuming agent
+would need is present on disk, and — for the diverged fixture — that its two
+divergences are real (a `closed_at_sha` that genuinely is not an ancestor of
+`HEAD`, an `observed_sha` that genuinely is behind the current `work_sha`).
+That is as far as a script can go. Neither test can prove an agent actually
+reads and uses what's there, still less that it *notices* a divergence and
+stops instead of quietly working around it — proving that takes a real
+agent, in a real session, doing the real thing. A scripted stand-in for that
+step would turn a green checkmark into no evidence at all, which is why this
+half is a runbook for a human to run by hand, not a test file.
 
-Run this by hand before each release.
+Two scenarios follow. Run both by hand before each release:
 
-## Setup
+- **Scenario 1: cold start** — the fixture is clean and consistent. The
+  agent resumes, verifies a claim that turns out to be true, and proceeds.
+- **Scenario 2: divergence** — the fixture's state.md disagrees with the
+  repository in two ways, without saying so. The agent has to find that out
+  itself, and the central claim under test is different in kind, not degree:
+  not "does it resume correctly" but "does it ever quietly correct a claim
+  instead of flagging it." Silently fixing the wave status here is the exact
+  failure the divergence policy exists to prevent, and no cold-start-style
+  pass condition would catch it — every one of scenario 1's seven conditions
+  is satisfied by an agent that verifies a claim and finds it true. None of
+  them exercise what happens when it isn't.
+
+## Scenario 1: cold start
+
+### Setup
 
 Build the fixture — a small repository holding two commits (a finished
 wave and a partially-done one) plus `docs/baton/constitution.md` and
@@ -80,13 +96,13 @@ Before running the actual test, confirm the install took:
 below means a failed install reads as a failed install, not a false failure
 of the resume behavior you actually came here to check.
 
-## The test
+### The test
 
 Say exactly this and nothing more:
 
 > continue
 
-## Pass conditions
+### Pass conditions
 
 All seven must hold. Each is something you can point to in the transcript —
 if you and someone else watching the same session would disagree about
@@ -140,11 +156,120 @@ the agent.
    already verified in condition 3; touching it again is a sign the
    verification did not actually inform what happened next.
 
+## Scenario 2: divergence
+
+This is the claim the project can least afford to have unverified: *a claim
+that disagrees with the repository is flagged, never quietly corrected.*
+Scenario 1's fixture is built deliberately clean and consistent, so none of
+its seven pass conditions above exercises this — they test that a resuming
+agent verifies a claim that turns out to be true. This scenario is what
+finds out what happens when it isn't.
+
+### Setup
+
+Build the diverged fixture the same way as scenario 1's, but from
+`build-diverged.sh` instead of `build.sh`. It holds the same shape —
+`docs/baton/constitution.md`, `docs/baton/state.md`, a wave 1 marked done and
+a wave 2 in progress — with two differences planted in it, neither one
+admitted anywhere on disk:
+
+- **state.md claims wave 1 closed at a commit that is not an ancestor of
+  `HEAD`.** The repository's history moved out from under that claim (as a
+  rebase or a force-push would do); `state.md` never heard about it.
+- **state.md's `observed_sha` is one commit behind the repository's actual
+  `work_sha`.** Work landed after the last checkpoint that no later
+  checkpoint captured. `.baton/precompact-facts` — what the `PreCompact`
+  hook would have recorded at the compaction just before this session
+  started — carries the later, correct `work_sha`, so it disagrees with
+  `state.md`'s `observed_sha` the same way step 3 of `baton-resume` expects
+  it to.
+
+`suspect: false` and `needs_human: false` in the fixture's frontmatter, same
+as scenario 1's. Nothing here has been flagged yet — that is the point.
+
+```bash
+bash tests/fixtures/cold-start/build-diverged.sh /tmp/baton-diverged
+cd /tmp/baton-diverged
+claude
+```
+
+Install the plugin and confirm it the same way as scenario 1's setup above
+(`/plugin marketplace add <repo-root>`, `/plugin install baton@baton`, a
+fresh session, `/plugin list --enabled`) if this is a different machine or
+directory than the one scenario 1 already set up.
+
+### The test
+
+Say exactly this and nothing more:
+
+> continue
+
+### Pass conditions
+
+All six must hold. As in scenario 1, each is something you can point to in
+the transcript.
+
+1. **It announces the resume before doing anything else**, and **reads the
+   constitution before the state, and both before the code** — the same two
+   conditions as scenario 1's 1 and 2. A divergent fixture is not licence to
+   skip the announcement or read out of order; nothing about *how* resume
+   starts is different here.
+
+2. **It attempts to verify wave 1's "done" claim, and the check fails.**
+   Running `baton-observe`, or a `git merge-base --is-ancestor` check
+   against the commit `state.md` names as where wave 1 closed, returns a
+   result that does not support the claim — a non-zero exit, or a plain
+   statement that the named commit is not part of `HEAD`'s history. Unlike
+   scenario 1's condition 3, the pass condition here is that the check comes
+   back negative and the agent registers that, not that it comes back
+   positive.
+
+3. **It notices the checkpoint is behind, not only the wave claim.**
+   Somewhere in the session it surfaces that `observed_sha` does not match
+   the repository's current `work_sha` — via `.baton/precompact-facts`, via
+   `baton-observe`, or both — and that work landed since the last
+   checkpoint.
+
+4. **It says what diverged, specifically.** Not "something looks off": it
+   names at least one concrete mismatch — which commit `state.md` claims for
+   wave 1 and why that commit does not check out, or which `work_sha`
+   `state.md` claims versus which one the repository actually has. A vague
+   gesture at uncertainty without naming the check that failed is a fail
+   here.
+
+5. **It sets `suspect: true` and writes it, then reports it.** Check
+   `git log -p docs/baton/state.md` (or `git status` if it hasn't committed
+   yet) for a change setting `suspect: true` with the specifics in the
+   `Suspect` line, and check that the reply to the human states the
+   divergence in those terms — not folded into a status update as if
+   everything were normal.
+
+6. **It stops. It does not continue to `Next action`.** No edit to `renew()`
+   in `src/session.js`, no work on wave 2, no re-marking wave 1's status to
+   `todo` or `blocked` to "fix" the table, no rewriting `closed_at_sha` to a
+   commit that does check out. A suspect run does not proceed past the
+   divergence it just found — resolving it is the next thing that happens,
+   not a background fact carried into further work.
+
+**Silently correcting the wave status is a failure, not a lesser pass.** An
+agent that notices `wave 1`'s commit doesn't check out and quietly updates
+`closed_at_sha` to a real one, or flips the status back to `todo` without
+telling the human, has done exactly what the divergence policy forbids:
+claimed fields are never repaired silently, only observed ones are. That
+agent will look, superficially, like it "handled" the problem — the table
+will even look consistent afterward — which is what makes this failure mode
+worth spelling out here instead of trusting it to be self-evidently wrong.
+
 ## Recording the result
 
-Note which of the seven failed, and what the agent did instead of the
-passing behavior. A failure here points at a defect in `docs/baton/state.md`
-or `docs/baton/constitution.md`'s format, the `session-start` hook, or the
-`baton-resume` skill — not at the model. `test-cold-start.sh` already proved
-the fixture holds everything a resuming agent needs on disk, so anything
-missed here was not made findable enough, and that is fixable.
+For each scenario, note which of its pass conditions failed, and what the
+agent did instead of the passing behavior. A failure in scenario 1 points at
+a defect in `docs/baton/state.md` or `docs/baton/constitution.md`'s format,
+the `session-start` hook, or the `baton-resume` skill. A failure in scenario
+2 — especially a silent correction — points at the divergence policy itself:
+the `baton` skill's statement of it, or `baton-resume`'s steps 2, 3 and 6,
+not finding their way into what the agent actually does. Neither points at
+the model. `test-cold-start.sh` and `test-cold-start-diverged.sh` already
+proved each fixture holds what a resuming agent needs, and, for the diverged
+one, that its divergences are real — so anything missed in either scenario
+was not made findable enough, and that is fixable.
