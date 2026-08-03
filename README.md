@@ -54,8 +54,13 @@ the agent has to remember to do.
 
 ```
 docs/baton/
-  constitution.md    ratified by you; the agent reads it and never writes it
-  state.md           where the run is now; at most 60 lines, always current
+  constitution.md    ratified by you; baton-write -- the tool every
+                      checkpoint and resume uses to write durably -- refuses
+                      this path outright. /baton:init places the initial
+                      file directly, with plain git, once, before
+                      ratification, which is the one way around that
+  state.md           where the run is now; capped at 60 lines, and
+                      baton-write refuses to write anything longer
   journal/           decisions, append-only, never edited
 ```
 
