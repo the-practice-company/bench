@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Write stdin to a path atomically, then commit it.
+#
+# If the only difference from the committed version is the updated_at line,
+# nothing is written at all. Writing it and skipping the commit would leave
+# state dirty in the working tree - that is, outside the log - which is the
+# one thing the recoverability invariant forbids.
+set -euo pipefail
+
+message=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -m|--message)
+            [ $# -ge 2 ] || { echo "usage: baton-write [-m <msg>] <path>" >&2; exit 64; }
+            message="$2"
+            shift 2
+            ;;
+        -h|--help) echo "usage: baton-write [-m <msg>] <path>" >&2; exit 64 ;;
+        *) break ;;
+    esac
+done
+
+[ $# -eq 1 ] || { echo "usage: baton-write [-m <msg>] <path>" >&2; exit 64; }
+target="$1"
+[ -n "$message" ] || message="baton: update $(basename "$target")"
+
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    echo "baton-write: not a git repository" >&2
+    exit 1
+fi
+
+dir="$(dirname "$target")"
+base="$(basename "$target")"
+mkdir -p "$dir"
+
+tmp="$dir/.$base.tmp.$$"
+head_copy="$dir/.$base.head.$$"
+cleanup() { rm -f "$tmp" "$head_copy"; }
+trap cleanup EXIT
+
+cat > "$tmp"
+
+strip_timestamp() {
+    grep -v '^updated_at:' "$1" || true
+}
+
+if git cat-file -e "HEAD:$target" 2>/dev/null; then
+    git show "HEAD:$target" > "$head_copy"
+    if diff -q <(strip_timestamp "$tmp") <(strip_timestamp "$head_copy") >/dev/null 2>&1; then
+        exit 0
+    fi
+fi
+
+sync
+mv "$tmp" "$target"
+trap - EXIT
+rm -f "$head_copy"
+
+git add -- "$target"
+git commit -q -m "$message" -- "$target"
