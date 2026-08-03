@@ -16,8 +16,9 @@ decomposes an existing spec, it does not replace `superpowers:brainstorming`.
 
 ## 2. Check the companion plugin
 
-Confirm the superpowers skills are available (`superpowers:brainstorming`,
-`superpowers:writing-plans`). If they are not, warn the human: baton assumes
+Check the skills listing already in your context for `superpowers:brainstorming`
+and `superpowers:writing-plans`. If that listing is unavailable, run
+`/plugin list` instead. If either is missing, warn the human: baton assumes
 per-wave specs and plans come from superpowers, and without it they will have
 to write those by hand. Continue anyway if they want to.
 
@@ -25,6 +26,10 @@ to write those by hand. Continue anyway if they want to.
 
 One question at a time. Cover, in this order:
 
+- **Goal.** One or two sentences: what counts as success for the whole run.
+  A run needs a definition of success before it can be split into waves.
+- **Name.** What this run is called. Becomes the constitution's title, and,
+  slugified, its `run_id`.
 - **The split.** What are the waves? A wave is a chunk that can be closed and
   verified on its own.
 - **Dependencies.** For each wave, `depends_on`. Parallelism is what is left
@@ -42,23 +47,43 @@ One question at a time. Cover, in this order:
 
 ## 4. Ask for the verification command
 
-What command proves this repository works — `npm test`, `pytest -q`,
-`cargo test`, a script. Ask what stub markers their language uses, and extend
-the default `placeholder_patterns` accordingly.
+Ask what command proves this repository works — `npm test`, `pytest -q`,
+`cargo test`, a script. That answer becomes `verify_cmd` in the constitution's
+frontmatter. Then ask what stub markers their language uses, and extend the
+default `placeholder_patterns` — also a constitution frontmatter field —
+accordingly.
 
-Tell them plainly why this lives in the constitution and not a config file: the
-gate trusts this command, and if the agent could edit it, the agent could
-weaken the gate. The constitution is the human's file, so the threshold is out
-of the agent's reach.
+Tell them plainly why these two fields live in the constitution and not a
+config file: the gate trusts `verify_cmd`, and if the agent could edit it, the
+agent could weaken the gate. The constitution is the human's file, so the
+threshold is out of the agent's reach.
 
 ## 5. Write the artifacts
 
-Fill `${CLAUDE_PLUGIN_ROOT}/templates/constitution.md` and
-`${CLAUDE_PLUGIN_ROOT}/templates/state.md` from the conversation. Every
-`REPLACE-` marker must be gone.
+`${CLAUDE_PLUGIN_ROOT}/templates/constitution.md` and
+`${CLAUDE_PLUGIN_ROOT}/templates/state.md` are read-only: they are the shipped
+shape for every run on this machine, not this run's draft, and editing them in
+place would corrupt every future `/baton:init`. Read them for the frontmatter
+fields and sections required, then compose the filled document from the
+conversation and write it to a scratch file of your own — `/tmp/constitution.md`,
+`/tmp/state.md` — rather than the template path. Every `REPLACE-` marker must
+be gone except `ratified_by`, `ratified_at` and `git_anchor`: those three are
+the human's to fill at ratification in step 6, not the agent's to invent.
 
-Add `.baton/` to `.gitignore` if it is not already there. Then write both files
-through `baton-write` so they land atomically and get committed:
+Add `.baton/` to `.gitignore` if it is not already there — check first, and
+append in a way that tolerates a missing trailing newline, since a bare `>>`
+onto a file that doesn't end in one glues onto the last line instead of adding
+a new one and silently ignores nothing:
+
+```bash
+grep -qxF '.baton/' .gitignore 2>/dev/null || {
+    [ -s .gitignore ] && [ -n "$(tail -c1 .gitignore)" ] && printf '\n' >> .gitignore
+    printf '.baton/\n' >> .gitignore
+}
+```
+
+Then write both scratch files through `baton-write` so they land atomically
+and get committed:
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/baton-write" -m "baton: constitution for <run>" docs/baton/constitution.md < /tmp/constitution.md
