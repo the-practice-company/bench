@@ -23,19 +23,30 @@ along the way.
 
 ## Install
 
+baton is not published yet — there is no remote to fetch it from, so point
+Claude Code at a local checkout:
+
 ```
-/plugin marketplace add artemkononov/baton
+/plugin marketplace add /path/to/this/checkout
 /plugin install baton@baton
-/plugin install superpowers@baton
+/plugin install superpowers@claude-plugins-official
 ```
 
 `baton@baton` is not a typo: the marketplace this repository ships
 (`.claude-plugin/marketplace.json`) is itself named `baton`, and it lists a
 plugin also named `baton` — the syntax is `<plugin-name>@<marketplace-name>`.
-The same marketplace re-exports superpowers, so the one `marketplace add`
-covers both installs. Start a fresh session afterwards: a plugin's hooks,
-skills and commands only take effect in a session that starts after it was
-installed, not the one you installed it from.
+
+superpowers comes from `claude-plugins-official`, the marketplace Claude Code
+already knows about, rather than from a copy re-exported here. Anthropic's
+entry pins the exact commit it installs. A re-export in this repository would
+either have to drop that pin — handing whoever controls that repository's
+default branch a say in what lands on your machine at install time and at
+every version bump — or carry a second pin that someone has to keep in step
+with the first by hand. Neither is worth owning to save a word.
+
+Start a fresh session afterwards: a plugin's hooks, skills and commands only
+take effect in a session that starts after it was installed, not the one you
+installed it from.
 
 ## Use
 
@@ -47,8 +58,12 @@ installed, not the one you installed it from.
 
 Between those, the agent works on its own. Skills fire on their own
 triggers, and two hooks — one just before compaction, one at the start of
-the session that follows — make recovery automatic rather than something
-the agent has to remember to do.
+every session, whether it began by startup, resume, clear, compaction or
+fork — make recovery automatic rather than something the agent has to
+remember to do. The second one is deliberately not limited to sessions that
+follow a compaction: day two of a multi-day run begins by `startup` or
+`resume`, with the least surviving context and the most need for state to be
+put back deterministically.
 
 ## What lands in your repository
 
@@ -65,6 +80,13 @@ docs/baton/
 ```
 
 Committed, markdown, readable without any tool.
+
+That one way around the refusal is closed to the agent: `/baton:init` is
+declared user-only, so it runs when you type it and cannot be called by the
+model mid-run. A refusal reachable through a command the agent can invoke on
+itself would not be a refusal at all. `/baton:checkpoint` and `/baton:status`
+are left open to the model, because neither writes anything the run is judged
+against.
 
 A separate `.baton/` directory holds the writer lease and a snapshot taken
 just before compaction. `/baton:init` adds it to `.gitignore`: it describes

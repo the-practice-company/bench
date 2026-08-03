@@ -5,3 +5,4 @@
 # settings.local.json is per-machine by convention. Narrow this if you ever
 # want project-scoped commands or skills committed alongside baton.
 .claude/
+.DS_Store
