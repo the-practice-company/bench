@@ -1,0 +1,24 @@
+{
+  "name": "baton",
+  "description": "Keeps goal and state coherent across multi-day autonomous agent runs",
+  "owner": {
+    "name": "Artem Kononov",
+    "email": "artemkononov2000@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "baton",
+      "description": "Durable run state, checkpoint, resume and decision journal for multi-day autonomous sessions",
+      "version": "0.1.0",
+      "source": "./plugins/baton"
+    },
+    {
+      "name": "superpowers",
+      "description": "Companion plugin baton composes with: specs, plans, TDD, subagent-driven development",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/obra/superpowers.git"
+      }
+    }
+  ]
+}
