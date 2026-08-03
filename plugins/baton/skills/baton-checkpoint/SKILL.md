@@ -9,8 +9,11 @@ Persist the run so a session with no memory of this one can continue it.
 
 **Announce at start:** "Checkpointing before we lose this context."
 
-**Prerequisite:** you hold the writer lease. If `baton-lock check <session-id>`
-exits non-zero, resolve that first — see `baton-resume`.
+**Prerequisite:** `docs/baton/constitution.md`'s `status` is `ratified`, with
+no `REPLACE-WITH` token remaining in it — checkpointing a run that has not
+been handed over records state for a run that does not exist yet. You also
+hold the writer lease: if `baton-lock check <session-id>` exits non-zero,
+resolve that first — see `baton-resume`.
 
 Then run `baton-lock acquire <session-id>` before writing anything. For the
 holder that is not a second acquisition, it is the heartbeat: it pushes the
@@ -195,7 +198,7 @@ retry blindly — the exit code tells you which situation you are in.
 
 | Exit | Meaning | What to do |
 |---|---|---|
-| 3 | Refused before touching anything — a merge or rebase is in progress, the path is gitignored, or empty content was piped over a file that has real content | Resolve the named condition, then checkpoint again. Nothing was written, so nothing is lost. |
+| 3 | Refused before touching anything. Several causes, told apart by the message: a merge or rebase is in progress; the path is gitignored; empty content was piped over a file that has real content; the target is `docs/baton/constitution.md`; or `docs/baton/state.md` is over the 60-line cap. | For the first three: resolve the named condition, then checkpoint again — nothing was written, so nothing is lost. `docs/baton/constitution.md` should never be a checkpoint target at all — this skill only ever writes `state.md` and journal entries; if you hit this, you targeted the wrong path. Over the cap: move the excess detail to a journal entry (`baton-journal`) and leave `state.md` holding only a pointer to it, then write again. |
 | 5 | Two different causes, told apart by the message. "commit failed; the tree was restored" means a hook or a signing failure rejected the mutation and the rollback ran — the tree is back to how it was found. "commit landed but does not contain what this run wrote" means the commit *succeeded* but another writer's content is what's in it — nothing was rolled back, the commit stands. | First case: read the message, fix the cause, checkpoint again. Second case: do not retry over it — the lease discipline failed upstream (two writers held it at once); report that rather than silently re-checkpointing. |
 | 7 | The commit failed **and** the rollback could not restore the tree | Stop. State is sitting outside the log and only a human can resolve it. Set `needs_human: true` if you can still write, and say so plainly. |
 
