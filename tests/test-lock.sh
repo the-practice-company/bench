@@ -84,6 +84,25 @@ acquired_epoch=abc
 EOF
 assert_exit_code 4 "an unparseable acquired_epoch fails open to expired, not a crash" "$LOCK" check session-e
 
+# --- the lease resolves against the repository root, not the caller's cwd ---
+# A session acquiring from a subdirectory and one acquiring from the root
+# would otherwise each write their own separate .baton/lock and both believe
+# they hold the sole writer role -- the single-writer guarantee gone. This
+# is the case that would have caught it.
+rm -rf .baton
+mkdir -p src/sub
+in_subdir() { (cd src/sub && "$LOCK" "$@"); }
+
+assert_exit_code 0 "acquires from a subdirectory" in_subdir acquire session-g
+assert_file_exists ".baton/lock" "a lease acquired from a subdirectory lands at the repository root"
+if [ -e src/sub/.baton ]; then
+    fail "no stray .baton is created inside the subdirectory"
+else
+    pass "no stray .baton is created inside the subdirectory"
+fi
+assert_exit_code 0 "check from the repository root sees the lease acquired from a subdirectory" "$LOCK" check session-g
+assert_exit_code 3 "a second session acquiring from the root is correctly refused, not granted a separate lease" "$LOCK" acquire session-h
+
 # --- usage errors ---
 assert_exit_code 64 "usage error: no arguments" "$LOCK"
 assert_exit_code 64 "usage error: unknown verb" "$LOCK" frobnicate session-f

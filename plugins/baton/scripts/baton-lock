@@ -39,6 +39,13 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
     exit 1
 fi
 
+# LOCK_FILE is relative, so without this the lease's location depends on the
+# caller's cwd: acquiring from a subdirectory writes <subdir>/.baton/lock,
+# invisible to a check or acquire run from the repo root (or any other
+# subdirectory). That silently defeats the single-writer guarantee this
+# script exists to provide -- two sessions can both believe they hold it.
+cd "$(git rev-parse --show-toplevel)"
+
 # Prints the value of field $1 from the lock file, or nothing. Never aborts:
 # if the file vanishes between lock_state's -f test and this read, sed fails
 # but the function still degrades to an empty result instead of taking the
