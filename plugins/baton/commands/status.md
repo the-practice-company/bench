@@ -32,8 +32,11 @@ Then verify and report:
 "${CLAUDE_PLUGIN_ROOT}/scripts/baton-observe"
 ```
 
-Say whether `observed_sha` matches the repository. State that agrees with
-itself but not with the repository is exactly what this command exists to
-catch.
+Compare `state.md`'s `observed_sha` against `baton-observe`'s `work_sha`, not
+its `sha` — `sha` is raw `HEAD`, which moves on every checkpoint commit, so a
+baseline recorded before that commit could never equal it, and comparing
+against it would report a divergence on essentially every call. Say whether
+they agree. State that agrees with itself but not with the repository is
+exactly what this command exists to catch.
 
 Keep it short. No progress bars, no percentages, no encouragement.

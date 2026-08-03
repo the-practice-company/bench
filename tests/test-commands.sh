@@ -26,5 +26,6 @@ assert_contains "$status" "needs_review" "status surfaces decisions awaiting rev
 assert_contains "$status" "does not exist" "status covers the not-a-baton-run case"
 assert_contains "$status" "docs/baton/journal/" "status names the journal directory"
 assert_contains "$status" "CLAUDE_PLUGIN_ROOT" "status invokes baton-observe via the plugin root"
+assert_contains "$status" "work_sha" "status compares observed_sha against work_sha, not raw HEAD"
 
 finish
