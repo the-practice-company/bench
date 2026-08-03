@@ -1310,7 +1310,7 @@ digraph checkpoint {
     "Update Next action / In flight / Open questions" [shape=box];
     "Any decision crossing the threshold?" [shape=diamond];
     "baton-journal + baton-write the entry" [shape=box];
-    "baton-write state.md" [shape=box doublecircle];
+    "baton-write state.md" [shape=doublecircle];
 
     "baton-observe: snapshot git facts" -> "Compare claims against facts";
     "Compare claims against facts" -> "Claimed field diverged?";
@@ -1463,7 +1463,7 @@ digraph resume {
     "suspect or needs_human set?" [shape=diamond];
     "Resolve that first - report to the human" [shape=box];
     "Acquire the writer lock" [shape=box];
-    "Execute Next action" [shape=box doublecircle];
+    "Execute Next action" [shape=doublecircle];
 
     "Read constitution.md and state.md" -> "baton-observe and compare";
     "baton-observe and compare" -> "Read .baton/precompact-facts if present";
