@@ -30,7 +30,7 @@ digraph checkpoint {
     "Update Next action / In flight / Open questions" [shape=box];
     "Any decision crossing the threshold?" [shape=diamond];
     "baton-journal + baton-write the entry" [shape=box];
-    "baton-write state.md" [shape=box doublecircle];
+    "baton-write state.md" [shape=doublecircle];
 
     "baton-observe: snapshot git facts" -> "Compare claims against facts";
     "Compare claims against facts" -> "Claimed field diverged?";
@@ -117,6 +117,19 @@ Pipe it through `baton-write` so it lands atomically and gets committed:
 
 If nothing of substance changed, the script writes nothing and exits 0. That
 is correct, not a failure — running the ritual twice in a row leaves no trace.
+
+## If the write fails
+
+`baton-write` exits non-zero for reasons that need different responses. Do not
+retry blindly — the exit code tells you which situation you are in.
+
+| Exit | Meaning | What to do |
+|---|---|---|
+| 3 | Refused before touching anything — a merge or rebase is in progress, the path is gitignored, or empty content was piped over a file that has real content | Resolve the named condition, then checkpoint again. Nothing was written, so nothing is lost. |
+| 5 | The commit failed and the tree was restored to how it was found | Read the message: a hook, a signing failure or a concurrent writer. Fix the cause. Do not retry until you know which. |
+| 7 | The commit failed **and** the rollback could not restore the tree | Stop. State is sitting outside the log and only a human can resolve it. Set `needs_human: true` if you can still write, and say so plainly. |
+
+Exit 0 with no commit is not a failure — see step 5.
 
 ## Verify before claiming success
 
