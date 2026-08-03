@@ -154,6 +154,138 @@ assert_equals "$(wc -c < docs/baton/never-existed.md | tr -d ' ')" "0" \
 assert_equals "$(git status --porcelain docs/baton | wc -l | tr -d ' ')" "0" \
     "docs/baton is clean after the empty-but-new write"
 
+# --- refuses a gitignored target before writing anything ---
+echo "docs/baton/ignored.md" > .gitignore
+git add .gitignore
+git commit -q -m "ignore docs/baton/ignored.md"
+
+set +e
+printf 'updated_at: X\nshould never be written\n' \
+    | "$WRITE" -m "checkpoint to an ignored path" docs/baton/ignored.md
+ignored_rc=$?
+set -e
+
+assert_equals "$ignored_rc" "3" "refuses a gitignored target"
+if [ -e docs/baton/ignored.md ]; then
+    fail "a refused gitignored write leaves nothing on disk"
+else
+    pass "a refused gitignored write leaves nothing on disk"
+fi
+assert_equals "$(git status --porcelain --ignored -- docs/baton/ignored.md)" "" \
+    "git status --porcelain --ignored shows no trace of the refused write either"
+
+# --- a git add failure (not just a commit failure) enters the same
+# rollback path: a contended .git/index.lock makes `git add` itself fail ---
+addfail_head_before="$(git rev-parse HEAD)"
+touch .git/index.lock
+set +e
+printf 'updated_at: X\nshould be rolled back\n' \
+    | "$WRITE" -m "checkpoint blocked by a failed add" docs/baton/index-locked.md
+addfail_rc=$?
+set -e
+rm -f .git/index.lock
+
+echo "  -- git status --porcelain after the failed-add rollback --"
+git status --porcelain docs/baton | sed 's/^/     /'
+assert_equals "$addfail_rc" "5" "a git add failure (not just a commit failure) triggers the rollback path"
+assert_equals "$(git rev-parse HEAD)" "$addfail_head_before" \
+    "the rollback after a failed add leaves HEAD unmoved"
+assert_equals "$(git status --porcelain docs/baton | wc -l | tr -d ' ')" "0" \
+    "the rollback after a failed add leaves docs/baton clean"
+if [ -e docs/baton/index-locked.md ]; then
+    fail "the rollback after a failed add removes the brand-new file"
+else
+    pass "the rollback after a failed add removes the brand-new file"
+fi
+
+# --- a rollback that itself cannot restore reports exit 7 loudly, instead
+# of crashing (the old behaviour) or silently claiming a clean tree ---
+unrecoverable_head_before="$(git rev-parse HEAD)"
+touch .git/index.lock
+set +e
+unrecoverable_stderr="$(printf 'updated_at: X\nunrecoverable attempt\n' \
+    | "$WRITE" -m "checkpoint that cannot roll back" docs/baton/state.md 2>&1 >/dev/null)"
+unrecoverable_rc=$?
+set -e
+rm -f .git/index.lock
+
+echo "  -- git status --porcelain right after the exit-7 case (this is the assertion that matters) --"
+git status --porcelain docs/baton | sed 's/^/     /'
+assert_equals "$unrecoverable_rc" "7" "a rollback that cannot restore the tree exits 7"
+assert_contains "$unrecoverable_stderr" "docs/baton/state.md" \
+    "the exit-7 message names the path that needs manual resolution"
+assert_equals "$(git rev-parse HEAD)" "$unrecoverable_head_before" \
+    "no commit lands when the rollback itself fails"
+assert_contains "$(git status --porcelain docs/baton)" "M docs/baton/state.md" \
+    "the exit-7 case genuinely leaves the tree dirty rather than silently claiming success"
+
+# Clean up by hand (the lock is gone now, so this succeeds) so later
+# assertions are not built on a tree this case deliberately left dirty.
+git checkout -q HEAD -- docs/baton/state.md
+assert_equals "$(git status --porcelain docs/baton | wc -l | tr -d ' ')" "0" \
+    "sanity: manual cleanup after the exit-7 case restores a clean tree"
+
+# --- an absolute path to a file with real committed content, given empty
+# stdin: refused, not silently truncated. $FIXTURE is used unresolved
+# (not canonicalised first) because that is the realistic case: mktemp -d
+# routes through a symlink on macOS (/tmp -> /private/tmp), so a caller
+# building an absolute path this way is the normal case, not an edge one. ---
+before_state_content_abs="$(cat docs/baton/state.md)"
+set +e
+: | "$WRITE" -m "oops empty via absolute path" "$FIXTURE/docs/baton/state.md"
+abs_empty_rc=$?
+set -e
+
+assert_equals "$abs_empty_rc" "3" "an absolute path does not bypass the empty-stdin guard"
+assert_equals "$(cat docs/baton/state.md)" "$before_state_content_abs" \
+    "the committed content survives the absolute-path empty-stdin attempt"
+assert_equals "$(git status --porcelain docs/baton | wc -l | tr -d ' ')" "0" \
+    "docs/baton stays clean after the refused absolute-path write"
+
+# --- invoked from a subdirectory with the conventional repo-root-relative
+# path: the real docs/baton/state.md is what gets updated, not a duplicate
+# nested under the subdirectory ---
+mkdir -p somewhere/deep
+subdir_commits_before="$(git rev-list --count HEAD)"
+(cd somewhere/deep && printf 'updated_at: 2026-08-03T16:00:00Z\nCurrent wave: 4\n' \
+    | "$WRITE" -m "checkpoint from a subdirectory" docs/baton/state.md)
+
+assert_equals "$(git rev-list --count HEAD)" "$((subdir_commits_before + 1))" \
+    "a subdirectory invocation with a root-relative path creates exactly one commit"
+assert_contains "$(cat docs/baton/state.md)" "Current wave: 4" \
+    "the real, repo-root state.md is what gets updated"
+if [ -e somewhere/deep/docs/baton/state.md ]; then
+    fail "no duplicate file appears under the subdirectory"
+else
+    pass "no duplicate file appears under the subdirectory"
+fi
+assert_equals "$(git status --porcelain | wc -l | tr -d ' ')" "0" \
+    "the tree is fully clean after the subdirectory invocation"
+
+# --- an absolute path outside the repository is refused, not guessed at ---
+outside_dir="$(mktemp -d)"
+set +e
+printf 'updated_at: X\nshould be refused\n' \
+    | "$WRITE" -m "should be refused" "$outside_dir/docs/baton/state.md"
+outside_rc=$?
+set -e
+rm -rf "$outside_dir"
+
+assert_equals "$outside_rc" "3" "an absolute path outside the repository is refused"
+
+# --- CRLF content that differs from HEAD only by the timestamp is still
+# idle under core.autocrlf=input: the comparison goes through git's own
+# normalisation (git hash-object), not raw bytes ---
+git config core.autocrlf input
+crlf_commits_before="$(git rev-list --count HEAD)"
+printf 'updated_at: 2026-08-03T17:00:00Z\r\nCurrent wave: 4\r\n' \
+    | "$WRITE" -m "checkpoint, CRLF, should be idle" docs/baton/state.md
+
+assert_equals "$(git rev-list --count HEAD)" "$crlf_commits_before" \
+    "a CRLF-only, timestamp-only diff under autocrlf=input still creates no commit"
+assert_equals "$(git status --porcelain docs/baton | wc -l | tr -d ' ')" "0" \
+    "the tree stays clean after the CRLF idle attempt"
+
 assert_exit_code 64 "rejects being called without a path" "$WRITE"
 
 finish
