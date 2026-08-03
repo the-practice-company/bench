@@ -63,6 +63,18 @@ usage() {
 cmd="$1"
 session="$2"
 
+# An empty session id is validated here, at entry, before any lock state is
+# touched -- not left to fall out of lock_state's comparisons further down.
+# `[ "$owner" = "$session" ]` there treats two callers who both pass an
+# empty $CLAUDE_SESSION_ID as the SAME session: both read the lock as
+# "ours" (an unset file's owner field and an empty caller id compare
+# equal), both get exit 0, and neither prints a takeover= line or any error
+# -- the single-writer guarantee is gone with no signal that it happened.
+# Every caller passes "$CLAUDE_SESSION_ID" verbatim, so one unset
+# environment variable anywhere is enough to trigger this; refusing it
+# outright, loudly, is safer than letting two writers quietly share a lease.
+[ -n "$session" ] || { echo "baton-lock: session id must not be empty" >&2; exit 64; }
+
 if ! git rev-parse --git-dir >/dev/null 2>&1; then
     echo "baton-lock: not a git repository" >&2
     exit 1

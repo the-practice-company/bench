@@ -167,4 +167,31 @@ assert_exit_code 64 "usage error: no arguments" "$LOCK"
 assert_exit_code 64 "usage error: unknown verb" "$LOCK" frobnicate session-f
 assert_exit_code 64 "usage error: too many arguments" "$LOCK" acquire session-f extra-arg
 
+# --- an empty session id is a usage error, not a silently shared lease ---
+# baton-lock validated argument count but never that the session id itself
+# was non-empty. Every real caller passes "$CLAUDE_SESSION_ID" verbatim, so
+# one unset environment variable was enough for two independent callers to
+# both read the lock as "ours" (an empty owner field equals an empty
+# caller id) and both get exit 0 with no takeover= line and no error at
+# all -- the single-writer guarantee gone with nothing to show for it.
+rm -rf .baton
+assert_exit_code 64 "usage error: empty session id" "$LOCK" acquire ""
+if [ -e .baton/lock ]; then
+    fail "a rejected empty session id writes no lock file"
+else
+    pass "a rejected empty session id writes no lock file"
+fi
+
+empty_id_stderr="$("$LOCK" acquire "" 2>&1 >/dev/null || true)"
+assert_contains "$empty_id_stderr" "session id" "the usage-error message names what was wrong: the session id"
+
+# The same two-caller collision the fix closes, made concrete: both callers
+# passing an empty session id must not both succeed.
+set +e
+first_empty_rc=0; first_empty_out="$("$LOCK" acquire "" 2>&1)" || first_empty_rc=$?
+second_empty_rc=0; second_empty_out="$("$LOCK" acquire "" 2>&1)" || second_empty_rc=$?
+set -e
+assert_equals "$first_empty_rc" "64" "the first of two callers with an empty session id is refused"
+assert_equals "$second_empty_rc" "64" "the second of two callers with an empty session id is refused too, not silently granted a shared lease"
+
 finish
