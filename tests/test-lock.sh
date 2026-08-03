@@ -5,41 +5,88 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 LOCK="$REPO_ROOT/plugins/baton/scripts/baton-lock"
 . "$SCRIPT_DIR/helpers.sh"
 
+lock_field() {
+    sed -n "s/^$1=//p" .baton/lock | head -1
+}
+
 make_fixture_repo
 
+# --- free lock: acquire, re-acquire (the heartbeat), check ---
 assert_exit_code 0 "acquires a free lock" "$LOCK" acquire session-a
 assert_file_exists ".baton/lock" "writes the lock file"
-assert_exit_code 0 "acquiring our own lock again is a no-op" "$LOCK" acquire session-a
+assert_exit_code 0 "re-acquiring our own lock is the heartbeat, not an error" "$LOCK" acquire session-a
 assert_exit_code 0 "check reports our own lock as held by us" "$LOCK" check session-a
 
-# A different session, whose pid is this live test process, must be refused.
-assert_exit_code 3 "refuses a lock held by another live session" "$LOCK" acquire session-b
-assert_exit_code 3 "check reports another live session" "$LOCK" check session-b
+# The lock file's contents, not just its existence: a write_lock that
+# swapped or garbled fields would still pass an existence-only check.
+assert_equals "$(lock_field session)" "session-a" "lock file records the session that holds it"
+pid_field="$(lock_field pid)"
+case "$pid_field" in
+    ''|*[!0-9]*|0) fail "lock file records a plain positive integer pid" ;;
+    *) pass "lock file records a plain positive integer pid" ;;
+esac
 
+# --- another session against an unexpired lease ---
+assert_exit_code 3 "acquire refuses an unexpired lease held by someone else" "$LOCK" acquire session-b
+assert_exit_code 3 "check reports an unexpired lease held by someone else" "$LOCK" check session-b
+
+# --- release ---
 assert_exit_code 3 "refuses to release a lock we do not hold" "$LOCK" release session-b
+assert_file_exists ".baton/lock" "a refused release leaves the lock file in place"
 assert_exit_code 0 "releases our own lock" "$LOCK" release session-a
 assert_exit_code 5 "check reports no lock once released" "$LOCK" check session-a
 
-# A lock owned by a dead pid is stale and may be taken over.
+# --- an expired lease (>= six hours old) ---
+# Built from the current clock, not a hardcoded date: a fixed epoch is only
+# "more than six hours old" depending on what time the suite happens to run.
 mkdir -p .baton
-cat > .baton/lock <<'EOF'
+cat > .baton/lock <<EOF
 session=ghost
 pid=99999999
 acquired=2026-08-03T00:00:00Z
-acquired_epoch=1785715200
-EOF
-assert_exit_code 4 "check reports a dead-pid lock as stale" "$LOCK" check session-c
-takeover="$("$LOCK" acquire session-c)"
-assert_contains "$takeover" "takeover=ghost" "reports whose stale lock was taken over"
-assert_exit_code 0 "check reports our lock after takeover" "$LOCK" check session-c
-
-# A lock older than six hours is stale even if its pid is alive.
-cat > .baton/lock <<EOF
-session=elder
-pid=$$
-acquired=2026-08-03T00:00:00Z
 acquired_epoch=$(( $(date -u +%s) - 21601 ))
 EOF
-assert_exit_code 4 "check reports a six-hour-old lock as stale" "$LOCK" check session-d
+assert_exit_code 4 "check reports an expired lease as expired" "$LOCK" check session-c
+
+set +e
+acquire_out="$("$LOCK" acquire session-c)"
+acquire_rc=$?
+set -e
+assert_equals "$acquire_rc" 0 "acquire on an expired lease succeeds"
+assert_contains "$acquire_out" "takeover=ghost" "acquire on an expired lease names the displaced session"
+assert_not_contains "$acquire_out" "takeover=session-c" "acquire on an expired lease does not name the new session"
+assert_exit_code 0 "check reports our lock after taking over an expired lease" "$LOCK" check session-c
+
+# --- takeover verb against an unexpired (live) lease ---
+cat > .baton/lock <<EOF
+session=incumbent
+pid=$$
+acquired=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+acquired_epoch=$(date -u +%s)
+EOF
+assert_exit_code 3 "sanity: the incumbent's lease is live before takeover" "$LOCK" check session-d
+
+set +e
+takeover_out="$("$LOCK" takeover session-d)"
+takeover_rc=$?
+set -e
+assert_equals "$takeover_rc" 0 "takeover verb succeeds against an unexpired live lease"
+assert_contains "$takeover_out" "takeover=incumbent" "takeover verb names the displaced session"
+assert_equals "$(lock_field session)" "session-d" "lock file records the new session after takeover"
+assert_exit_code 0 "check reports our lock after the takeover verb" "$LOCK" check session-d
+
+# --- a garbled acquired_epoch fails open instead of crashing ---
+cat > .baton/lock <<'EOF'
+session=confused
+pid=12345
+acquired=2026-08-03T00:00:00Z
+acquired_epoch=abc
+EOF
+assert_exit_code 4 "an unparseable acquired_epoch fails open to expired, not a crash" "$LOCK" check session-e
+
+# --- usage errors ---
+assert_exit_code 64 "usage error: no arguments" "$LOCK"
+assert_exit_code 64 "usage error: unknown verb" "$LOCK" frobnicate session-f
+assert_exit_code 64 "usage error: too many arguments" "$LOCK" acquire session-f extra-arg
 
 finish
