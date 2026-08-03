@@ -29,9 +29,11 @@ reads and uses what's there, still less that it *notices* a divergence and
 stops instead of quietly working around it — proving that takes a real
 agent, in a real session, doing the real thing. A scripted stand-in for that
 step would turn a green checkmark into no evidence at all, which is why this
-half is a runbook for a human to run by hand, not a test file.
+half is a runbook for a human to run by hand, not a test file. Scenario 3
+below has no scripted fixture-pinning counterpart yet at all — see its own
+"Fixture builder pending" note.
 
-Two scenarios follow. Run both by hand before each release:
+Three scenarios follow. Run all three by hand before each release:
 
 - **Scenario 1: cold start** — the fixture is clean and consistent. The
   agent resumes, verifies a claim that turns out to be true, and proceeds.
@@ -44,6 +46,12 @@ Two scenarios follow. Run both by hand before each release:
   pass condition would catch it — every one of scenario 1's seven conditions
   is satisfied by an agent that verifies a claim and finds it true. None of
   them exercise what happens when it isn't.
+- **Scenario 3: takeover** — the writer lease is held by a session that is
+  gone. The agent has to notice the lease before it starts working under it,
+  take it over deliberately rather than by accident, and journal who it
+  displaced — the composed flow `baton-lock`, `baton-resume` and
+  `baton-checkpoint` describe together but that nothing exercises end to end
+  anywhere else in this suite.
 
 ## Scenario 1: cold start
 
@@ -260,6 +268,111 @@ agent will look, superficially, like it "handled" the problem — the table
 will even look consistent afterward — which is what makes this failure mode
 worth spelling out here instead of trusting it to be self-evidently wrong.
 
+## Scenario 3: takeover
+
+`baton-lock`'s takeover paths print `takeover=<previous session>` whenever an
+`acquire` finds an expired lease, or a `takeover` call displaces a live one.
+`baton-resume` and `baton-checkpoint` both say the same thing about what
+happens next: record a journal entry of type `takeover` naming who was
+displaced, so a silent overlap of two sessions can never pass unnoticed. This
+is a composed flow across three files — the lock script, the resume skill,
+the checkpoint skill's journal-entry format — and nothing in this suite
+exercises it end to end. This scenario is that check, run by hand for the
+same reason scenarios 1 and 2 are: whether an agent actually notices a
+pre-existing lease and actually writes the entry is not something a script
+can observe.
+
+**Fixture builder pending.** `build-takeover.sh` does not exist yet, unlike
+scenarios 1 and 2. Building it means writing a `.baton/lock` file in the
+lease format `baton-lock` defines (`session=`, `pid=`, `acquired=`,
+`acquired_epoch=`), and `baton-lock` itself is under active revision at the
+time this scenario was written — building a fixture against a format that
+might still move is how the fixture rots before it is ever run. Once that
+work has landed, build one alongside `build.sh` and `build-diverged.sh`: the
+same constitution and state.md as scenario 1's clean fixture (nothing about
+the run itself is broken), plus a `.baton/lock` naming a session-id the
+resuming session will not be, with `acquired_epoch` set far enough in the
+past to read as expired under `baton-lock`'s staleness window. Until then,
+this scenario runs against a fixture assembled by hand, per the setup below,
+and is written against the documented behaviour in `baton-lock`,
+`baton-resume` and `baton-checkpoint` rather than against line numbers in any
+of them.
+
+### Setup
+
+Build scenario 1's clean fixture, then plant a stale lease in it by hand
+before starting the session. `.baton/` is gitignored by `/baton:init`, so
+this never touches git history:
+
+```bash
+bash tests/fixtures/cold-start/build.sh /tmp/baton-takeover
+mkdir -p /tmp/baton-takeover/.baton
+cat > /tmp/baton-takeover/.baton/lock <<EOF
+session=ghost-session-from-a-crashed-run
+pid=99999999
+acquired=2026-08-03T00:00:00Z
+acquired_epoch=$(( $(date -u +%s) - 21601 ))
+EOF
+cd /tmp/baton-takeover
+claude
+```
+
+`acquired_epoch` is built from the current clock, not a fixed date, so the
+lease is reliably past `baton-lock`'s staleness window (six hours, as
+`STALE_SECONDS` in `plugins/baton/scripts/baton-lock` reads at the time of
+writing — check the shipped script if this scenario ever behaves as though
+the lease were still live, since that number is what changed).
+
+Install the plugin and confirm it the same way as scenario 1's setup above,
+if this is a different machine or directory.
+
+### The test
+
+Say exactly this and nothing more:
+
+> continue
+
+### Pass conditions
+
+All five must hold.
+
+1. **It announces the resume before doing anything else**, and **reads the
+   constitution before the state, and both before the code** — the same two
+   conditions as scenario 1's 1 and 2. A stale lease is not licence to skip
+   the announcement or read out of order.
+2. **It attempts to take the writer role and notices what was already
+   there.** Somewhere in the transcript it runs `baton-lock acquire` (or
+   `check`), and either the tool output or what the agent says next names
+   `ghost-session-from-a-crashed-run`. Silently proceeding to `Next action`
+   without ever touching the lock is a fail: the lease exists precisely so
+   that cannot happen unnoticed.
+3. **It takes the lease deliberately, not by accident.** `baton-lock acquire`
+   against an expired lease succeeds on its own and prints
+   `takeover=ghost-session-from-a-crashed-run` — the pass condition is that
+   the agent reads that output and treats what happened as a takeover, not
+   as an ordinary uncontested acquire indistinguishable from scenario 1.
+4. **It writes a `type: takeover` journal entry naming who was displaced.**
+   Check `docs/baton/journal/` (via `git log -p docs/baton/journal/`, or
+   `git status` if it has not committed yet) for a new entry with
+   `type: takeover` and a `## Who was displaced` section that names
+   `ghost-session-from-a-crashed-run` specifically — not "a previous
+   session" left unnamed. The entry's `## Why it was believed safe` section
+   should say something concrete (the lease had expired, per the printed
+   `takeover=`), not a placeholder.
+5. **It proceeds to `Next action` only after the above, not instead of it.**
+   Once the lease is taken and journaled, this fixture is identical to
+   scenario 1's, so the same work should follow: edits to `renew()` in
+   `src/session.js`. Work that starts before the takeover is journaled, or
+   that never gets to it at all, is a fail even if the eventual code change
+   is correct.
+
+**Silently working under a lease that already belongs to someone else is the
+failure this scenario exists to catch.** An agent that never runs
+`baton-lock`, or runs it but does not act on a non-empty `takeover=` by
+writing the journal entry, has let pass quietly the exact overlap the lock
+and the journal type exist to make loud — and the eventual code change can
+look completely correct while that happened.
+
 ## Recording the result
 
 For each scenario, note which of its pass conditions failed, and what the
@@ -268,8 +381,16 @@ a defect in `docs/baton/state.md` or `docs/baton/constitution.md`'s format,
 the `session-start` hook, or the `baton-resume` skill. A failure in scenario
 2 — especially a silent correction — points at the divergence policy itself:
 the `baton` skill's statement of it, or `baton-resume`'s steps 2, 3 and 6,
-not finding their way into what the agent actually does. Neither points at
-the model. `test-cold-start.sh` and `test-cold-start-diverged.sh` already
-proved each fixture holds what a resuming agent needs, and, for the diverged
-one, that its divergences are real — so anything missed in either scenario
-was not made findable enough, and that is fixable.
+not finding their way into what the agent actually does. A failure in
+scenario 3 points at `baton-resume` step 5 (taking the writer role) or at the
+takeover-journaling instructions repeated in `baton-resume` and
+`baton-checkpoint` not finding their way into what the agent actually does.
+Neither points at the model. `test-cold-start.sh` and
+`test-cold-start-diverged.sh` already proved each of their fixtures holds
+what a resuming agent needs, and, for the diverged one, that its divergences
+are real — so anything missed in scenario 1 or 2 was not made findable
+enough, and that is fixable. Scenario 3 has no such scripted backstop yet
+(see its "Fixture builder pending" note), so a failure there is worth
+double-checking by hand before concluding it is real: confirm the hand-built
+lease file actually matches `baton-lock`'s current lease format before
+trusting a failure to mean the takeover flow itself is broken.
