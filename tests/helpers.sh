@@ -65,8 +65,9 @@ json_get() {
 # Create a throwaway git repository and cd into it. Sets $FIXTURE.
 make_fixture_repo() {
     FIXTURE="$(mktemp -d)"
-    cd "$FIXTURE"
-    git init -q
+    trap cleanup_fixture EXIT
+    cd "$FIXTURE" || return 1
+    git init -q -b main
     git config user.name "baton test"
     git config user.email "baton@example.invalid"
     git config commit.gpgsign false
