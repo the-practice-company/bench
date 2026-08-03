@@ -47,6 +47,55 @@ done
 target="$1"
 [ -n "$message" ] || message="baton: update $(basename "$target")"
 
+# Collapses "." components, "/./", repeated slashes and a trailing slash,
+# and resolves ".." against what came before it -- so that every spelling
+# of the same path reduces to one canonical string before either integrity
+# guard below (the constitution refusal, the state.md line cap) compares
+# against it. Without this, `[ "$target" = "docs/baton/constitution.md" ]`
+# is a literal string comparison: `./docs/baton/constitution.md`, `docs/
+# baton/../baton/constitution.md` and `docs//baton/constitution.md` all name
+# the same file to git (git add/commit canonicalise a pathspec before they
+# touch a blob) but not to this comparison, so all three walked straight
+# past the refusal and committed to the file this script exists to protect.
+# `set -- $input` under IFS=/ is the split, deliberately unquoted so a run
+# of slashes produces the empty fields that get dropped below; it only ever
+# rewrites this function's own positional parameters, never the caller's.
+# Fails (returns 1) if ".." climbs above the first component -- a relative
+# target that would land outside wherever it started, the same "cannot be
+# normalised into somewhere sane" case the absolute-path handling below
+# already refuses explicitly.
+canonicalize_target() {
+    local input="$1" component result=""
+    case "$input" in
+        */) input="${input%/}" ;;
+    esac
+    local saved_ifs="$IFS"
+    IFS=/
+    set -- $input
+    IFS="$saved_ifs"
+    for component in "$@"; do
+        case "$component" in
+            ''|'.') continue ;;
+            '..')
+                case "$result" in
+                    '') return 1 ;;
+                    */*) result="${result%/*}" ;;
+                    *) result="" ;;
+                esac
+                ;;
+            *)
+                if [ -z "$result" ]; then
+                    result="$component"
+                else
+                    result="$result/$component"
+                fi
+                ;;
+        esac
+    done
+    [ -n "$result" ] || return 1
+    printf '%s\n' "$result"
+}
+
 if ! git rev-parse --git-dir >/dev/null 2>&1; then
     echo "baton-write: not a git repository" >&2
     exit 1
@@ -95,6 +144,22 @@ case "$target" in
         esac
         ;;
 esac
+
+# Canonicalise unconditionally, not only the absolute-path branch above:
+# $target at this point may still be a relative path exactly as the caller
+# typed it, and a relative spelling is precisely what defeated the
+# constitution and state.md guards (see canonicalize_target's comment).
+# This also folds "docs//baton/constitution.md" back to a path git
+# recognises, instead of that comparison failing to match AND the later
+# `git cat-file`/`git rev-parse` calls below dying with an unguarded
+# `fatal: path ... exists on disk, but not in 'HEAD'` -- noisy, but no
+# safer, since by then the file had already been written. Canonicalising up
+# front means both guards fire first, cleanly, before either failure mode.
+canonical_target="$(canonicalize_target "$target")" || {
+    echo "baton-write: refusing: $target does not resolve to a path inside the repository ($repo_root)" >&2
+    exit 3
+}
+target="$canonical_target"
 
 # Refuse up front, before anything is touched: a partial commit of just
 # "$target" -- which is what this script always does -- is impossible

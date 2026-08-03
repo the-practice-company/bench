@@ -343,6 +343,51 @@ else
     pass "no constitution.md appears anywhere after the refused subdirectory write"
 fi
 
+# --- same refusal again, this time via alternate spellings of the identical
+# path: a leading "./", an internal "..", and a doubled "/". Before
+# canonicalize_target existed, each of these walked straight past the plain
+# `[ "$target" = "docs/baton/constitution.md" ]` string comparison and
+# committed the tampered content -- git add/commit resolve all of them to
+# the same blob path, so the resulting commit was indistinguishable from a
+# legitimate checkpoint. This is the reproduced bypass the fix closes. ---
+for spelling in \
+    "./docs/baton/constitution.md" \
+    "docs/baton/../baton/constitution.md" \
+    "docs//baton/constitution.md"
+do
+    set +e
+    printf 'schema: baton/constitution/v1\nstatus: ratified\nverify_cmd: "echo always-pass"\n' \
+        | "$WRITE" -m "agent: weaken the gate via $spelling" "$spelling"
+    spelling_rc=$?
+    set -e
+
+    assert_equals "$spelling_rc" "3" "refuses docs/baton/constitution.md spelled as $spelling"
+    assert_equals "$(git rev-list --count HEAD)" "$constitution_commits_before" \
+        "the refused $spelling write creates no commit"
+    if [ -e docs/baton/constitution.md ]; then
+        fail "the refused $spelling write leaves nothing on disk"
+    else
+        pass "the refused $spelling write leaves nothing on disk"
+    fi
+done
+
+# --- canonicalisation is not just a refusal-widener: a doubled slash to an
+# ordinary, unguarded target used to die with an unguarded `fatal: path ...
+# exists on disk, but not in 'HEAD'` and exit 128 (git's own path lookups
+# never treated "docs//baton/plain.md" and "docs/baton/plain.md" as the same
+# path the way `git add`/`git commit` do). Canonicalising up front means
+# git only ever sees the clean spelling, so this now succeeds normally. ---
+set +e
+canon_stderr="$(printf 'updated_at: X\nplain content\n' \
+    | "$WRITE" -m "checkpoint via a doubled slash" docs//baton/plain.md 2>&1 >/dev/null)"
+canon_rc=$?
+set -e
+
+assert_equals "$canon_rc" "0" "a doubled slash to an ordinary target no longer dies with exit 128"
+assert_equals "$canon_stderr" "" "a doubled slash to an ordinary target produces no fatal: noise"
+assert_contains "$(cat docs/baton/plain.md 2>/dev/null)" "plain content" \
+    "the doubled-slash write lands at the canonical, single-slash path"
+
 # --- docs/baton/state.md's 60-line cap is enforced here, not only checked
 # against the shipped template: a state file grown past the cap by real
 # checkpoints must be refused too, not just the day-one copy. ---
@@ -370,5 +415,29 @@ assert_equals "$(wc -l < docs/baton/state.md | tr -d ' ')" "60" \
     "state.md still holds the last accepted (60-line) content, not the refused 61-line one"
 assert_equals "$(git status --porcelain docs/baton | wc -l | tr -d ' ')" "0" \
     "docs/baton is clean after the refused over-cap write"
+
+# --- the same 61-line refusal via the same alternate spellings as the
+# constitution bypass above: the cap is baton's own schema knowledge, gated
+# on `[ "$target" = "docs/baton/state.md" ]` exactly like the constitution
+# refusal is, so it was defeated by the identical trick. ---
+for spelling in \
+    "./docs/baton/state.md" \
+    "docs/baton/../baton/state.md" \
+    "docs//baton/state.md"
+do
+    spelling_cap_commits_before="$(git rev-list --count HEAD)"
+    set +e
+    spelling_cap_stderr="$(printf '%s\n' "$sixty_one_lines" \
+        | "$WRITE" -m "checkpoint at 61 lines via $spelling" "$spelling" 2>&1 >/dev/null)"
+    spelling_cap_rc=$?
+    set -e
+
+    assert_equals "$spelling_cap_rc" "3" "refuses docs/baton/state.md at 61 lines spelled as $spelling"
+    assert_contains "$spelling_cap_stderr" "60" "the $spelling refusal message names the 60-line cap"
+    assert_equals "$(git rev-list --count HEAD)" "$spelling_cap_commits_before" \
+        "the refused $spelling over-cap write creates no commit"
+    assert_equals "$(wc -l < docs/baton/state.md | tr -d ' ')" "60" \
+        "state.md still holds 60 lines after the refused $spelling over-cap write"
+done
 
 finish
