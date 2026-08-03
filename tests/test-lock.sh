@@ -57,6 +57,65 @@ assert_contains "$acquire_out" "takeover=ghost" "acquire on an expired lease nam
 assert_not_contains "$acquire_out" "takeover=session-c" "acquire on an expired lease does not name the new session"
 assert_exit_code 0 "check reports our lock after taking over an expired lease" "$LOCK" check session-c
 
+# --- concurrent acquire against an expired lease must have exactly one
+# winner, not all of them. Before the mutex existed, every concurrent
+# acquire against an expired lease returned 0 and printed takeover=<the
+# same displaced session>, even though only one write actually persisted --
+# reproduced ten trials out of ten. A single execution rarely catches a
+# race, so this repeats the experiment ten times, each with several callers
+# racing the same expired lease, and requires exactly one winner every time. ---
+concurrent_trial=1
+while [ "$concurrent_trial" -le 10 ]; do
+    rm -rf .baton
+    mkdir -p .baton
+    cat > .baton/lock <<EOF
+session=ghost-trial-$concurrent_trial
+pid=99999999
+acquired=2026-08-03T00:00:00Z
+acquired_epoch=$(( $(date -u +%s) - 21601 ))
+EOF
+
+    race_results="$(mktemp -d)"
+    racer=1
+    while [ "$racer" -le 5 ]; do
+        (
+            # set +e around the call, not just `|| true`: this subshell
+            # inherits set -e from the script, and a bare failing command
+            # substitution assignment (`out="$(cmd)"` where cmd exits
+            # non-zero -- the losing racers all do, with exit 3) would abort
+            # the subshell right there, before rc=$? or the printf below
+            # ever run. Four out of five racers are SUPPOSED to fail here;
+            # losing the race is the normal case being tested, not an error
+            # this subshell should die on.
+            set +e
+            out="$("$LOCK" acquire "racer-$concurrent_trial-$racer" 2>&1)"
+            rc=$?
+            set -e
+            printf 'rc=%s out=%s\n' "$rc" "$out" > "$race_results/$racer"
+        ) &
+        racer=$((racer + 1))
+    done
+    wait
+
+    # `|| true` on each: under pipefail (this script's own set -euo
+    # pipefail), grep matching nothing exits non-zero even though wc/tr
+    # after it succeed, which would abort this whole test file right here
+    # if that pipeline's result is ever 0 -- exactly the outcome a broken
+    # mutex would produce and this test exists to catch. The count still
+    # ends up in $winners/$busy_losers either way; only the script's own
+    # survival is being protected here, not the assertion below it.
+    winners="$(grep -l '^rc=0' "$race_results"/* 2>/dev/null | wc -l | tr -d ' ')" || true
+    assert_equals "$winners" "1" \
+        "trial $concurrent_trial: exactly one concurrent acquire wins the takeover of an expired lease"
+
+    busy_losers="$(grep -l '^rc=3' "$race_results"/* 2>/dev/null | wc -l | tr -d ' ')" || true
+    assert_equals "$busy_losers" "4" \
+        "trial $concurrent_trial: the other four concurrent acquires are correctly refused as busy, not silently dropped"
+
+    rm -rf "$race_results"
+    concurrent_trial=$((concurrent_trial + 1))
+done
+
 # --- takeover verb against an unexpired (live) lease ---
 cat > .baton/lock <<EOF
 session=incumbent
