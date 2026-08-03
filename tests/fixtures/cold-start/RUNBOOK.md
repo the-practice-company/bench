@@ -18,20 +18,22 @@ Those files live under `docs/baton/`:
   the constitution) are done, which is in progress, and exactly what to do
   next. Rewritten on every checkpoint.
 
-`test-cold-start.sh` and `test-cold-start-diverged.sh` (in this same
-directory's parent) each build a fixture repository and check, by script,
-what is mechanically checkable about it: that everything a resuming agent
-would need is present on disk, and — for the diverged fixture — that its two
-divergences are real (a `closed_at_sha` that genuinely is not an ancestor of
-`HEAD`, an `observed_sha` that genuinely is behind the current `work_sha`).
-That is as far as a script can go. Neither test can prove an agent actually
-reads and uses what's there, still less that it *notices* a divergence and
-stops instead of quietly working around it — proving that takes a real
+`test-cold-start.sh`, `test-cold-start-diverged.sh` and
+`test-cold-start-takeover.sh` (in this same directory's parent) each build a
+fixture repository and check, by script, what is mechanically checkable
+about it: that everything a resuming agent would need is present on disk,
+that — for the diverged fixture — its two divergences are real (a
+`closed_at_sha` that genuinely is not an ancestor of `HEAD`, an
+`observed_sha` that genuinely is behind the current `work_sha`), and that —
+for the takeover fixture — its lease genuinely reads as expired to a session
+that did not write it, and genuinely names a session other than the one
+that will resume. That is as far as a script can go. None of the three tests
+can prove an agent actually reads and uses what's there, still less that it
+*notices* a divergence, or a pre-existing lease, and does the right thing
+about it instead of quietly working around it — proving that takes a real
 agent, in a real session, doing the real thing. A scripted stand-in for that
 step would turn a green checkmark into no evidence at all, which is why this
-half is a runbook for a human to run by hand, not a test file. Scenario 3
-below has no scripted fixture-pinning counterpart yet at all — see its own
-"Fixture builder pending" note.
+half is a runbook for a human to run by hand, not a test file.
 
 Three scenarios follow. Run all three by hand before each release:
 
@@ -282,46 +284,26 @@ same reason scenarios 1 and 2 are: whether an agent actually notices a
 pre-existing lease and actually writes the entry is not something a script
 can observe.
 
-**Fixture builder pending.** `build-takeover.sh` does not exist yet, unlike
-scenarios 1 and 2. Building it means writing a `.baton/lock` file in the
-lease format `baton-lock` defines (`session=`, `pid=`, `acquired=`,
-`acquired_epoch=`), and `baton-lock` itself is under active revision at the
-time this scenario was written — building a fixture against a format that
-might still move is how the fixture rots before it is ever run. Once that
-work has landed, build one alongside `build.sh` and `build-diverged.sh`: the
-same constitution and state.md as scenario 1's clean fixture (nothing about
-the run itself is broken), plus a `.baton/lock` naming a session-id the
-resuming session will not be, with `acquired_epoch` set far enough in the
-past to read as expired under `baton-lock`'s staleness window. Until then,
-this scenario runs against a fixture assembled by hand, per the setup below,
-and is written against the documented behaviour in `baton-lock`,
-`baton-resume` and `baton-checkpoint` rather than against line numbers in any
-of them.
-
 ### Setup
 
-Build scenario 1's clean fixture, then plant a stale lease in it by hand
-before starting the session. `.baton/` is gitignored by `/baton:init`, so
-this never touches git history:
+Build the fixture — the same clean, mid-wave repository as scenario 1's,
+plus a `.baton/lock` file left behind by a session that is gone:
 
 ```bash
-bash tests/fixtures/cold-start/build.sh /tmp/baton-takeover
-mkdir -p /tmp/baton-takeover/.baton
-cat > /tmp/baton-takeover/.baton/lock <<EOF
-session=ghost-session-from-a-crashed-run
-pid=99999999
-acquired=2026-08-03T00:00:00Z
-acquired_epoch=$(( $(date -u +%s) - 21601 ))
-EOF
+bash tests/fixtures/cold-start/build-takeover.sh /tmp/baton-takeover
 cd /tmp/baton-takeover
 claude
 ```
 
-`acquired_epoch` is built from the current clock, not a fixed date, so the
-lease is reliably past `baton-lock`'s staleness window (six hours, as
-`STALE_SECONDS` in `plugins/baton/scripts/baton-lock` reads at the time of
-writing — check the shipped script if this scenario ever behaves as though
-the lease were still live, since that number is what changed).
+The lease names `ghost-session-from-a-crashed-run` and an `acquired_epoch`
+built from the current clock (see `build-takeover.sh`'s own comment for why
+that, not a fixed date), so it reads as expired under `baton-lock`'s
+staleness window regardless of what time of day this is run.
+`test-cold-start-takeover.sh` pins the two facts this scenario rests on —
+that `baton-lock` genuinely reports this lease as expired to a session that
+is not the one that wrote it, and that the lease genuinely names a session
+other than the one that will resume — so a change to the staleness constant
+or the lease's field names shows up there, not as a silent failure here.
 
 Install the plugin and confirm it the same way as scenario 1's setup above,
 if this is a different machine or directory.
@@ -385,12 +367,10 @@ not finding their way into what the agent actually does. A failure in
 scenario 3 points at `baton-resume` step 5 (taking the writer role) or at the
 takeover-journaling instructions repeated in `baton-resume` and
 `baton-checkpoint` not finding their way into what the agent actually does.
-Neither points at the model. `test-cold-start.sh` and
-`test-cold-start-diverged.sh` already proved each of their fixtures holds
-what a resuming agent needs, and, for the diverged one, that its divergences
-are real — so anything missed in scenario 1 or 2 was not made findable
-enough, and that is fixable. Scenario 3 has no such scripted backstop yet
-(see its "Fixture builder pending" note), so a failure there is worth
-double-checking by hand before concluding it is real: confirm the hand-built
-lease file actually matches `baton-lock`'s current lease format before
-trusting a failure to mean the takeover flow itself is broken.
+Neither points at the model. `test-cold-start.sh`, `test-cold-start-
+diverged.sh` and `test-cold-start-takeover.sh` already proved each of their
+fixtures holds what a resuming agent needs, and, for the diverged and
+takeover ones, that their respective premises are real — so anything missed
+in any of the three scenarios was not made findable enough, and that is
+fixable. It is not evidence that a fixture's premise itself silently rotted
+out from under it; the scripted tests are what would catch that.
