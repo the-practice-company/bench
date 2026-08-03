@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 # Print repository facts as key=value, or list files changed since a SHA.
 # Knows nothing about any particular project: git only.
+#
+# Exit codes:
+#   0   success
+#   1   not a git repository
+#   64  usage error
+#   *   any other non-zero code comes from git itself and means the facts
+#       could not be established
+#
+# Output is unquoted key=value lines. A consumer should split on the FIRST
+# "=" only, since git permits "=" in branch names.
+#
+# Known limitation: a global core.excludesfile that hides a real path will
+# still hide it from this script, since git itself never reports it.
 set -euo pipefail
 
 usage() {
@@ -9,11 +22,13 @@ usage() {
 }
 
 changed_since=""
+changed_since_set=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --changed-since)
             [ $# -ge 2 ] || usage
             changed_since="$2"
+            changed_since_set=1
             shift 2
             ;;
         -h|--help) usage ;;
@@ -26,8 +41,12 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
     exit 1
 fi
 
-if [ -n "$changed_since" ]; then
-    git diff --name-only "$changed_since"
+if [ "$changed_since_set" = 1 ]; then
+    [ -n "$changed_since" ] || { echo "baton-observe: --changed-since needs a non-empty SHA" >&2; exit 64; }
+    {
+        git -c core.quotePath=false diff --name-only "$changed_since"
+        git -c core.quotePath=false ls-files --others --exclude-standard
+    } | sort -u
     exit 0
 fi
 
@@ -40,7 +59,7 @@ else
 fi
 
 branch="$(git symbolic-ref --short -q HEAD || echo '(detached)')"
-dirty_count="$(git status --porcelain | wc -l | tr -d ' ')"
+dirty_count="$(git -c core.quotePath=false status --porcelain -uall --ignore-submodules=none | wc -l | tr -d ' ')"
 
 if [ "$dirty_count" = "0" ]; then
     tree_clean=true
