@@ -438,6 +438,23 @@ git commit -m "feat: baton-observe prints repository facts"
 
 The writer role is held for the whole session, not borrowed per write.
 
+> **Superseded during implementation, 2026-08-03.** The code below was built as
+> written, reviewed, and then reworked. Its pid-liveness check does not work:
+> every Bash tool call in Claude Code is a fresh short-lived process, so the
+> recorded `$PPID` is dead by the next call, `live` is unreachable, and every
+> session takes over every other session's lock believing it abandoned.
+>
+> Liveness cannot be observed from inside a tool call, so the lock became a
+> **lease**: the holder is live until the lease expires and refreshes it at each
+> checkpoint. `stale` was renamed `expired`, since that is what is actually
+> known. A fourth verb, `takeover`, always succeeds and names whom it displaced,
+> so a crashed session can never strand a run for six hours. The pid is still
+> recorded for a human debugging a wedged run, but no decision reads it.
+>
+> The shipped script and tests are the source of truth. The blocks below are
+> kept as the record of what was tried and why it was abandoned. See the
+> amendment in section 8.4 of the spec.
+
 **Files:**
 - Create: `plugins/baton/scripts/baton-lock`
 - Create: `tests/test-lock.sh`
@@ -1272,8 +1289,14 @@ Persist the run so a session with no memory of this one can continue it.
 
 **Announce at start:** "Checkpointing before we lose this context."
 
-**Prerequisite:** you hold the writer lock. If `baton-lock check <session-id>`
+**Prerequisite:** you hold the writer lease. If `baton-lock check <session-id>`
 exits non-zero, resolve that first — see `baton-resume`.
+
+Then run `baton-lock acquire <session-id>` before writing anything. For the
+holder that is not a second acquisition, it is the heartbeat: it pushes the
+lease expiry out. A session that checkpoints regularly never lets its lease
+lapse, and a session that has stopped checkpointing has stopped working, which
+is exactly when someone else should be allowed to take the baton.
 
 ## The Process
 
@@ -1490,8 +1513,11 @@ than working around it.
 "${CLAUDE_PLUGIN_ROOT}/scripts/baton-lock" acquire "$CLAUDE_SESSION_ID"
 ```
 
-Exit 3 means another live session holds it — do not write state; say so. On a
-stale takeover the script prints `takeover=<previous session>`; record a
+Exit 3 means another session holds an unexpired lease — do not write state; say
+so, and stop. If you have good reason to believe that session is gone, run
+`baton-lock takeover "$CLAUDE_SESSION_ID"` instead; it always succeeds.
+
+Either way, whenever the script prints `takeover=<previous session>`, record a
 journal entry of type `takeover` so a silent overlap of two sessions cannot
 happen unnoticed.
 
