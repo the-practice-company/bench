@@ -32,4 +32,163 @@ else
     fail "state template is within the 60-line cap ($lines lines)"
 fi
 
+# The Waves section must be a fenced code block: the fence is the only
+# unambiguous boundary a consumer can extract without guessing where the
+# YAML ends and Markdown prose resumes.
+assert_contains "$constitution" '```yaml' "constitution's wave list is fenced as a machine-readable block"
+
+# Structurally parse the fenced block. PyYAML is not guaranteed to be
+# installed wherever this suite runs, so this uses a small dependency-free
+# parser (python3 stdlib only) that understands just enough of the YAML
+# subset the template uses (block sequences of mappings, flow lists,
+# nested block lists) to reject bad indentation or a missing colon, not
+# just to grep for expected substrings.
+fence_check_output="$(python3 - "$TPL/constitution.md" <<'PY'
+import re, sys
+
+def parse_scalar(s):
+    s = s.strip()
+    if s == '[]':
+        return []
+    m = re.fullmatch(r'\[(.*)\]', s)
+    if m:
+        inner = m.group(1).strip()
+        return [] if not inner else [parse_scalar(x) for x in inner.split(',')]
+    if re.fullmatch(r'-?\d+', s):
+        return int(s)
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ('"', "'"):
+        return s[1:-1]
+    return s
+
+def indent(line):
+    return len(line) - len(line.lstrip(' '))
+
+def parse_top_sequence(lines):
+    items = []
+    i, n = 0, len(lines)
+    while i < n:
+        if lines[i].strip() == '':
+            i += 1
+            continue
+        if indent(lines[i]) != 0 or not lines[i].lstrip().startswith('- '):
+            raise ValueError("expected top-level '- ' at line %d: %r" % (i, lines[i]))
+        item = {}
+        pending = lines[i].lstrip()[2:]
+        i += 1
+        item_indent = 2
+        while True:
+            key, sep, val = pending.partition(':')
+            if not sep:
+                raise ValueError("expected 'key: value' near line %d: %r" % (i, pending))
+            key, val = key.strip(), val.strip()
+            if val == '':
+                sub = []
+                while i < n and lines[i].strip() == '':
+                    i += 1
+                while i < n and indent(lines[i]) == item_indent + 2 and lines[i].lstrip().startswith('- '):
+                    sub.append(parse_scalar(lines[i].lstrip()[2:]))
+                    i += 1
+                item[key] = sub
+            else:
+                item[key] = parse_scalar(val)
+            while i < n and lines[i].strip() == '':
+                i += 1
+            if i < n and indent(lines[i]) == item_indent and not lines[i].lstrip().startswith('- '):
+                pending = lines[i].strip()
+                i += 1
+                continue
+            break
+        items.append(item)
+    return items
+
+path = sys.argv[1]
+text = open(path).read()
+m = re.search(r'```yaml\n(.*?)\n```', text, re.S)
+if not m:
+    print("NO_FENCE")
+    sys.exit(1)
+lines = m.group(1).split('\n')
+try:
+    waves = parse_top_sequence(lines)
+except Exception as e:
+    print("PARSE_ERROR: %s" % e)
+    sys.exit(1)
+
+if len(waves) != 2:
+    print("WRONG_COUNT: %d" % len(waves))
+    sys.exit(1)
+for w in waves:
+    ec = w.get('exit_criteria')
+    if not isinstance(ec, list) or not ec:
+        print("MISSING_EXIT_CRITERIA: %r" % w)
+        sys.exit(1)
+print("OK")
+PY
+)"
+if [ "$fence_check_output" = "OK" ]; then
+    pass "constitution's fenced YAML wave block parses and yields two wave entries with exit_criteria"
+else
+    fail "constitution's fenced YAML wave block parses and yields two wave entries with exit_criteria"
+    echo "    $fence_check_output"
+fi
+
+# Regression check for the spurious-heading bug: outside the fenced block
+# (and other than the document's own title, its first non-blank line), no
+# line may start with a bare "# " -- that is Markdown ATX-heading syntax,
+# and a "#"-prefixed line meant as a YAML comment renders as a heading the
+# same weight as the document title once it leaves the fence.
+heading_check_output="$(python3 - "$TPL/constitution.md" <<'PY'
+import re, sys
+
+path = sys.argv[1]
+text = open(path).read()
+
+fm = re.match(r'^---\n.*?\n---\n', text, re.S)
+if not fm:
+    print("NO_FRONTMATTER")
+    sys.exit(1)
+body = text[fm.end():]
+
+body_no_fence = re.sub(r'```yaml\n.*?\n```\n?', '', body, flags=re.S)
+
+lines = body_no_fence.split('\n')
+first_nonblank = None
+for idx, line in enumerate(lines):
+    if line.strip() != '':
+        first_nonblank = idx
+        break
+
+offenders = []
+for idx, line in enumerate(lines):
+    if idx == first_nonblank:
+        continue
+    if re.match(r'^# ', line):
+        offenders.append((idx, line))
+
+if offenders:
+    print("SPURIOUS_HEADINGS:")
+    for idx, line in offenders:
+        print("  line %d: %r" % (idx, line))
+    sys.exit(1)
+
+print("OK")
+PY
+)"
+if [ "$heading_check_output" = "OK" ]; then
+    pass "no line in the constitution body outside the fenced block renders as a spurious heading"
+else
+    fail "no line in the constitution body outside the fenced block renders as a spurious heading"
+    echo "    $heading_check_output"
+fi
+
+assert_contains "$state" "todo | doing | done | blocked" "state names all four wave statuses"
+assert_contains "$state" "blocked\` waits on a dependency; \`needs_human: true\` (frontmatter) stops the whole run" "state distinguishes a blocked wave from a needs_human stop, in the same breath"
+
+lines2="$(wc -l < "$TPL/state.md" | tr -d ' ')"
+if [ "$lines2" -le 60 ]; then
+    pass "state template is still within the 60-line cap after the status legend ($lines2 lines)"
+else
+    fail "state template is still within the 60-line cap after the status legend ($lines2 lines)"
+fi
+
 finish

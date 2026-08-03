@@ -2,6 +2,9 @@
 schema: baton/constitution/v1
 run_id: REPLACE-WITH-SLUG
 status: draft
+# status must be `ratified` before any wave starts. A constitution that still
+# contains REPLACE-WITH tokens has not been ratified, regardless of what this
+# field says.
 ratified_by: REPLACE-WITH-NAME
 ratified_at: REPLACE-WITH-ISO8601
 git_anchor: REPLACE-WITH-SHA
@@ -30,6 +33,7 @@ current request while quietly violating the original brief.
 
 ## Waves
 
+```yaml
 - wave: 1
   name: REPLACE
   depends_on: []
@@ -43,20 +47,23 @@ current request while quietly violating the original brief.
   parallel_with: []
   exit_criteria:
     - When REPLACE WITH TRIGGER, the system shall REPLACE WITH BEHAVIOUR
+```
 
-# Exit criteria use EARS. Five patterns, "shall" is mandatory:
-#   The system shall <behaviour>
-#   When <trigger>, the system shall <behaviour>
-#   While <state>, the system shall <behaviour>
-#   Where <feature is enabled>, the system shall <behaviour>
-#   If <condition>, then the system shall <behaviour>
-# The gate judges against these lines. A criterion open to two readings is a
-# criterion the agent will read in its own favour.
-#
-# Waves with a non-empty parallel_with must also declare:
-#   produces: [<contract published to downstream waves>]
-#   consumes: [<contract taken from upstream waves>]
-# Parallelism is only safe when the contract is declared before implementation.
+Exit criteria use EARS. Five patterns, "shall" is mandatory:
+
+- The system shall `<behaviour>`
+- When `<trigger>`, the system shall `<behaviour>`
+- While `<state>`, the system shall `<behaviour>`
+- Where `<feature is enabled>`, the system shall `<behaviour>`
+- If `<condition>`, then the system shall `<behaviour>`
+
+The gate judges against these lines. A criterion open to two readings is a
+criterion the agent will read in its own favour.
+
+Waves with a non-empty `parallel_with` must also declare `produces:` (the
+contract published to downstream waves) and `consumes:` (the contract taken
+from upstream waves). Parallelism is only safe when the contract is declared
+before implementation.
 
 ## Decision authority
 

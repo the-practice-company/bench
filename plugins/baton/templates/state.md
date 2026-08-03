@@ -21,6 +21,9 @@ needs_human: false
 |---|------|--------|-----------------|------|------|---------------|------|
 | 1 | REPLACE | todo | — | — | — | — | — |
 
+**Status:** `todo | doing | done | blocked`.
+`blocked` waits on a dependency; `needs_human: true` (frontmatter) stops the whole run.
+
 **Current wave:** 1 — REPLACE
 
 ## Now
