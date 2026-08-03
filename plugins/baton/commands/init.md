@@ -58,7 +58,17 @@ config file: the gate trusts `verify_cmd`, and if the agent could edit it, the
 agent could weaken the gate. The constitution is the human's file, so the
 threshold is out of the agent's reach.
 
-## 5. Write the artifacts
+## 5. Take the writer lease, then write the artifacts
+
+Before writing anything, acquire the writer lease. The one-writer-for-the-
+session invariant every later checkpoint and resume relies on should not be
+left unestablished for the entire decomposition dialogue that just
+happened — it starts here, at the first write, not whenever something later
+happens to trigger `baton-resume`:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/baton-lock" acquire "$CLAUDE_SESSION_ID"
+```
 
 `${CLAUDE_PLUGIN_ROOT}/templates/constitution.md` and
 `${CLAUDE_PLUGIN_ROOT}/templates/state.md` are read-only: they are the shipped
@@ -82,11 +92,25 @@ grep -qxF '.baton/' .gitignore 2>/dev/null || {
 }
 ```
 
-Then write both scratch files through `baton-write` so they land atomically
-and get committed:
+`docs/baton/constitution.md` is the one path `baton-write` refuses outright,
+unconditionally — that refusal is the entire point of keeping `verify_cmd`
+and `placeholder_patterns` in the constitution rather than a config file:
+once the file exists, no tool the agent has can rewrite it, ever again. This
+step, right now, is the one moment the constitution is created — from here
+on it is read-only to the agent. Place it directly, with plain git, not
+through `baton-write`:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/scripts/baton-write" -m "baton: constitution for <run>" docs/baton/constitution.md < /tmp/constitution.md
+mkdir -p docs/baton
+cp /tmp/constitution.md docs/baton/constitution.md
+git add docs/baton/constitution.md
+git commit -q -m "baton: constitution for <run>"
+```
+
+Then write the initial state through `baton-write` so it lands atomically and
+gets committed, the same way every checkpoint after it will:
+
+```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/baton-write" -m "baton: initial state" docs/baton/state.md < /tmp/state.md
 ```
 
@@ -96,6 +120,7 @@ Ask the human to read `docs/baton/constitution.md` and change `status: draft`
 to `status: ratified`, filling `ratified_by`, `ratified_at` and `git_anchor`.
 
 Say why it matters rather than treating it as paperwork: from this point the
-agent reads the constitution and never writes it, and everything downstream —
-what the gate checks, what may not be broken, where the wave boundaries are —
-is anchored to a document the human signed.
+agent reads the constitution and never writes it — `baton-write` refuses the
+path outright, so this is now a mechanical fact, not a convention — and
+everything downstream — what the gate checks, what may not be broken, where
+the wave boundaries are — is anchored to a document the human signed.
