@@ -18,8 +18,8 @@
 #   3   refused before touching anything: mid-merge, mid-rebase, a path
 #       git will not track (ignored, or outside the repository),
 #       docs/baton/constitution.md (the agent never writes the
-#       constitution -- see below), or empty stdin over existing
-#       non-empty committed content
+#       constitution -- see below), docs/baton/state.md over the 60-line
+#       cap, or empty stdin over existing non-empty committed content
 #   5   a git mutation failed after the file was written; the tree has
 #       been rolled back to its state before this run, or the commit
 #       landed but does not contain what this run wrote (see below)
@@ -151,6 +151,24 @@ cleanup() { rm -f "$tmp"; }
 trap cleanup EXIT
 
 cat > "$tmp"
+
+# state.md's 60-line cap is baton's own rule, not project-specific
+# knowledge: baton-checkpoint calls it "not advisory" and README.md states
+# it as a property of the file, so the knowledge belongs here, in the one
+# tool through which every write to it passes -- it is not the kind of
+# project-specific knowledge these scripts otherwise stay free of. Checked
+# against whatever was just piped in, before it ever gets committed:
+# checking only the shipped template (as the test suite otherwise would)
+# leaves a state file that grew past the cap through real checkpoints
+# never checked again. Do not remove this on the grounds that the scripts
+# should stay generic -- this is baton's own schema, not a caller's.
+if [ "$target" = "docs/baton/state.md" ]; then
+    lines="$(wc -l < "$tmp" | tr -d ' ')"
+    if [ "$lines" -gt 60 ]; then
+        echo "baton-write: refusing to write docs/baton/state.md at $lines lines: the cap is 60. Move the detail to a journal entry (baton-journal) and leave state.md holding only a pointer to it." >&2
+        exit 3
+    fi
+fi
 
 # Reads stdin, not a filename, so it composes with process substitution
 # and pipelines from `git show` alike. Assumes updated_at: appears exactly

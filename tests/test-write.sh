@@ -343,4 +343,32 @@ else
     pass "no constitution.md appears anywhere after the refused subdirectory write"
 fi
 
+# --- docs/baton/state.md's 60-line cap is enforced here, not only checked
+# against the shipped template: a state file grown past the cap by real
+# checkpoints must be refused too, not just the day-one copy. ---
+cap_commits_before="$(git rev-list --count HEAD)"
+
+sixty_lines="$(for i in $(seq 1 60); do echo "line $i"; done)"
+printf '%s\n' "$sixty_lines" | "$WRITE" -m "checkpoint at exactly 60 lines" docs/baton/state.md
+assert_equals "$(git rev-list --count HEAD)" "$((cap_commits_before + 1))" \
+    "exactly 60 lines is accepted, not refused by an off-by-one"
+assert_equals "$(wc -l < docs/baton/state.md | tr -d ' ')" "60" \
+    "the 60-line file lands with exactly 60 lines"
+
+over_cap_commits_before="$(git rev-list --count HEAD)"
+sixty_one_lines="$(for i in $(seq 1 61); do echo "line $i"; done)"
+set +e
+cap_stderr="$(printf '%s\n' "$sixty_one_lines" | "$WRITE" -m "checkpoint at 61 lines" docs/baton/state.md 2>&1 >/dev/null)"
+cap_rc=$?
+set -e
+
+assert_equals "$cap_rc" "3" "refuses docs/baton/state.md at 61 lines, over the 60-line cap"
+assert_contains "$cap_stderr" "60" "the refusal message names the 60-line cap"
+assert_equals "$(git rev-list --count HEAD)" "$over_cap_commits_before" \
+    "the refused over-cap write creates no commit"
+assert_equals "$(wc -l < docs/baton/state.md | tr -d ' ')" "60" \
+    "state.md still holds the last accepted (60-line) content, not the refused 61-line one"
+assert_equals "$(git status --porcelain docs/baton | wc -l | tr -d ' ')" "0" \
+    "docs/baton is clean after the refused over-cap write"
+
 finish
