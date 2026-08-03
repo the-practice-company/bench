@@ -1,0 +1,7 @@
+.baton/
+
+# Machine-local Claude Code state: enabled-plugin settings and any skills
+# installed into this checkout. None of it is part of the baton plugin, and
+# settings.local.json is per-machine by convention. Narrow this if you ever
+# want project-scoped commands or skills committed alongside baton.
+.claude/

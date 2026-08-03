@@ -1,0 +1,80 @@
+---
+schema: baton/constitution/v1
+run_id: REPLACE-WITH-SLUG
+status: draft
+# status must be `ratified` before any wave starts. A constitution that still
+# contains REPLACE-WITH tokens has not been ratified, regardless of what this
+# field says.
+ratified_by: REPLACE-WITH-NAME
+ratified_at: REPLACE-WITH-ISO8601
+git_anchor: REPLACE-WITH-SHA
+umbrella_spec: docs/superpowers/specs/REPLACE-WITH-SPEC.md
+verify_cmd: "REPLACE-WITH-TEST-COMMAND"
+placeholder_patterns: "TODO|FIXME|NotImplemented|unimplemented|raise NotImplementedError"
+---
+
+# REPLACE WITH THE NAME OF THIS RUN
+
+## Goal
+
+One or two sentences. What counts as success for the whole run.
+
+## Operating mode
+
+Who the agent is in this run. Default: orchestrator. It delegates
+implementation to subagents and workflows, does not write code in the primary
+session, and is answerable for carrying the work to completion.
+
+## Non-negotiables
+
+Rules no wave may break. These are restated in state.md on every resume,
+because an agent that keeps the goal but loses the constraints will serve the
+current request while quietly violating the original brief.
+
+## Waves
+
+```yaml
+- wave: 1
+  name: REPLACE
+  depends_on: []
+  parallel_with: []
+  exit_criteria:
+    - The system shall REPLACE WITH VERIFIABLE BEHAVIOUR
+
+- wave: 2
+  name: REPLACE
+  depends_on: [1]
+  parallel_with: []
+  exit_criteria:
+    - When REPLACE WITH TRIGGER, the system shall REPLACE WITH BEHAVIOUR
+```
+
+Exit criteria use EARS. Five patterns, "shall" is mandatory:
+
+- The system shall `<behaviour>`
+- When `<trigger>`, the system shall `<behaviour>`
+- While `<state>`, the system shall `<behaviour>`
+- Where `<feature is enabled>`, the system shall `<behaviour>`
+- If `<condition>`, then the system shall `<behaviour>`
+
+The gate judges against these lines. A criterion open to two readings is a
+criterion the agent will read in its own favour.
+
+Waves with a non-empty `parallel_with` must also declare `produces:` (the
+contract published to downstream waves) and `consumes:` (the contract taken
+from upstream waves). Parallelism is only safe when the contract is declared
+before implementation.
+
+## Decision authority
+
+What the agent decides alone, and what it escalates.
+
+Default: reversible decisions with low or medium blast radius are the agent's
+own, recorded in the journal. Irreversible decisions, or anything with high
+blast radius, are escalated. A reversible decision is made on roughly 70% of
+the information you would like, not 90% - waiting for completeness on a
+reversible call is slow, not careful.
+
+## Amendments
+
+Append only. Each amendment: date, what changed, who ratified it.

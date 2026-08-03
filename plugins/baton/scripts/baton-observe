@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# Print repository facts as key=value, or list files changed since a SHA.
+# Knows nothing about any particular project: git only.
+#
+# Two SHA facts are reported, and they answer different questions:
+#   sha       the current HEAD, whatever it is. This moves on every commit,
+#             including baton's own checkpoint commits under docs/baton/.
+#   work_sha  the most recent commit that touched anything outside
+#             docs/baton/ -- i.e. the last commit that was actual work, not
+#             baton bookkeeping. state.md's observed_sha is set from this
+#             one, not from sha: a checkpoint commit is not work, so a
+#             baseline taken from raw HEAD moves every time the agent writes
+#             state and can never again equal HEAD, making every later
+#             comparison against it a false positive. Do not delete one of
+#             these thinking it duplicates the other -- they answer different
+#             questions and both are used (sha by callers that want "where
+#             is HEAD right now", work_sha by anything that wants "did real
+#             work land"). Empty means no such commit is reachable from HEAD:
+#             either HEAD does not exist yet, or every commit so far has
+#             touched only docs/baton/. Both are legitimately "no work
+#             observed yet", not an error.
+#
+# Exit codes:
+#   0   success
+#   1   not a git repository
+#   64  usage error
+#   *   any other non-zero code comes from git itself and means the facts
+#       could not be established
+#
+# Output is unquoted key=value lines. A consumer should split on the FIRST
+# "=" only, since git permits "=" in branch names.
+#
+# Known limitation: a global core.excludesfile that hides a real path will
+# still hide it from this script, since git itself never reports it.
+set -euo pipefail
+
+usage() {
+    echo "usage: baton-observe [--changed-since <SHA>]" >&2
+    exit 64
+}
+
+changed_since=""
+changed_since_set=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --changed-since)
+            [ $# -ge 2 ] || usage
+            changed_since="$2"
+            changed_since_set=1
+            shift 2
+            ;;
+        -h|--help) usage ;;
+        *) usage ;;
+    esac
+done
+
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    echo "baton-observe: not a git repository" >&2
+    exit 1
+fi
+
+if [ "$changed_since_set" = 1 ]; then
+    [ -n "$changed_since" ] || { echo "baton-observe: --changed-since needs a non-empty SHA" >&2; exit 64; }
+    {
+        git -c core.quotePath=false diff --name-only "$changed_since"
+        git -c core.quotePath=false ls-files --others --exclude-standard
+    } | sort -u
+    exit 0
+fi
+
+if git rev-parse --verify -q HEAD >/dev/null 2>&1; then
+    sha="$(git rev-parse HEAD)"
+    short_sha="$(git rev-parse --short HEAD)"
+    # ':/' anchors the include to the top of the working tree and
+    # ':(exclude,top)' anchors the exclude there too, so this means the same
+    # thing regardless of which directory baton-observe was invoked from.
+    # Without the explicit top anchor on the exclude side, a plain
+    # ':(exclude)docs/baton' is resolved relative to cwd, so the same
+    # subdirectory-invocation bug baton-write, baton-lock and baton-journal
+    # were each fixed for once already would reappear here. A repository
+    # with no docs/baton/ at all, or where docs/baton/ is the only thing
+    # ever committed, is not an error -- see the header comment.
+    work_sha="$(git log -1 --format=%H -- ':/' ':(exclude,top)docs/baton')"
+else
+    sha=""
+    short_sha=""
+    work_sha=""
+fi
+
+branch="$(git symbolic-ref --short -q HEAD || echo '(detached)')"
+dirty_count="$(git -c core.quotePath=false status --porcelain -uall --ignore-submodules=none | wc -l | tr -d ' ')"
+
+if [ "$dirty_count" = "0" ]; then
+    tree_clean=true
+else
+    tree_clean=false
+fi
+
+printf 'sha=%s\n' "$sha"
+printf 'short_sha=%s\n' "$short_sha"
+printf 'work_sha=%s\n' "$work_sha"
+printf 'branch=%s\n' "$branch"
+printf 'tree_clean=%s\n' "$tree_clean"
+printf 'dirty_count=%s\n' "$dirty_count"

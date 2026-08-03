@@ -295,6 +295,31 @@ git commit -m "feat: repository skeleton, manifests and bash test harness"
 
 Prints repository facts. Knows nothing about any project — only git.
 
+> **Superseded during implementation, 2026-08-03.** The script below predates
+> `work_sha` entirely: it reports only `sha` (raw `HEAD`) and `short_sha`, so
+> `state.md`'s `observed_sha` was first wired to plain `HEAD` — which a
+> checkpoint's own commit immediately invalidates as a baseline, since that
+> commit becomes the next `HEAD`. That produced the false-alarm failure
+> described in full in the spec's amendment to section 6.2: an idle
+> checkpoint that could never actually go idle, and a resume that reported a
+> divergence on essentially every run. The fix adds a `work_sha` field — the
+> last commit that touched anything outside `docs/baton/` — and
+> `observed_sha` is set from that now, never from `sha`.
+>
+> The script below also predates two smaller fixes, both later additions to
+> the same file. `dirty_count` here is plain `git status --porcelain | wc -l`,
+> which collapses an untracked directory into a single line instead of
+> counting the files inside it, undercounting when new work lands in a new
+> directory; the shipped script adds `-uall --ignore-submodules=none` to
+> count every file explicitly. `--changed-since` here is a bare
+> `git diff --name-only`, which omits untracked files entirely; the shipped
+> version unions that with `git ls-files --others --exclude-standard`, so a
+> file that was created but never committed still shows up as changed.
+>
+> The shipped `plugins/baton/scripts/baton-observe` is the source of truth.
+> The block below is kept as the record of what the first pass looked like
+> before each of these was found.
+
 **Files:**
 - Create: `plugins/baton/scripts/baton-observe`
 - Create: `tests/test-observe.sh`
@@ -437,6 +462,23 @@ git commit -m "feat: baton-observe prints repository facts"
 ### Task 3: `baton-lock`
 
 The writer role is held for the whole session, not borrowed per write.
+
+> **Superseded during implementation, 2026-08-03.** The code below was built as
+> written, reviewed, and then reworked. Its pid-liveness check does not work:
+> every Bash tool call in Claude Code is a fresh short-lived process, so the
+> recorded `$PPID` is dead by the next call, `live` is unreachable, and every
+> session takes over every other session's lock believing it abandoned.
+>
+> Liveness cannot be observed from inside a tool call, so the lock became a
+> **lease**: the holder is live until the lease expires and refreshes it at each
+> checkpoint. `stale` was renamed `expired`, since that is what is actually
+> known. A fourth verb, `takeover`, always succeeds and names whom it displaced,
+> so a crashed session can never strand a run for six hours. The pid is still
+> recorded for a human debugging a wedged run, but no decision reads it.
+>
+> The shipped script and tests are the source of truth. The blocks below are
+> kept as the record of what was tried and why it was abandoned. See the
+> amendment in section 8.4 of the spec.
 
 **Files:**
 - Create: `plugins/baton/scripts/baton-lock`
@@ -633,6 +675,62 @@ git commit -m "feat: baton-lock holds the writer role for the session"
 ### Task 4: `baton-write`
 
 Atomic write plus commit. Declines to write when nothing changed, so state never lives outside the log.
+
+> **Superseded during implementation, 2026-08-03.** The script below is an
+> early sketch, and is missing nearly every safety property the shipped
+> `baton-write` has since grown. None of the gaps below are decorative — each
+> was found, reproduced, and closed with its own assertion in
+> `tests/test-write.sh`:
+>
+> - **No merge/rebase guard.** A checkpoint attempted mid-merge or
+>   mid-rebase would go ahead and commit a partial change into history that
+>   git itself is still trying to resolve.
+> - **No gitignore guard.** Writing an ignored path put a file on disk that
+>   `git add` then fails on without `-f`; with no guard around the bare
+>   `git add`/`git commit` calls below, `set -e` killed the script right
+>   there, with `$target` already renamed into place and never committed —
+>   state that looks committed-or-clean from the outside but is neither.
+> - **No refusal of `docs/baton/constitution.md`.** The constitution is
+>   ratified by a human, and the entire point of keeping `verify_cmd` there
+>   instead of in a config file is that the agent can never rewrite the
+>   threshold it is judged against. This script would have written the
+>   constitution like any other path.
+> - **No 60-line cap on `docs/baton/state.md`.** Nothing stopped `state.md`
+>   from growing without bound, defeating the "fits on one screen" design
+>   goal in spec section 10.
+> - **No empty-content refusal.** Empty stdin over a path that already holds
+>   real committed content — a failed command substitution upstream, say —
+>   would silently wipe it.
+> - **No rollback.** Every git mutation below is a bare statement; under
+>   `set -e`, a failing `git add` or `git commit` (a contended
+>   `.git/index.lock`, a rejecting pre-commit hook) kills the script with
+>   `$target` already renamed into place and nothing undone — exactly the
+>   half-write this script exists to prevent. The shipped script guards every
+>   mutation, restores the tree to what it looked like before the run on
+>   failure, and reports exit 7 if even that restoration fails.
+> - **No hash-based idle check.** The idle comparison below diffs raw file
+>   bytes through process substitution. The shipped script hashes both sides
+>   with `git hash-object --path`, so the same clean filters `git add` would
+>   apply (e.g. `core.autocrlf`) apply to the comparison too — a CRLF-only
+>   difference under `autocrlf=input` used to read as substantive and
+>   produce a spurious commit for what was really an idle checkpoint.
+> - **No path normalisation.** `HEAD:$target` resolves against the repository
+>   root regardless of cwd, but `mv`, `git add` and `git commit` resolve
+>   `$target` against the current directory. Called from a subdirectory with
+>   the conventional repo-root-relative path (`docs/baton/state.md`, always),
+>   those two bases disagree: the read finds the real file at the root, the
+>   write lands at `<subdir>/docs/baton/state.md` instead, and the checkpoint
+>   silently updates the wrong file. The shipped script `cd`s to
+>   `git rev-parse --show-toplevel` first, and refuses an absolute path that
+>   does not resolve inside the repository rather than guessing at one.
+> - **`sync` before the rename.** See the amendment to spec section 7.4: the
+>   shipped script deliberately does not fsync — it would flush every mounted
+>   filesystem on the machine and buys no consistency for the git objects the
+>   following commit writes, which the shipped script does not fsync either.
+>
+> The shipped `plugins/baton/scripts/baton-write` and `tests/test-write.sh`
+> are the source of truth. The block below is kept as the record of what the
+> first pass looked like before each of these was found.
 
 **Files:**
 - Create: `plugins/baton/scripts/baton-write`
@@ -1272,8 +1370,14 @@ Persist the run so a session with no memory of this one can continue it.
 
 **Announce at start:** "Checkpointing before we lose this context."
 
-**Prerequisite:** you hold the writer lock. If `baton-lock check <session-id>`
+**Prerequisite:** you hold the writer lease. If `baton-lock check <session-id>`
 exits non-zero, resolve that first — see `baton-resume`.
+
+Then run `baton-lock acquire <session-id>` before writing anything. For the
+holder that is not a second acquisition, it is the heartbeat: it pushes the
+lease expiry out. A session that checkpoints regularly never lets its lease
+lapse, and a session that has stopped checkpointing has stopped working, which
+is exactly when someone else should be allowed to take the baton.
 
 ## The Process
 
@@ -1287,7 +1391,7 @@ digraph checkpoint {
     "Update Next action / In flight / Open questions" [shape=box];
     "Any decision crossing the threshold?" [shape=diamond];
     "baton-journal + baton-write the entry" [shape=box];
-    "baton-write state.md" [shape=box doublecircle];
+    "baton-write state.md" [shape=doublecircle];
 
     "baton-observe: snapshot git facts" -> "Compare claims against facts";
     "Compare claims against facts" -> "Claimed field diverged?";
@@ -1440,7 +1544,7 @@ digraph resume {
     "suspect or needs_human set?" [shape=diamond];
     "Resolve that first - report to the human" [shape=box];
     "Acquire the writer lock" [shape=box];
-    "Execute Next action" [shape=box doublecircle];
+    "Execute Next action" [shape=doublecircle];
 
     "Read constitution.md and state.md" -> "baton-observe and compare";
     "baton-observe and compare" -> "Read .baton/precompact-facts if present";
@@ -1490,8 +1594,11 @@ than working around it.
 "${CLAUDE_PLUGIN_ROOT}/scripts/baton-lock" acquire "$CLAUDE_SESSION_ID"
 ```
 
-Exit 3 means another live session holds it — do not write state; say so. On a
-stale takeover the script prints `takeover=<previous session>`; record a
+Exit 3 means another session holds an unexpired lease — do not write state; say
+so, and stop. If you have good reason to believe that session is gone, run
+`baton-lock takeover "$CLAUDE_SESSION_ID"` instead; it always succeeds.
+
+Either way, whenever the script prints `takeover=<previous session>`, record a
 journal entry of type `takeover` so a silent overlap of two sessions cannot
 happen unnoticed.
 
@@ -1535,6 +1642,44 @@ git commit -m "feat: baton-resume skill"
 ---
 
 ### Task 10: Hooks
+
+> **Superseded during implementation, 2026-08-03.** Both hooks below predate
+> fixes that materially change their behaviour.
+>
+> `pre-compact` here warns unconditionally, on every single compaction,
+> whether or not a checkpoint actually happened first. That was later
+> identified as the thing that makes the warning worthless: a warning that
+> fires every time teaches the agent to ignore it, including on the one
+> compaction where it was true. The shipped hook still writes
+> `.baton/precompact-facts` unconditionally — resume needs it either way —
+> but only prints a message when `state.md`'s `observed_sha` genuinely does
+> not match the just-recorded `work_sha`, or the tree is dirty even though
+> the SHAs agree.
+>
+> Both hooks below also predate resolving to the git top level.
+> `CLAUDE_PROJECT_DIR` is wherever the session started, not necessarily the
+> repository root — a monorepo session can start in a subdirectory as easily
+> as at the root — so a hook that only `cd`s to `$CLAUDE_PROJECT_DIR` and then
+> checks for `docs/baton` finds nothing and silently no-ops when invoked from
+> one, the same subdirectory bug `baton-lock`, `baton-write` and
+> `baton-journal` each had to be fixed for once already. The shipped hooks
+> additionally `cd` to `git rev-parse --show-toplevel` before checking for
+> `docs/baton`.
+>
+> `session-start` below also predates the `COPILOT_CLI` branch: it emits
+> Claude Code's `hookSpecificOutput` shape whenever `CLAUDE_PLUGIN_ROOT` is
+> set, but that variable says nothing about which harness is reading the
+> output — it is set whenever Claude Code runs the hook at all, so branching
+> on it only ever picks the Claude Code shape by another name. The shipped
+> hook branches on `COPILOT_CLI` instead, the one signal that corresponds to
+> something real (Copilot CLI v1.0.11+ sets it and reads the SDK-standard
+> top-level `additionalContext` shape); everything else, including a session
+> with `CLAUDE_PLUGIN_ROOT` unset, gets the `hookSpecificOutput` shape.
+>
+> The shipped `plugins/baton/hooks/pre-compact` and
+> `plugins/baton/hooks/session-start` are the source of truth. The blocks
+> below are kept as the record of what the first pass looked like before each
+> of these was found.
 
 **Files:**
 - Create: `plugins/baton/hooks/hooks.json`

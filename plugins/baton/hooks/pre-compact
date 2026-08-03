@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# Record repository facts just before compaction so resume can tell whether
+# work landed after the last checkpoint.
+#
+# This hook deliberately does NOT write state.md. The lock holder is the only
+# writer, and a hook that silently refreshed observed fields would erase the
+# very divergence that must surface as suspect.
+set -euo pipefail
+
+project="${CLAUDE_PROJECT_DIR:-$PWD}"
+cd "$project" 2>/dev/null || exit 0
+
+# CLAUDE_PROJECT_DIR is wherever the session started, not necessarily the
+# git top level -- a monorepo session can start in a subdirectory just as
+# easily as at the root. baton-lock, baton-write and baton-journal all had
+# to re-resolve to the repository root for exactly this reason (see their
+# comments): a hook invoked from a subdirectory would otherwise find no
+# docs/baton, exit as a no-op, and record nothing -- the exact bug that
+# once put two sessions in a lock landed in a subdirectory, each believing
+# it held it. A baton run is always a git run, so anything that is not
+# inside a repository at all genuinely is not our concern.
+if git rev-parse --show-toplevel >/dev/null 2>&1; then
+    cd "$(git rev-parse --show-toplevel)"
+else
+    exit 0
+fi
+
+[ -d docs/baton ] || exit 0
+
+plugin_root="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+observe="$plugin_root/scripts/baton-observe"
+[ -x "$observe" ] || exit 0
+
+mkdir -p .baton
+tmp=".baton/.precompact-facts.tmp.$$"
+
+# baton-observe's own exit status decides what gets written and said below,
+# not just whatever it happened to print to stdout. The old form --
+# `"$observe" 2>/dev/null || true` -- discarded both the exit status and
+# stderr: a real git failure inside baton-observe (reproduced with an
+# unreadable .git/index) left every field empty rather than absent, and the
+# comparison further down then read the empty work_sha as a fact --
+# printing "work_sha ()" as though that were the repository's real state,
+# with the actual fatal: error that caused it thrown away and never
+# surfaced anywhere. Recording the failure plainly, and skipping the
+# comparison entirely, is what the branch below does instead.
+observe_output="" observe_rc=0
+observe_output="$("$observe" 2>&1)" || observe_rc=$?
+
+if [ "$observe_rc" -ne 0 ]; then
+    facts="$(
+        printf 'recorded_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        printf 'observe_failed=true\n'
+    )"
+    printf '%s\n' "$facts" > "$tmp"
+    mv "$tmp" .baton/precompact-facts
+
+    # Still exit 0 -- a hook must not break the session over this -- but it
+    # must not pretend to have established facts it does not have. No
+    # staleness comparison runs below: state.md's observed_sha compared
+    # against an unknown work_sha is not a fact, it is a guess dressed up
+    # as one, which is exactly what the old behaviour did.
+    echo "baton: could not establish repository facts before compaction - baton-observe failed ($observe_output). No staleness comparison can be trusted this run; observe_failed=true was recorded in .baton/precompact-facts instead of guessed-at fields." >&2
+    exit 0
+fi
+
+facts="$(
+    printf 'recorded_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '%s\n' "$observe_output"
+)"
+printf '%s\n' "$facts" > "$tmp"
+mv "$tmp" .baton/precompact-facts
+
+# Warn only when the warning is true. Printing "no checkpoint was recorded"
+# on every single compaction, whether or not one actually happened, teaches
+# the agent to ignore it -- and it will ignore it on the one compaction
+# where it mattered. The facts just written already carry work_sha and
+# tree_clean; state.md carries what the last checkpoint observed. Comparing
+# them costs nothing extra and lets the warning say only what is actually
+# true.
+#
+# Compared against work_sha, not sha (raw HEAD): a checkpoint commit moves
+# HEAD by committing state.md, so observed_sha can never equal a later sha
+# even when zero work happened -- that comparison would warn on every single
+# compaction, which is the same "always on, so it's noise" failure this
+# function exists to avoid. work_sha is the last commit that touched
+# anything outside docs/baton/, which a checkpoint commit never does, so it
+# only moves when real work lands.
+current_work_sha="$(printf '%s\n' "$facts" | sed -n 's/^work_sha=//p')"
+tree_clean="$(printf '%s\n' "$facts" | sed -n 's/^tree_clean=//p')"
+
+state="docs/baton/state.md"
+observed_sha=""
+if [ -f "$state" ]; then
+    # Restrict the search to the frontmatter block so a stray mention of
+    # "observed_sha" in prose further down can't be mistaken for the field.
+    observed_sha="$(sed -n '/^---$/,/^---$/p' "$state" | sed -n 's/^observed_sha: *//p' | head -1)"
+fi
+
+if [ -z "$observed_sha" ]; then
+    echo "baton: cannot tell whether the checkpoint is current - docs/baton/state.md has no readable observed_sha. Facts saved to .baton/precompact-facts." >&2
+elif [ "$observed_sha" != "$current_work_sha" ]; then
+    echo "baton: checkpoint is behind - state.md's observed_sha ($observed_sha) is not the repository's current work_sha ($current_work_sha) - work landed since the last checkpoint. Facts saved to .baton/precompact-facts; run /baton:checkpoint before compacting if you can." >&2
+elif [ "$tree_clean" != "true" ]; then
+    echo "baton: checkpoint is behind - observed_sha matches the current work_sha, but the working tree has uncommitted changes since then. Facts saved to .baton/precompact-facts; run /baton:checkpoint before compacting if you can." >&2
+fi
+# else: observed_sha matches the current work_sha and the tree is clean --
+# the checkpoint is current. Say nothing.
+
+exit 0

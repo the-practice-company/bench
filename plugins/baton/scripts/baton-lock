@@ -1,0 +1,309 @@
+#!/usr/bin/env bash
+# Hold, inspect, release or take over the baton writer role.
+# The role is held for the whole session, not per write: two sessions taking
+# turns to write would remove the race but not the divergence.
+#
+# This is a LEASE, not a pid-liveness check. Claude Code's Bash tool spawns a
+# fresh shell per invocation, so a pid recorded from inside one tool call is
+# already gone by the next -- there is no durable, session-scoped pid to
+# observe from here. A parent process that does survive across calls (the
+# harness itself) is not scoped to a single session either, so it cannot be
+# borrowed as a substitute. Do not "fix" this by resurrecting a kill -0
+# check; it was tried and it does not distinguish anything.
+#
+# Instead: a session is considered live while its recorded acquisition time
+# is recent. It goes stale on its own after STALE_SECONDS, no process
+# inspection required. Because a lease alone would strand a run for up to
+# six hours after a real crash, `takeover` exists as an explicit, always-
+# succeeding escape hatch -- stealing an unexpired lease is then a
+# deliberate, visible act instead of an accident.
+set -euo pipefail
+
+STALE_SECONDS=21600   # six hours
+FUTURE_SKEW=60         # tolerate up to a minute of clock drift
+
+LOCK_DIR=".baton"
+LOCK_FILE="$LOCK_DIR/lock"
+MUTEX_DIR="$LOCK_DIR/.lock.mutex"
+
+# The critical section acquire_mutex guards (read the lock state, decide,
+# write) is a handful of file reads plus one atomic rename: milliseconds,
+# never seconds. A mutex still standing this long later was not left behind
+# by a process still doing that work -- it was abandoned by one that got
+# killed or crashed mid-section. 30s is not a close judgement call at that
+# timescale, it is two to three orders of magnitude of headroom, so treating
+# it as abandoned and clearing it cannot plausibly steal a mutex a live
+# process still needs.
+MUTEX_STALE_SECONDS=30
+
+# One EXIT trap for the whole script, rather than traps set inside
+# individual functions: a function-local `trap ... EXIT` (write_lock used to
+# have exactly one) replaces whatever trap the caller already armed instead
+# of composing with it, which would silently drop acquire_mutex's release
+# the moment write_lock ran. This single trap knows about both things this
+# script can leave behind mid-operation -- a lock file being written
+# (write_lock's tmp file) and a held mutex (acquire_mutex) -- and cleans up
+# whichever one was actually in play, however the script exits: success, a
+# guarded `exit`, or an unexpected failure under set -e.
+lock_tmp_pending=""
+mutex_held=0
+cleanup_on_exit() {
+    [ -n "$lock_tmp_pending" ] && rm -f "$lock_tmp_pending" 2>/dev/null
+    [ "$mutex_held" -eq 1 ] && rm -rf "$MUTEX_DIR" 2>/dev/null
+    return 0
+}
+trap cleanup_on_exit EXIT
+
+usage() {
+    echo "usage: baton-lock {acquire|check|release|takeover} <session-id>" >&2
+    exit 64
+}
+
+[ $# -eq 2 ] || usage
+cmd="$1"
+session="$2"
+
+# An empty session id is validated here, at entry, before any lock state is
+# touched -- not left to fall out of lock_state's comparisons further down.
+# `[ "$owner" = "$session" ]` there treats two callers who both pass an
+# empty $CLAUDE_SESSION_ID as the SAME session: both read the lock as
+# "ours" (an unset file's owner field and an empty caller id compare
+# equal), both get exit 0, and neither prints a takeover= line or any error
+# -- the single-writer guarantee is gone with no signal that it happened.
+# Every caller passes "$CLAUDE_SESSION_ID" verbatim, so one unset
+# environment variable anywhere is enough to trigger this; refusing it
+# outright, loudly, is safer than letting two writers quietly share a lease.
+[ -n "$session" ] || { echo "baton-lock: session id must not be empty" >&2; exit 64; }
+
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    echo "baton-lock: not a git repository" >&2
+    exit 1
+fi
+
+# LOCK_FILE is relative, so without this the lease's location depends on the
+# caller's cwd: acquiring from a subdirectory writes <subdir>/.baton/lock,
+# invisible to a check or acquire run from the repo root (or any other
+# subdirectory). That silently defeats the single-writer guarantee this
+# script exists to provide -- two sessions can both believe they hold it.
+cd "$(git rev-parse --show-toplevel)"
+
+# Prints the value of field $1 from the lock file, or nothing. Never aborts:
+# if the file vanishes between lock_state's -f test and this read, sed fails
+# but the function still degrades to an empty result instead of taking the
+# whole script down with it (pipefail would otherwise propagate sed's exit
+# code through head's success).
+read_field() {
+    sed -n "s/^$1=//p" "$LOCK_FILE" 2>/dev/null | head -1 || true
+}
+
+is_digits() {
+    case "$1" in
+        ''|*[!0-9]*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+# Prints one of: none | ours | live | expired
+lock_state() {
+    if [ ! -f "$LOCK_FILE" ]; then
+        echo none
+        return
+    fi
+
+    local owner acquired now
+    owner="$(read_field session)"
+    if [ "$owner" = "$session" ]; then
+        echo ours
+        return
+    fi
+
+    acquired="$(read_field acquired_epoch)"
+    now="$(date -u +%s)"
+
+    # Anything unparseable fails OPEN to expired: a garbled field must never
+    # make the run unrecoverable.
+    if ! is_digits "$acquired"; then
+        echo expired
+        return
+    fi
+    if [ "$((acquired - now))" -gt "$FUTURE_SKEW" ]; then
+        echo expired
+        return
+    fi
+    if [ "$((now - acquired))" -ge "$STALE_SECONDS" ]; then
+        echo expired
+        return
+    fi
+
+    echo live
+}
+
+# Refreshing our own lock IS the heartbeat under a lease: a live session
+# keeps its lease alive by re-acquiring periodically, which just rewrites
+# acquired_epoch forward. That is expected, not a wart.
+write_lock() {
+    mkdir -p "$LOCK_DIR"
+    local tmp="$LOCK_DIR/.lock.tmp.$$"
+    # Recorded in the shared global, not a function-local `trap ... EXIT`
+    # (the old behaviour): the single cleanup_on_exit trap set once at the
+    # top of the script reads this, so a caller that has already armed that
+    # same trap for something else (acquire_mutex's held mutex) keeps its
+    # cleanup instead of losing it to this function overwriting the trap.
+    lock_tmp_pending="$tmp"
+    {
+        printf 'session=%s\n' "$session"
+        # pid is forensics for a human staring at a wedged run -- nothing in
+        # this script reads it back to decide liveness. Never write a pid
+        # that did not come straight from the shell.
+        printf 'pid=%s\n' "$PPID"
+        printf 'acquired=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        printf 'acquired_epoch=%s\n' "$(date -u +%s)"
+    } > "$tmp"
+    mv "$tmp" "$LOCK_FILE"
+    lock_tmp_pending=""
+}
+
+# Mutex around acquire's whole read-decide-write critical section, using
+# mkdir: atomic (fails if the directory already exists) and available on
+# every platform this runs on, unlike O_EXCL file creation or flock.
+#
+# Why acquire needs this at all: two concurrent `acquire` calls against an
+# EXPIRED lease can both read lock_state as "expired" and both go on to
+# write_lock (a plain mv -- see the `takeover)` verb's comment for why that
+# is otherwise fine), and both print takeover=<ghost> with exit 0.
+# Reproduced: ten trials out of ten. The `none` branch alone is already
+# race-free, because acquire_free's `set -o noclobber` gives it its own
+# atomic create -- but that trick cannot cover `expired`, because the file
+# already exists there. Turning it into "rm, then noclobber-create" would
+# open a *worse* window: a third caller racing to legitimately acquire the
+# now-free lock could create its own lock file in the gap between this
+# caller's rm and its own create, and then have that fresh, valid lock
+# deleted out from under it. A mutex around the entire decide-then-act
+# section covers all of acquire's branches (none, ours, expired) uniformly,
+# without a special case for any one of them.
+#
+# Returns 0 with the mutex held (mutex_held=1, released by cleanup_on_exit),
+# or 1 if it is genuinely busy.
+acquire_mutex() {
+    mkdir -p "$LOCK_DIR"
+    if mkdir "$MUTEX_DIR" 2>/dev/null; then
+        mutex_held=1
+        date -u +%s > "$MUTEX_DIR/created_epoch" 2>/dev/null || true
+        return 0
+    fi
+
+    # Held by someone else. created_epoch is read back, not the directory's
+    # own mtime (stat's flags differ between BSD and GNU and would need a
+    # fallback chain for something this script can just avoid entirely by
+    # writing the timestamp itself, the same way write_lock already does
+    # for acquired_epoch). A missing or unreadable marker -- the mkdir
+    # succeeded but the write hasn't landed yet, a caller still inside the
+    # few microseconds between the two -- is treated as NOT (yet) provably
+    # stale rather than guessed at, so a mutex that is mid-creation is never
+    # mistaken for an abandoned one.
+    local created now
+    created="$(cat "$MUTEX_DIR/created_epoch" 2>/dev/null)"
+    if is_digits "$created"; then
+        now="$(date -u +%s)"
+        if [ "$((now - created))" -ge "$MUTEX_STALE_SECONDS" ]; then
+            # Abandoned: clear it and retry exactly once. A second failure
+            # here means someone else won that retry, not that the mutex is
+            # abandoned again a moment later -- give up rather than loop.
+            rm -rf "$MUTEX_DIR" 2>/dev/null || true
+            if mkdir "$MUTEX_DIR" 2>/dev/null; then
+                mutex_held=1
+                date -u +%s > "$MUTEX_DIR/created_epoch" 2>/dev/null || true
+                return 0
+            fi
+        fi
+    fi
+
+    return 1
+}
+
+# O_EXCL create for the genuinely-free case only: two concurrent `acquire`
+# calls can both observe `none`, but only one `>` under noclobber wins: the
+# loser gets EEXIST instead of clobbering the winner. Returns non-zero if we
+# lost the race.
+acquire_free() {
+    mkdir -p "$LOCK_DIR"
+    (
+        set -o noclobber
+        {
+            printf 'session=%s\n' "$session"
+            printf 'pid=%s\n' "$PPID"
+            printf 'acquired=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            printf 'acquired_epoch=%s\n' "$(date -u +%s)"
+        } > "$LOCK_FILE"
+    ) 2>/dev/null
+}
+
+state="$(lock_state)"
+
+case "$cmd" in
+    acquire)
+        if ! acquire_mutex; then
+            echo "baton-lock: another session is taking the lease right now; try again" >&2
+            exit 3
+        fi
+
+        # Re-read state now that the mutex is held, not the copy read above
+        # before $cmd was even known: that earlier read is exactly the
+        # stale snapshot that let two concurrent callers both observe
+        # "expired" and both write (see acquire_mutex). Reading it again
+        # here, where only one caller can be inside this section at a time,
+        # is what makes the decision and the write atomic as a whole.
+        state="$(lock_state)"
+        case "$state" in
+            none)
+                if ! acquire_free; then
+                    echo "baton-lock: lost the race for a free lock" >&2
+                    exit 3
+                fi
+                ;;
+            ours)
+                write_lock
+                ;;
+            expired)
+                previous="$(read_field session)"
+                write_lock
+                printf 'takeover=%s\n' "$previous"
+                ;;
+            live)
+                echo "baton-lock: held by live session $(read_field session)" >&2
+                exit 3
+                ;;
+        esac
+        ;;
+    check)
+        case "$state" in
+            ours)    exit 0 ;;
+            live)    exit 3 ;;
+            expired) exit 4 ;;
+            none)    exit 5 ;;
+        esac
+        ;;
+    release)
+        case "$state" in
+            ours) rm -f "$LOCK_FILE" ;;
+            none) : ;;
+            *)
+                echo "baton-lock: refusing to release a lock we do not hold" >&2
+                exit 3
+                ;;
+        esac
+        ;;
+    takeover)
+        # Always succeeds, regardless of state: this is the deliberate,
+        # visible escape hatch that keeps a lease from stranding a run.
+        # Plain mv, not O_EXCL: an rm-then-create window here would let a
+        # third racer steal the file between removal and creation, which is
+        # worse than what we have today. Accepted because a takeover is
+        # journaled and surfaces downstream as `suspect`.
+        previous=""
+        [ "$state" = "none" ] || previous="$(read_field session)"
+        write_lock
+        [ -z "$previous" ] || printf 'takeover=%s\n' "$previous"
+        ;;
+    *) usage ;;
+esac

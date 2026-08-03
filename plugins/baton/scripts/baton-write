@@ -1,0 +1,400 @@
+#!/usr/bin/env bash
+# Write stdin to a path atomically, then commit it.
+#
+# If the only difference from the committed version is the updated_at line
+# AND the working tree already matches HEAD, nothing is written at all.
+# Writing it and skipping the commit would leave state dirty in the working
+# tree - that is, outside the log - which is the one thing the
+# recoverability invariant forbids. The same invariant is why a failed
+# commit must never leave a renamed-but-uncommitted file behind: mid-merge,
+# mid-rebase and gitignored paths are refused before anything is touched,
+# and every other git mutation (add, commit) is guarded so a failure rolls
+# the tree back to exactly what it looked like before this run instead of
+# killing the script with a half-written file sitting in the working tree.
+#
+# Exit codes:
+#   0   success, including a declined idle write
+#   1   not a git repository
+#   3   refused before touching anything: mid-merge, mid-rebase, a path
+#       git will not track (ignored, or outside the repository),
+#       docs/baton/constitution.md (the agent never writes the
+#       constitution -- see below), docs/baton/state.md over the 60-line
+#       cap, or empty-or-whitespace-only stdin over existing non-empty
+#       committed content
+#   5   a git mutation failed after the file was written; the tree has
+#       been rolled back to its state before this run, or the commit
+#       landed but does not contain what this run wrote (see below)
+#   7   the rollback itself could not restore a clean tree, or could not
+#       even be verified (its own check of the tree state failed); either
+#       way the path needs to be resolved by hand
+#   64  usage error
+set -euo pipefail
+
+usage() { echo "usage: baton-write [-m <msg>] <path>" >&2; exit 64; }
+
+message=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -m|--message)
+            [ $# -ge 2 ] || usage
+            message="$2"
+            shift 2
+            ;;
+        -h|--help) usage ;;
+        *) break ;;
+    esac
+done
+
+[ $# -eq 1 ] || usage
+target="$1"
+[ -n "$message" ] || message="baton: update $(basename "$target")"
+
+# Collapses "." components, "/./", repeated slashes and a trailing slash,
+# and resolves ".." against what came before it -- so that every spelling
+# of the same path reduces to one canonical string before either integrity
+# guard below (the constitution refusal, the state.md line cap) compares
+# against it. Without this, `[ "$target" = "docs/baton/constitution.md" ]`
+# is a literal string comparison: `./docs/baton/constitution.md`, `docs/
+# baton/../baton/constitution.md` and `docs//baton/constitution.md` all name
+# the same file to git (git add/commit canonicalise a pathspec before they
+# touch a blob) but not to this comparison, so all three walked straight
+# past the refusal and committed to the file this script exists to protect.
+# `set -- $input` under IFS=/ is the split, deliberately unquoted so a run
+# of slashes produces the empty fields that get dropped below; it only ever
+# rewrites this function's own positional parameters, never the caller's.
+# Fails (returns 1) if ".." climbs above the first component -- a relative
+# target that would land outside wherever it started, the same "cannot be
+# normalised into somewhere sane" case the absolute-path handling below
+# already refuses explicitly.
+canonicalize_target() {
+    local input="$1" component result=""
+    case "$input" in
+        */) input="${input%/}" ;;
+    esac
+    local saved_ifs="$IFS"
+    IFS=/
+    set -- $input
+    IFS="$saved_ifs"
+    for component in "$@"; do
+        case "$component" in
+            ''|'.') continue ;;
+            '..')
+                case "$result" in
+                    '') return 1 ;;
+                    */*) result="${result%/*}" ;;
+                    *) result="" ;;
+                esac
+                ;;
+            *)
+                if [ -z "$result" ]; then
+                    result="$component"
+                else
+                    result="$result/$component"
+                fi
+                ;;
+        esac
+    done
+    [ -n "$result" ] || return 1
+    printf '%s\n' "$result"
+}
+
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    echo "baton-write: not a git repository" >&2
+    exit 1
+fi
+
+# HEAD:$target (no ./ prefix) resolves against the repository root
+# regardless of cwd, but mv, git add and git commit resolve $target
+# against the current directory. Called from a subdirectory with the
+# conventional repo-root-relative path (docs/baton/state.md, always),
+# those two bases disagree: the read finds the real file at the root, the
+# write lands at <subdir>/docs/baton/state.md instead, and the checkpoint
+# silently updates the wrong file. Pin cwd to the root so every git
+# invocation below agrees on the same base -- baton-lock and baton-journal
+# do the same, for the same reason.
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+# $target may still have been given as absolute. Re-express it relative to
+# the root we just cd'ed into, so it means the same thing to HEAD:$target
+# as it does to mv/add/commit. An absolute path outside the repository
+# cannot be normalised into one, so it is refused rather than guessed at.
+#
+# $repo_root is already physical (git resolves symlinks when reporting
+# --show-toplevel), but $target may not be: a caller building an absolute
+# path from a symlinked $PWD (e.g. macOS's /tmp -> /private/tmp) would
+# fail a literal prefix match against $repo_root even though it names a
+# real path inside the repository. Resolve $target's directory physically
+# too, when it already exists, before giving up on it.
+case "$target" in
+    /*)
+        case "$target" in
+            "$repo_root"/*) target="${target#"$repo_root"/}" ;;
+            *)
+                resolved="$target"
+                if [ -d "$(dirname "$target")" ]; then
+                    resolved="$(cd "$(dirname "$target")" && pwd -P)/$(basename "$target")"
+                fi
+                case "$resolved" in
+                    "$repo_root"/*) target="${resolved#"$repo_root"/}" ;;
+                    *)
+                        echo "baton-write: refusing: $target does not resolve to a path inside the repository ($repo_root)" >&2
+                        exit 3
+                        ;;
+                esac
+                ;;
+        esac
+        ;;
+esac
+
+# Canonicalise unconditionally, not only the absolute-path branch above:
+# $target at this point may still be a relative path exactly as the caller
+# typed it, and a relative spelling is precisely what defeated the
+# constitution and state.md guards (see canonicalize_target's comment).
+# This also folds "docs//baton/constitution.md" back to a path git
+# recognises, instead of that comparison failing to match AND the later
+# `git cat-file`/`git rev-parse` calls below dying with an unguarded
+# `fatal: path ... exists on disk, but not in 'HEAD'` -- noisy, but no
+# safer, since by then the file had already been written. Canonicalising up
+# front means both guards fire first, cleanly, before either failure mode.
+canonical_target="$(canonicalize_target "$target")" || {
+    echo "baton-write: refusing: $target does not resolve to a path inside the repository ($repo_root)" >&2
+    exit 3
+}
+target="$canonical_target"
+
+# Refuse up front, before anything is touched: a partial commit of just
+# "$target" -- which is what this script always does -- is impossible
+# mid-merge or mid-rebase. Catching it here means there is nothing to roll
+# back for this particular failure: nothing has been renamed or staged yet.
+merge_head="$(git rev-parse --git-path MERGE_HEAD)"
+rebase_merge_dir="$(git rev-parse --git-path rebase-merge)"
+rebase_apply_dir="$(git rev-parse --git-path rebase-apply)"
+if [ -f "$merge_head" ]; then
+    echo "baton-write: refusing to write: an unresolved merge is in progress" >&2
+    exit 3
+fi
+if [ -d "$rebase_merge_dir" ] || [ -d "$rebase_apply_dir" ]; then
+    echo "baton-write: refusing to write: an unresolved rebase is in progress" >&2
+    exit 3
+fi
+
+# Also up front: a path git is configured to ignore can never be committed
+# without -f, so satisfying this script's contract for it is impossible.
+# Writing it anyway (the old behaviour) leaves a file on disk that plain
+# `git status` will never show -- state that looks committed-or-clean from
+# the outside but is neither.
+if git check-ignore -q -- "$target"; then
+    echo "baton-write: refusing to write: $target is excluded by .gitignore" >&2
+    exit 3
+fi
+
+# The constitution is ratified by the human and the agent does not write
+# it -- that is the entire point of keeping verify_cmd and
+# placeholder_patterns there instead of in a config file the agent could
+# edit: an agent stuck on a failing verify_cmd must not be able to rewrite
+# the threshold it is judged against, using the same tool it uses for
+# every ordinary checkpoint. $target is already repo-root-relative at this
+# point (see the normalisation above), so this refuses an absolute path or
+# a subdirectory invocation exactly as it refuses the plain relative one --
+# none of them can be told apart from the literal string a well-behaved
+# caller would type. /baton:init places the initial file directly, with
+# plain git, before ratification; this refusal is why it has to.
+if [ "$target" = "docs/baton/constitution.md" ]; then
+    echo "baton-write: refusing to write docs/baton/constitution.md: this file is the human's, ratified by them, and never written by the agent -- a tool that could rewrite it could rewrite the rules it is judged by. See /baton:init, which places the initial file directly." >&2
+    exit 3
+fi
+
+dir="$(dirname "$target")"
+base="$(basename "$target")"
+mkdir -p "$dir"
+
+tmp="$dir/.$base.tmp.$$"
+# Invoked indirectly, via the trap below. Harmless once $tmp has already
+# been renamed into place -- rm -f on a path that no longer exists is a
+# no-op, so this cleanup is safe to leave armed for the rest of the script.
+# shellcheck disable=SC2329
+cleanup() { rm -f "$tmp"; }
+trap cleanup EXIT
+
+cat > "$tmp"
+
+# state.md's 60-line cap is baton's own rule, not project-specific
+# knowledge: baton-checkpoint calls it "not advisory" and README.md states
+# it as a property of the file, so the knowledge belongs here, in the one
+# tool through which every write to it passes -- it is not the kind of
+# project-specific knowledge these scripts otherwise stay free of. Checked
+# against whatever was just piped in, before it ever gets committed:
+# checking only the shipped template (as the test suite otherwise would)
+# leaves a state file that grew past the cap through real checkpoints
+# never checked again. Do not remove this on the grounds that the scripts
+# should stay generic -- this is baton's own schema, not a caller's.
+if [ "$target" = "docs/baton/state.md" ]; then
+    lines="$(wc -l < "$tmp" | tr -d ' ')"
+    if [ "$lines" -gt 60 ]; then
+        echo "baton-write: refusing to write docs/baton/state.md at $lines lines: the cap is 60. Move the detail to a journal entry (baton-journal) and leave state.md holding only a pointer to it." >&2
+        exit 3
+    fi
+fi
+
+# Reads stdin, not a filename, so it composes with process substitution
+# and pipelines from `git show` alike. Assumes updated_at: appears exactly
+# once, in the frontmatter, per the state.md schema. If the format ever
+# grows a section that could echo that literal prefix elsewhere in the
+# file, this comparison would strip more than intended -- not currently
+# possible under the schema as specified.
+strip_timestamp() {
+    grep -v '^updated_at:' || true
+}
+
+target_in_head=0
+if git cat-file -e "HEAD:$target" 2>/dev/null; then
+    target_in_head=1
+fi
+
+# True if $1 has no non-whitespace byte at all. `[ ! -s "$tmp" ]` (the old
+# guard) only ever catches a strictly zero-byte file, so a single newline --
+# or any other run of spaces, tabs and newlines -- sailed straight past it:
+# reproduced with a full state.md replaced by one blank line, exit 0,
+# committed as an ordinary checkpoint. A single blank line is exactly the
+# shape a failed command substitution or an accidentally-empty heredoc
+# tends to produce (`printf '%s\n' "$maybe_unset_var"`, say), which is the
+# same caller-bug this guard exists to catch -- it just wasn't literally
+# zero bytes. `grep -q '[^[:space:]]'` looks for any single character that
+# is not whitespace; failing to find one is what "whitespace-only" means.
+is_whitespace_only() {
+    ! grep -q '[^[:space:]]' "$1" 2>/dev/null
+}
+
+# Refuse rather than silently erase: empty-or-whitespace-only stdin over a
+# path that already holds real committed content is almost certainly a
+# caller bug, not an intentional wipe. A path with no committed version yet
+# has nothing to lose, so empty-or-whitespace-only content there still
+# proceeds normally.
+if is_whitespace_only "$tmp" && [ "$target_in_head" -eq 1 ]; then
+    head_size="$(git cat-file -s "HEAD:$target")"
+    if [ "$head_size" -gt 0 ]; then
+        echo "baton-write: refusing to write empty-or-whitespace-only content over existing committed state at $target" >&2
+        exit 3
+    fi
+fi
+
+# The idle short-circuit only fires when the working tree already matches
+# HEAD. If it does not, some uncommitted edit is sitting there -- real
+# state that has not reached the log -- and it must land in the log even
+# though the incoming content itself differs from HEAD by nothing but the
+# timestamp. Falling through to a normal commit picks up that edit too.
+#
+# Both comparisons go through git itself rather than raw bytes: `git diff`
+# for "does the tree already match HEAD", and `git hash-object` (with
+# --path, so the same clean filters apply as would on a real `git add`,
+# e.g. core.autocrlf) for "is the substance the same once stripped of the
+# timestamp". Comparing raw stdin bytes against `git show`'s already-
+# normalised output made a CRLF-only difference look substantive under
+# autocrlf=input, producing a spurious commit for what was really an idle
+# checkpoint.
+if [ "$target_in_head" -eq 1 ]; then
+    tree_matches_head=1
+    git diff --quiet HEAD -- "$target" || tree_matches_head=0
+
+    if [ "$tree_matches_head" -eq 1 ]; then
+        incoming_hash="$(strip_timestamp < "$tmp" | git hash-object --path "$target" --stdin)"
+        head_hash="$(git show "HEAD:$target" | strip_timestamp | git hash-object --path "$target" --stdin)"
+        if [ "$incoming_hash" = "$head_hash" ]; then
+            exit 0
+        fi
+    fi
+fi
+
+# Hash exactly what is about to be written, through the same filters `git
+# add` would apply, before the mv -- so it can be checked against what
+# actually lands in HEAD after the commit. See the check after the commit
+# below for why.
+written_hash="$(git hash-object --path "$target" -- "$tmp")"
+
+# Atomic within one filesystem because $tmp lives in $target's own
+# directory, so the rename below is what makes this atomic -- not sync.
+# Do not add a sync call here: it would flush every mounted filesystem on
+# the machine, and it buys no consistency for the git objects written
+# moments later, which this script does not fsync either.
+#
+# If $target is currently a symlink, this replaces it with a regular file
+# rather than writing through it. Deliberate: this script owns $target's
+# content, not whatever the symlink used to point at, and the replacement
+# is a normal file rename fully captured by the commit that follows.
+mv "$tmp" "$target"
+
+# Best-effort by design: called only after a git mutation has already
+# failed, so every command here is allowed to fail in turn without taking
+# the script down with it. What matters is the verification after, not
+# any single command's exit status.
+rollback() {
+    if [ "$target_in_head" -eq 1 ]; then
+        git checkout -q HEAD -- "$target" 2>/dev/null || true
+    else
+        git reset -q -- "$target" >/dev/null 2>&1 || true
+        rm -f "$target" 2>/dev/null || true
+    fi
+
+    # A rollback that silently fails is worse than none: the caller would
+    # believe the tree is clean when it is not. Verify, don't assume -- and
+    # that means checking this command's own exit status, not just reading
+    # what it printed. `[ -n "$(cmd 2>/dev/null)" ]` (the old form) only
+    # ever looks at stdout: if `git status` itself fails -- reproduced with
+    # an unreadable .git/index -- it writes its fatal: to stderr, which was
+    # discarded, and nothing to stdout, which reads as "clean" even though
+    # nothing was actually verified. That let a real rollback failure fall
+    # through to the exit-5 branch below and print "the tree was restored"
+    # while the working tree still held the unrolled-back write. Capturing
+    # the exit status separately closes that: a failed verification is
+    # "unknown", not "clean", and unknown must be treated at least as badly
+    # as "dirty" -- exit 7, the same code a verified-dirty tree gets, never
+    # exit 5.
+    porcelain_out="" porcelain_rc=0
+    porcelain_out="$(git status --porcelain -- "$target" 2>&1)" || porcelain_rc=$?
+
+    if [ "$porcelain_rc" -ne 0 ]; then
+        echo "baton-write: rollback attempted but could not be verified -- git status itself failed ($porcelain_out); $target's actual state is unknown and must be resolved by hand" >&2
+        exit 7
+    fi
+
+    if [ -n "$porcelain_out" ]; then
+        echo "baton-write: rollback could not restore $target to a clean state; this must be resolved by hand" >&2
+        exit 7
+    fi
+
+    echo "baton-write: commit failed; the tree was restored to its previous state" >&2
+    exit 5
+}
+
+# Every git mutation from here on is guarded, not a bare statement: under
+# set -e a bare `git add` or `git commit` that fails kills the script on
+# the spot, with $target already renamed into place and nothing rolled
+# back -- exactly the half-write this script exists to prevent. The
+# gitignored case above is refused before it gets this far, but `git add`
+# can still fail here for reasons that cannot be checked for in advance
+# (reproduced with a contended .git/index.lock), same as `git commit`
+# (reproduced with a rejecting pre-commit hook) -- both used to leave a
+# dirty, uncommitted $target behind.
+if ! git add -- "$target"; then
+    rollback
+fi
+
+if ! git commit -q -m "$message" -- "$target"; then
+    rollback
+fi
+
+# Last-resort check for a discipline failure upstream, not the primary
+# defence -- the primary defence is the lease baton-lock enforces, which
+# is supposed to make it impossible for two writers to be here at once.
+# `git commit -- <pathspec>` re-reads the worktree for that path at commit
+# time rather than committing what this invocation staged, so if some
+# other process wrote and staged $target in between, this commit silently
+# carries that content under this run's message instead. Once that has
+# happened the commit is already in the log; the log is honest, so it is
+# not undone -- only reported.
+committed_hash="$(git rev-parse "HEAD:$target")"
+if [ "$committed_hash" != "$written_hash" ]; then
+    echo "baton-write: commit landed but does not contain what this run wrote (wrote $written_hash, HEAD has $committed_hash) -- a concurrent writer likely raced this one; the commit was left as-is" >&2
+    exit 5
+fi

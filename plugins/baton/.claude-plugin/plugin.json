@@ -1,0 +1,19 @@
+{
+  "name": "baton",
+  "description": "Keeps goal and state coherent across multi-day autonomous runs: durable state, one-command checkpoint, verified resume after context compaction, and an append-only decision journal",
+  "version": "0.1.0",
+  "author": {
+    "name": "Artem Kononov",
+    "email": "artemkononov2000@gmail.com"
+  },
+  "homepage": "https://github.com/artemkononov/baton",
+  "license": "MIT",
+  "keywords": [
+    "long-running",
+    "autonomous",
+    "state",
+    "checkpoint",
+    "compaction",
+    "orchestration"
+  ]
+}

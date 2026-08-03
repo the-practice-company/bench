@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# After a compaction, point the agent at the state file and hand it the three
+# lines that matter, so recovery does not depend on remembering to recover.
+set -euo pipefail
+
+project="${CLAUDE_PROJECT_DIR:-$PWD}"
+cd "$project" 2>/dev/null || exit 0
+
+# CLAUDE_PROJECT_DIR is wherever the session started, not necessarily the
+# git top level -- a monorepo session can start in a subdirectory just as
+# easily as at the root. baton-lock, baton-write and baton-journal all had
+# to re-resolve to the repository root for exactly this reason (see their
+# comments): a hook invoked from a subdirectory would otherwise find no
+# docs/baton/state.md and silently inject nothing, right when recovery
+# depends on it. A baton run is always a git run, so anything that is not
+# inside a repository at all genuinely is not our concern.
+if git rev-parse --show-toplevel >/dev/null 2>&1; then
+    cd "$(git rev-parse --show-toplevel)"
+else
+    exit 0
+fi
+
+state="docs/baton/state.md"
+[ -f "$state" ] || exit 0
+
+field() {
+    sed -n "s/^\*\*$1:\*\* *//p" "$state" | head -1
+}
+
+goal="$(field 'Goal')"
+mode="$(field 'Operating mode')"
+rules="$(field 'Non-negotiables')"
+next="$(sed -n 's/^- \*\*Next action:\*\* *//p' "$state" | head -1)"
+
+context="This repository runs under baton. Before anything else, use the baton-resume skill: read docs/baton/constitution.md and docs/baton/state.md, verify them against the repository with baton-observe, and only then continue.
+
+Goal: ${goal}
+Operating mode: ${mode}
+Non-negotiables: ${rules}
+Next action: ${next}
+
+These four lines are a summary for orientation, not a substitute for reading the files."
+
+# state.md is prose for a human and an agent to read, not an opaque blob,
+# and a control byte below 0x20 other than \n, \r, \t has no business in
+# it. Strip those before escaping rather than \u-encoding them: the four
+# lines below are explicitly a summary for orientation, so dropping a
+# stray control byte loses nothing that mattered, and it keeps the escaper
+# below honest -- it only has to handle the characters it lists.
+strip_disallowed_control_chars() {
+    LC_ALL=C tr -d '\000-\010\013\014\016-\037'
+}
+
+escape_for_json() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    printf '%s' "$s"
+}
+
+context="$(printf '%s' "$context" | strip_disallowed_control_chars)"
+escaped="$(escape_for_json "$context")"
+
+# CLAUDE_PLUGIN_ROOT says nothing about which shape the caller reads -- it
+# is set whenever Claude Code runs this hook at all, so branching on it
+# only ever picks the Claude Code shape. COPILOT_CLI is the one signal that
+# corresponds to something real: Copilot CLI (v1.0.11+) sets it and reads
+# the top-level additionalContext shape (the SDK standard). Everything
+# else, including Claude Code, reads hookSpecificOutput.additionalContext
+# -- confirmed against the official plugin-dev hook-development skill and
+# the SessionStart hooks shipped by learning-output-style and
+# explanatory-output-style, which emit it unconditionally. Baton ships no
+# Cursor manifest, so there is deliberately no third branch for it here.
+if [ -n "${COPILOT_CLI:-}" ]; then
+    printf '{\n  "additionalContext": "%s"\n}\n' "$escaped"
+else
+    printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$escaped"
+fi
+
+exit 0

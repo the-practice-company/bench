@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Allocate the next journal id and path.
+# Both the agent and baton-lock (for takeover entries) need this number;
+# duplicating the logic is how two copies of it drift apart.
+#
+# This is a READ, not a reservation: nothing is created here, so the number
+# is not held. A caller that allocates and then sits on the id before
+# writing the entry can collide with another caller that allocates in the
+# meantime. That is acceptable only because the two callers are the current
+# lease holder and baton-lock's takeover path, and the lease is what keeps
+# concurrent callers rare in the first place -- it is not a guarantee.
+#
+# Exit codes:
+#   0   success
+#   1   not a git repository
+#   64  usage error, or a slug that is not lowercase letters, digits, dashes
+set -euo pipefail
+
+[ $# -eq 1 ] || { echo "usage: baton-journal <slug>" >&2; exit 64; }
+slug="$1"
+
+if [ -z "$slug" ] || printf '%s' "$slug" | grep -q '[^a-z0-9-]'; then
+    echo "baton-journal: slug must be lowercase letters, digits and dashes" >&2
+    exit 64
+fi
+
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    echo "baton-journal: not a git repository" >&2
+    exit 1
+fi
+
+# Relative to cwd otherwise: called from a subdirectory, the glob below would
+# see no existing entries and hand out DEC-0001 again, colliding with the
+# real one sitting at the repository root.
+cd "$(git rev-parse --show-toplevel)"
+
+dir="docs/baton/journal"
+last=0
+# Width-independent: take the leading digits up to the first dash and skip
+# anything that isn't all digits, rather than assuming four. A fixed-width
+# [0-9][0-9][0-9][0-9] glob stops matching its own output once a real run
+# passes 9999 entries, which would silently repeat the same id forever.
+for f in "$dir"/[0-9]*; do
+    [ -e "$f" ] || continue
+    base="$(basename "$f")"
+    n="${base%%-*}"
+    case "$n" in
+        ''|*[!0-9]*) continue ;;
+    esac
+    n=$((10#$n))
+    if [ "$n" -gt "$last" ]; then
+        last="$n"
+    fi
+done
+
+next=$((last + 1))
+printf 'id=DEC-%04d\n' "$next"
+printf 'path=%s/%04d-%s.md\n' "$dir" "$next" "$slug"
