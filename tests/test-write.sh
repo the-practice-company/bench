@@ -225,6 +225,45 @@ git checkout -q HEAD -- docs/baton/state.md
 assert_equals "$(git status --porcelain docs/baton | wc -l | tr -d ' ')" "0" \
     "sanity: manual cleanup after the exit-7 case restores a clean tree"
 
+# --- a rollback whose own verification command fails must also exit 7, not
+# exit 5. This is a different failure shape than the case just above: there,
+# `git status` ran fine and correctly reported a dirty tree. Here, `git
+# status` itself cannot run at all (reproduced with an unreadable
+# .git/index, which also makes `git add`/`git commit` fail the same way).
+# Before the fix, `[ -n "$(git status ... 2>/dev/null)" ]` read that failure
+# as empty stdout, which is indistinguishable from "clean" -- so the script
+# reported exit 5 ("the tree was restored") and exited having verified
+# nothing, while the new, uncommitted content was still sitting in the
+# working tree. ---
+verify_fail_head_before="$(git rev-parse HEAD)"
+verify_fail_content_before="$(cat docs/baton/state.md)"
+chmod 000 .git/index
+set +e
+verify_fail_stderr="$(printf 'updated_at: X\nunverifiable rollback attempt\n' \
+    | "$WRITE" -m "checkpoint whose rollback cannot even be checked" docs/baton/state.md 2>&1 >/dev/null)"
+verify_fail_rc=$?
+set -e
+chmod 644 .git/index
+
+assert_equals "$verify_fail_rc" "7" \
+    "a rollback whose own verification fails exits 7, not the 5 that would claim a clean tree"
+assert_contains "$verify_fail_stderr" "docs/baton/state.md" \
+    "the exit-7-from-unverifiable message names the path that needs manual resolution"
+assert_not_contains "$verify_fail_stderr" "the tree was restored" \
+    "an unverifiable rollback never claims the tree was restored"
+assert_equals "$(git rev-parse HEAD)" "$verify_fail_head_before" \
+    "no commit lands when the rollback's own verification fails"
+assert_contains "$(cat docs/baton/state.md)" "unverifiable rollback attempt" \
+    "the unrolled-back write is genuinely still on disk, proving exit 5 would have lied"
+
+# Clean up by hand so later assertions are not built on a tree this case
+# deliberately left dirty.
+git checkout -q HEAD -- docs/baton/state.md
+assert_equals "$(cat docs/baton/state.md)" "$verify_fail_content_before" \
+    "sanity: manual cleanup after the unverifiable-rollback case restores the prior content"
+assert_equals "$(git status --porcelain docs/baton | wc -l | tr -d ' ')" "0" \
+    "sanity: manual cleanup after the unverifiable-rollback case restores a clean tree"
+
 # --- an absolute path to a file with real committed content, given empty
 # stdin: refused, not silently truncated. $FIXTURE is used unresolved
 # (not canonicalised first) because that is the realistic case: mktemp -d

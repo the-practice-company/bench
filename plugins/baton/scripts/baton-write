@@ -23,8 +23,9 @@
 #   5   a git mutation failed after the file was written; the tree has
 #       been rolled back to its state before this run, or the commit
 #       landed but does not contain what this run wrote (see below)
-#   7   the rollback itself could not restore a clean tree; the path
-#       needs to be resolved by hand
+#   7   the rollback itself could not restore a clean tree, or could not
+#       even be verified (its own check of the tree state failed); either
+#       way the path needs to be resolved by hand
 #   64  usage error
 set -euo pipefail
 
@@ -321,8 +322,28 @@ rollback() {
     fi
 
     # A rollback that silently fails is worse than none: the caller would
-    # believe the tree is clean when it is not. Verify, don't assume.
-    if [ -n "$(git status --porcelain -- "$target" 2>/dev/null)" ]; then
+    # believe the tree is clean when it is not. Verify, don't assume -- and
+    # that means checking this command's own exit status, not just reading
+    # what it printed. `[ -n "$(cmd 2>/dev/null)" ]` (the old form) only
+    # ever looks at stdout: if `git status` itself fails -- reproduced with
+    # an unreadable .git/index -- it writes its fatal: to stderr, which was
+    # discarded, and nothing to stdout, which reads as "clean" even though
+    # nothing was actually verified. That let a real rollback failure fall
+    # through to the exit-5 branch below and print "the tree was restored"
+    # while the working tree still held the unrolled-back write. Capturing
+    # the exit status separately closes that: a failed verification is
+    # "unknown", not "clean", and unknown must be treated at least as badly
+    # as "dirty" -- exit 7, the same code a verified-dirty tree gets, never
+    # exit 5.
+    porcelain_out="" porcelain_rc=0
+    porcelain_out="$(git status --porcelain -- "$target" 2>&1)" || porcelain_rc=$?
+
+    if [ "$porcelain_rc" -ne 0 ]; then
+        echo "baton-write: rollback attempted but could not be verified -- git status itself failed ($porcelain_out); $target's actual state is unknown and must be resolved by hand" >&2
+        exit 7
+    fi
+
+    if [ -n "$porcelain_out" ]; then
         echo "baton-write: rollback could not restore $target to a clean state; this must be resolved by hand" >&2
         exit 7
     fi
