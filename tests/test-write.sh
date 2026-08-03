@@ -288,4 +288,59 @@ assert_equals "$(git status --porcelain docs/baton | wc -l | tr -d ' ')" "0" \
 
 assert_exit_code 64 "rejects being called without a path" "$WRITE"
 
+# --- the constitution is the human's file: baton-write refuses it outright,
+# before anything is written, no matter how the path is spelled. This is the
+# fix for a real, reproduced bypass: an agent stuck on a failing verify_cmd
+# could otherwise pipe a new one straight into the file it is judged
+# against, through the exact same tool used for every ordinary checkpoint. ---
+constitution_commits_before="$(git rev-list --count HEAD)"
+
+set +e
+printf 'schema: baton/constitution/v1\nstatus: ratified\nverify_cmd: "echo always-pass"\n' \
+    | "$WRITE" -m "agent: weaken the gate" docs/baton/constitution.md
+constitution_rc=$?
+set -e
+
+assert_equals "$constitution_rc" "3" "refuses to write docs/baton/constitution.md by its plain relative path"
+assert_equals "$(git rev-list --count HEAD)" "$constitution_commits_before" \
+    "the refused constitution write creates no commit"
+if [ -e docs/baton/constitution.md ]; then
+    fail "the refused constitution write leaves nothing on disk"
+else
+    pass "the refused constitution write leaves nothing on disk"
+fi
+
+# Same refusal via an absolute path -- the normalisation that turns an
+# absolute path back into a repo-root-relative one must not create a way
+# around this, or the "before touching anything" guarantee is a fiction.
+set +e
+printf 'status: ratified\nverify_cmd: "echo always-pass"\n' \
+    | "$WRITE" -m "agent: weaken the gate via absolute path" "$FIXTURE/docs/baton/constitution.md"
+constitution_abs_rc=$?
+set -e
+
+assert_equals "$constitution_abs_rc" "3" "refuses to write docs/baton/constitution.md via an absolute path"
+assert_equals "$(git rev-list --count HEAD)" "$constitution_commits_before" \
+    "the refused absolute-path constitution write creates no commit"
+
+# Same refusal called from a subdirectory with the conventional repo-root-
+# relative path -- the same shape that once made baton-write and baton-lock
+# silently operate on the wrong file entirely (see the subdirectory tests
+# above); here the risk is the opposite one, silently succeeding where it
+# must not.
+set +e
+( cd somewhere/deep && printf 'status: ratified\nverify_cmd: "echo always-pass"\n' \
+    | "$WRITE" -m "agent: weaken the gate from a subdirectory" docs/baton/constitution.md )
+constitution_subdir_rc=$?
+set -e
+
+assert_equals "$constitution_subdir_rc" "3" "refuses to write docs/baton/constitution.md invoked from a subdirectory"
+assert_equals "$(git rev-list --count HEAD)" "$constitution_commits_before" \
+    "the refused subdirectory constitution write creates no commit"
+if [ -e docs/baton/constitution.md ] || [ -e somewhere/deep/docs/baton/constitution.md ]; then
+    fail "no constitution.md appears anywhere after the refused subdirectory write"
+else
+    pass "no constitution.md appears anywhere after the refused subdirectory write"
+fi
+
 finish

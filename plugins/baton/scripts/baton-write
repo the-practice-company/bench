@@ -16,8 +16,10 @@
 #   0   success, including a declined idle write
 #   1   not a git repository
 #   3   refused before touching anything: mid-merge, mid-rebase, a path
-#       git will not track (ignored, or outside the repository), or empty
-#       stdin over existing non-empty committed content
+#       git will not track (ignored, or outside the repository),
+#       docs/baton/constitution.md (the agent never writes the
+#       constitution -- see below), or empty stdin over existing
+#       non-empty committed content
 #   5   a git mutation failed after the file was written; the tree has
 #       been rolled back to its state before this run, or the commit
 #       landed but does not contain what this run wrote (see below)
@@ -117,6 +119,22 @@ fi
 # the outside but is neither.
 if git check-ignore -q -- "$target"; then
     echo "baton-write: refusing to write: $target is excluded by .gitignore" >&2
+    exit 3
+fi
+
+# The constitution is ratified by the human and the agent does not write
+# it -- that is the entire point of keeping verify_cmd and
+# placeholder_patterns there instead of in a config file the agent could
+# edit: an agent stuck on a failing verify_cmd must not be able to rewrite
+# the threshold it is judged against, using the same tool it uses for
+# every ordinary checkpoint. $target is already repo-root-relative at this
+# point (see the normalisation above), so this refuses an absolute path or
+# a subdirectory invocation exactly as it refuses the plain relative one --
+# none of them can be told apart from the literal string a well-behaved
+# caller would type. /baton:init places the initial file directly, with
+# plain git, before ratification; this refusal is why it has to.
+if [ "$target" = "docs/baton/constitution.md" ]; then
+    echo "baton-write: refusing to write docs/baton/constitution.md: this file is the human's, ratified by them, and never written by the agent -- a tool that could rewrite it could rewrite the rules it is judged by. See /baton:init, which places the initial file directly." >&2
     exit 3
 fi
 
