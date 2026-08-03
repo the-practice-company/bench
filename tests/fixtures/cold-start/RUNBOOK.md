@@ -54,6 +54,10 @@ absolute path to the root of this checkout — the directory that contains
 /plugin install baton@baton
 ```
 
+(`baton@baton` is not a typo — the marketplace declared in
+`.claude-plugin/marketplace.json` is itself named `baton`, and it lists a
+plugin also named `baton`; the syntax is `<plugin-name>@<marketplace-name>`.)
+
 When prompted for a scope, pick "user" — that enables it for every future
 `claude` session on this machine, not just this one, so you will not repeat
 this step for the next release's run. Then leave this session (`/exit` or
