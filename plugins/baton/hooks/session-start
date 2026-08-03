@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# After a compaction, point the agent at the state file and hand it the three
+# lines that matter, so recovery does not depend on remembering to recover.
+set -euo pipefail
+
+project="${CLAUDE_PROJECT_DIR:-$PWD}"
+cd "$project" 2>/dev/null || exit 0
+
+state="docs/baton/state.md"
+[ -f "$state" ] || exit 0
+
+field() {
+    sed -n "s/^\*\*$1:\*\* *//p" "$state" | head -1
+}
+
+goal="$(field 'Goal')"
+mode="$(field 'Operating mode')"
+rules="$(field 'Non-negotiables')"
+next="$(sed -n 's/^- \*\*Next action:\*\* *//p' "$state" | head -1)"
+
+context="This repository runs under baton. Before anything else, use the baton-resume skill: read docs/baton/constitution.md and docs/baton/state.md, verify them against the repository with baton-observe, and only then continue.
+
+Goal: ${goal}
+Operating mode: ${mode}
+Non-negotiables: ${rules}
+Next action: ${next}
+
+These four lines are a summary for orientation, not a substitute for reading the files."
+
+escape_for_json() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    printf '%s' "$s"
+}
+
+escaped="$(escape_for_json "$context")"
+
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -z "${COPILOT_CLI:-}" ]; then
+    printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$escaped"
+else
+    printf '{\n  "additionalContext": "%s"\n}\n' "$escaped"
+fi
+
+exit 0

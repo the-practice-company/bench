@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Record repository facts just before compaction so resume can tell whether
+# work landed after the last checkpoint.
+#
+# This hook deliberately does NOT write state.md. The lock holder is the only
+# writer, and a hook that silently refreshed observed fields would erase the
+# very divergence that must surface as suspect.
+set -euo pipefail
+
+project="${CLAUDE_PROJECT_DIR:-$PWD}"
+cd "$project" 2>/dev/null || exit 0
+
+[ -d docs/baton ] || exit 0
+
+plugin_root="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+observe="$plugin_root/scripts/baton-observe"
+[ -x "$observe" ] || exit 0
+
+mkdir -p .baton
+tmp=".baton/.precompact-facts.tmp.$$"
+{
+    printf 'recorded_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    "$observe" 2>/dev/null || true
+} > "$tmp"
+mv "$tmp" .baton/precompact-facts
+
+echo "baton: context is about to be compacted and no checkpoint was recorded for it. Facts saved to .baton/precompact-facts; run /baton:checkpoint before compacting if you can." >&2
+exit 0
