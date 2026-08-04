@@ -32,12 +32,48 @@ mode="$(field 'Operating mode')"
 rules="$(field 'Non-negotiables')"
 next="$(sed -n 's/^- \*\*Next action:\*\* *//p' "$state" | head -1)"
 
+# Restricted to the frontmatter block, same as pre-compact's observed_sha
+# read: unanchored, a stray "autopilot: ..." line in the body (e.g. a
+# schema example) would be picked up too. Harmless in practice since
+# head -1 always prefers the frontmatter occurrence -- frontmatter is
+# always first in the file -- but there is no reason to rely on that.
+frontmatter="$(sed -n '/^---$/,/^---$/p' "$state")"
+autopilot="$(printf '%s\n' "$frontmatter" | sed -n 's/^autopilot: *//p' | head -1)"
+autopilot_grant="$(printf '%s\n' "$frontmatter" | sed -n 's/^autopilot_grant: *//p' | head -1)"
+
+# state.md is written by an agent, not validated input, so the byte-level
+# shape of "off" drifts: a trailing space, a quoted scalar, a case variant,
+# a CRLF line ending. The dangerous direction is a false positive -- an
+# unrecognized value falls through to "announce it", and announcing a grant
+# that was never made tells a session it may act unattended when the human
+# set it to off. Trim, unquote, and fold case before deciding.
+autopilot_norm="${autopilot%$'\r'}"
+autopilot_norm="$(printf '%s' "$autopilot_norm" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+case "$autopilot_norm" in
+    \"*\") autopilot_norm="${autopilot_norm#\"}"; autopilot_norm="${autopilot_norm%\"}" ;;
+    \'*\') autopilot_norm="${autopilot_norm#\'}"; autopilot_norm="${autopilot_norm%\'}" ;;
+esac
+
+# Only when it is on, and on its own line. An "Autopilot: off" line in
+# every injection is noise in the one block that has to stay short enough
+# to be read in full.
+autopilot_line=""
+if [ -n "$autopilot_norm" ]; then
+    case "$autopilot_norm" in
+        [Oo][Ff][Ff]) ;;
+        *)
+            autopilot_line="
+Autopilot: ${autopilot_norm} (granted ${autopilot_grant}) — this run continues without a human present. Check the session source before acting on it: see baton-resume."
+            ;;
+    esac
+fi
+
 context="This repository runs under baton. Before anything else, use the baton-resume skill: read docs/baton/constitution.md and docs/baton/state.md, verify them against the repository with baton-observe, and only then continue.
 
 Goal: ${goal}
 Operating mode: ${mode}
 Non-negotiables: ${rules}
-Next action: ${next}
+Next action: ${next}${autopilot_line}
 
 These four lines are a summary for orientation, not a substitute for reading the files."
 

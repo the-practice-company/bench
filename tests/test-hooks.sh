@@ -220,6 +220,132 @@ assert_contains "$(cat .baton/precompact-facts)" "observe_failed=true" \
 assert_not_contains "$(cat .baton/precompact-facts)" "work_sha=" \
     "the facts file carries no fabricated empty work_sha when observe genuinely failed"
 
+# --- the autopilot line in the injected block ---
+# That block is what a compacted session sees before it decides anything. A
+# grant it has to go and open the file to discover is a grant it may act
+# after rather than on.
+mkdir -p docs/baton
+cat > docs/baton/state.md <<'EOF'
+---
+schema: baton/state/v1
+suspect: false
+needs_human: false
+autopilot: all
+autopilot_grant: DEC-0007
+---
+
+# State
+
+**Goal:** ship the widget pipeline
+**Operating mode:** orchestrator
+**Non-negotiables:** never modify the billing schema
+
+## Now
+
+- **Next action:** write the failing test in widget.spec.ts
+EOF
+
+out="$("$HOOKS/session-start" < /dev/null)"
+assert_contains "$out" "Autopilot: all" "session-start injects the autopilot scope when it is on"
+assert_contains "$out" "DEC-0007" "session-start names the entry that granted it"
+"$HOOKS/session-start" < /dev/null > autopilot-output.json
+assert_valid_json "autopilot-output.json" "the autopilot line still leaves valid JSON"
+rm -f autopilot-output.json
+
+# Off is the common case and must add nothing: the injected block is the
+# one thing that has to stay short enough to be read whole.
+sed -i.bak 's/^autopilot: all$/autopilot: off/' docs/baton/state.md
+rm -f docs/baton/state.md.bak
+out="$("$HOOKS/session-start" < /dev/null)"
+assert_not_contains "$out" "Autopilot:" "session-start stays quiet about the autopilot when it is off"
+
+# state.md is written by an agent, not validated input, so the byte-level
+# shape of "off" can drift: a trailing space, a quoted scalar, a case
+# variant, a CRLF line ending. The dangerous direction is a false positive
+# -- announcing a grant that was never made tells a session it may act
+# unattended when the human set it to off. Each variant below must stay
+# silent, the same as the exact "off" case above.
+mkdir -p docs/baton
+# A heredoc's trailing whitespace is invisible on the page and too easy for
+# a future edit to trim away without anyone noticing the test went dark, so
+# this one line is built with printf instead, where the trailing space is a
+# literal, visible character in the source.
+printf -- '---\nschema: baton/state/v1\nautopilot: off \nautopilot_grant: \xe2\x80\x94\n---\n\n# State\n\n**Goal:** g\n**Operating mode:** m\n**Non-negotiables:** n\n\n## Now\n- **Next action:** a\n' > docs/baton/state.md
+out="$("$HOOKS/session-start" < /dev/null)"
+assert_not_contains "$out" "Autopilot:" "session-start treats a trailing space after off as still off"
+
+cat > docs/baton/state.md <<'EOF'
+---
+schema: baton/state/v1
+autopilot: "off"
+autopilot_grant: —
+---
+
+# State
+
+**Goal:** g
+**Operating mode:** m
+**Non-negotiables:** n
+
+## Now
+- **Next action:** a
+EOF
+out="$("$HOOKS/session-start" < /dev/null)"
+assert_not_contains "$out" "Autopilot:" "session-start treats a quoted off as still off"
+
+cat > docs/baton/state.md <<'EOF'
+---
+schema: baton/state/v1
+autopilot: OFF
+autopilot_grant: —
+---
+
+# State
+
+**Goal:** g
+**Operating mode:** m
+**Non-negotiables:** n
+
+## Now
+- **Next action:** a
+EOF
+out="$("$HOOKS/session-start" < /dev/null)"
+assert_not_contains "$out" "Autopilot:" "session-start treats OFF case-insensitively as still off"
+
+printf -- '---\r\nschema: baton/state/v1\r\nautopilot: off\r\nautopilot_grant: \xe2\x80\x94\r\n---\r\n\r\n# State\r\n\r\n**Goal:** g\r\n**Operating mode:** m\r\n**Non-negotiables:** n\r\n\r\n## Now\r\n- **Next action:** a\r\n' > docs/baton/state.md
+out="$("$HOOKS/session-start" < /dev/null)"
+assert_not_contains "$out" "Autopilot:" "session-start treats a CRLF-terminated off as still off"
+"$HOOKS/session-start" < /dev/null > crlf-off-output.json
+assert_valid_json "crlf-off-output.json" "a CRLF-terminated state.md still leaves valid JSON"
+rm -f crlf-off-output.json
+
+# A stray line starting with "autopilot: " in the body, after a real
+# frontmatter grant of "all", must not overwrite it: the frontmatter block
+# is always read first, and both fields are read with head -1.
+cat > docs/baton/state.md <<'EOF'
+---
+schema: baton/state/v1
+autopilot: all
+autopilot_grant: DEC-0007
+---
+
+# State
+
+**Goal:** g
+**Operating mode:** m
+**Non-negotiables:** n
+
+## Schema notes
+autopilot: off
+autopilot_grant: DEC-9999
+
+## Now
+- **Next action:** a
+EOF
+out="$("$HOOKS/session-start" < /dev/null)"
+assert_contains "$out" "Autopilot: all" "a body line starting with autopilot: cannot override the frontmatter grant"
+assert_contains "$out" "DEC-0007" "a body line starting with autopilot_grant: cannot override the frontmatter grant id"
+
 # --- control characters in state.md must not break the emitted JSON ---
 printf -- '---\nschema: baton/state/v1\n---\n**Goal:** bell\x07here esc\x1bhere\n**Operating mode:** orchestrator\n**Non-negotiables:** none\n## Now\n- **Next action:** go\n' > docs/baton/state.md
 "$HOOKS/session-start" < /dev/null > ctrl-char-output.json
