@@ -213,6 +213,22 @@ assert_contains "$out" "changed_files=1" "the evidence counts the files consider
 printf 'const x = 1; // FIXME\n' > uncommitted.js
 out="$("$GATE" --since "$scan_base")"
 assert_contains "$out" "placeholder_hits=2" "an uncommitted file is scanned too"
+# The exact joined list, not just the count: baton-observe's
+# --changed-since pipes the committed diff and the untracked-file list
+# through `sort -u`, so the order is alphabetical across both sources
+# together, not "committed first" -- confirmed by running baton-observe
+# directly rather than assumed, since a guess here would just as easily
+# have passed against either order.
+assert_contains "$out" "placeholder_files=new.js,uncommitted.js" \
+    "placeholder_files is the comma-joined list in baton-observe's own (sorted) order, not just a count"
+
+# The verdict file quotes this block verbatim, so the key order is part of
+# what a human reads, not an implementation detail -- checked as a
+# sequence, not merely that each key is present somewhere in the output.
+key_order="$(printf '%s\n' "$out" | sed -n 's/^\([a-z_]*\)=.*/\1/p' | paste -sd, -)"
+assert_equals "$key_order" \
+    "verify_cmd,verify_exit,verify_log,placeholder_hits,placeholder_files,changed_files,since,sha,work_sha" \
+    "the verdict's keys appear in exactly this order"
 rm -f uncommitted.js
 
 # baton's own files are excluded: a journal entry describing a TODO, or a
@@ -235,6 +251,30 @@ mkdir -p deep/nested
 out_root="$("$GATE" --since "$scan_base")"
 out_deep="$(cd deep/nested && "$GATE" --since "$scan_base")"
 assert_equals "$out_deep" "$out_root" "invoked from a subdirectory it reports the same evidence"
+
+# The test above invokes $GATE by its absolute path ($GATE is set from
+# $REPO_ROOT), so dirname "$0" is already absolute and the later
+# `cd "$repo_root"` inside baton-gate cannot change what it means -- it
+# proves the caller's cwd does not affect the answer, not that a relative
+# $0 survives the cd. A relative invocation is the ordinary shape for a
+# project's own vendored copy of the scripts, and is exactly the shape the
+# script_dir fix (capturing $0's directory before the cd, not after) was
+# for -- a fixture with the scripts vendored under it, invoked by a
+# relative path from a subdirectory, is what actually exercises that fix.
+mkdir -p vendor/baton/scripts
+cp "$GATE" vendor/baton/scripts/baton-gate
+cp "$REPO_ROOT/plugins/baton/scripts/baton-observe" vendor/baton/scripts/baton-observe
+chmod +x vendor/baton/scripts/baton-gate vendor/baton/scripts/baton-observe
+relative_base="$(git rev-parse HEAD)"
+out_absolute="$("$GATE" --since "$relative_base")"
+out_relative="$(cd deep/nested && ../../vendor/baton/scripts/baton-gate --since "$relative_base")"
+assert_equals "$out_relative" "$out_absolute" \
+    "invoked by a relative path from a subdirectory (a vendored copy of the scripts) it reports the same evidence too"
+# Removed immediately: left in place, these untracked files (baton-gate's
+# own source carries the literal word "TODO" in a comment) would be picked
+# up by every later scan in this file and inflate placeholder_hits for
+# tests that expect an exact count.
+rm -rf vendor
 
 # --- an invalid pattern is the gate unable to look, not a clean scan ---
 # grep -Eq exits 2 on a pattern that does not compile; discarding that
