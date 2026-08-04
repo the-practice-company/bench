@@ -126,6 +126,14 @@ assert_contains "$resume" 'Read it as `startup` and wait' \
 # that gets read as permission to skip them.
 assert_contains "$resume" "not a grant to work from an unverified state" \
     "resume keeps the divergence checks in force under the autopilot"
+# Why /baton:continue stops this skill short rather than letting step 7 decide.
+# The first version of this paragraph justified it with "resume executes Next
+# action unconditionally", which step 7 itself made false. The real reason is
+# structural and survives: the source says how the session ARRIVED, and a human
+# typing /baton:continue after a /clear is present while the source still reads
+# clear. Left stale, the next editor reads a redundant hand-off and removes it.
+assert_contains "$resume" "how this session **arrived**, not who is in it now" \
+    "resume says why the session source cannot see a human who just typed the command"
 
 autopilot="$(cat "$SKILLS/baton-autopilot/SKILL.md")"
 

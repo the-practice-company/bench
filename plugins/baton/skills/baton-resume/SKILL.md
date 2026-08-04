@@ -360,11 +360,22 @@ the next morning reads someone else's compaction as its own and starts work
 nobody asked for. That is the exact outcome this step exists to prevent,
 reached through the mechanism meant to enforce it.
 
-This step gates step 8; it does not sit beside it. `/baton:continue` says the
-same thing from the other side — it runs this skill and deliberately stops it
-before its last step, because resume executes `Next action` unconditionally
-once verification comes back clean, and carrying an unattended run onward is
-the human's decision to make.
+This step gates step 8; it does not sit beside it. But notice what it decides
+on: the session source says how this session **arrived**, not who is in it now.
+Those come apart in one place, and `/baton:continue` is it.
+
+A human who types `/baton:continue` in a session that began with `/clear` is
+right there — and the source still reads `clear`, which the table above sends
+to "wait". Waiting would mean waiting for the person who just spoke. Nothing
+this step can read distinguishes that session from an unattended one, because
+the distinguishing fact is the command itself, and the command is not in the
+source. So `/baton:continue` runs this skill only as far as step 6 and makes
+the grant decision itself, where that fact is available.
+
+That split is not redundancy or distrust of this step. It is the one input this
+step structurally cannot observe, held by the one caller that has it. What is
+left here is the case this step *can* judge: a session that arrived on its own,
+with nobody having said anything in it yet.
 
 Everything above still runs. The divergence checks are not skipped because the
 run is on the autopilot: a grant to work without a human is simply
