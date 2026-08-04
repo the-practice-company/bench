@@ -7,19 +7,21 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/pre-compact\"",
-            "async": false
+            "async": false,
+            "timeout": 15
           }
         ]
       }
     ],
     "SessionStart": [
       {
-        "matcher": "compact",
+        "matcher": "startup|resume|clear|compact|fork",
         "hooks": [
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/session-start\"",
-            "async": false
+            "async": false,
+            "timeout": 15
           }
         ]
       }

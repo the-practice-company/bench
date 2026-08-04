@@ -2,9 +2,12 @@
 schema: baton/constitution/v1
 run_id: REPLACE-WITH-SLUG
 status: draft
-# status must be `ratified` before any wave starts. A constitution that still
-# contains REPLACE-WITH tokens has not been ratified, regardless of what this
-# field says.
+# status must be `ratified` before any wave starts. A constitution with any
+# unfilled placeholder marker left in it has not been ratified, regardless of
+# what this field says. That check scans the whole file for the marker text,
+# so this comment deliberately does not spell one out: a warning that quoted
+# the token would itself trip the check on every resume, forever, asking for a
+# ratification that already happened.
 ratified_by: REPLACE-WITH-NAME
 ratified_at: REPLACE-WITH-ISO8601
 git_anchor: REPLACE-WITH-SHA
@@ -13,7 +16,7 @@ verify_cmd: "REPLACE-WITH-TEST-COMMAND"
 placeholder_patterns: "TODO|FIXME|NotImplemented|unimplemented|raise NotImplementedError"
 ---
 
-# REPLACE WITH THE NAME OF THIS RUN
+# REPLACE-WITH-THE-NAME-OF-THIS-RUN
 
 ## Goal
 
@@ -35,18 +38,18 @@ current request while quietly violating the original brief.
 
 ```yaml
 - wave: 1
-  name: REPLACE
+  name: REPLACE-WITH-WAVE-NAME
   depends_on: []
   parallel_with: []
   exit_criteria:
-    - The system shall REPLACE WITH VERIFIABLE BEHAVIOUR
+    - The system shall REPLACE-WITH-VERIFIABLE-BEHAVIOUR
 
 - wave: 2
-  name: REPLACE
+  name: REPLACE-WITH-WAVE-NAME
   depends_on: [1]
   parallel_with: []
   exit_criteria:
-    - When REPLACE WITH TRIGGER, the system shall REPLACE WITH BEHAVIOUR
+    - When REPLACE-WITH-TRIGGER, the system shall REPLACE-WITH-BEHAVIOUR
 ```
 
 Exit criteria use EARS. Five patterns, "shall" is mandatory:

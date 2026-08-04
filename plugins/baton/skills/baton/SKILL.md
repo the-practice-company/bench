@@ -1,6 +1,6 @@
 ---
 name: baton
-description: Use when working in a repository that contains docs/baton/ - establishes what is authoritative, what is derived, and how a multi-day run keeps its state honest across context compaction
+description: Use when working in a repository that contains docs/baton/ - establishes what is authoritative, what is derived, who the agent is in the run, and how a multi-day run keeps its state honest across context compaction
 ---
 
 # baton
@@ -8,35 +8,39 @@ description: Use when working in a repository that contains docs/baton/ - establ
 A run under baton lasts days and survives repeated context compaction. This
 skill is the model. `baton-checkpoint` and `baton-resume` are the procedures.
 
-**Announce at start:** "This repository runs under baton — reading state before anything else."
-
 ## What is authoritative
-
-```dot
-digraph authority {
-    "constitution.md" [shape=box];
-    "repository (git)" [shape=box];
-    "state.md" [shape=box];
-    "journal/" [shape=box];
-    "your memory" [shape=box style=filled fillcolor=lightgrey];
-
-    "constitution.md" -> "state.md" [label="goal, mode, constraints"];
-    "repository (git)" -> "state.md" [label="observed facts"];
-    "state.md" -> "your memory" [label="the only direction that is safe"];
-    "your memory" -> "state.md" [label="never" style=dashed];
-}
-```
 
 | Artifact | Written by | Answers |
 |---|---|---|
 | `docs/baton/constitution.md` | the human, ratified | what we are doing, who you are, what may not be broken |
 | the repository itself | the work | what is actually true |
-| `docs/baton/state.md` | you, holding the lock | where we are right now |
+| `docs/baton/state.md` | you, holding the writer lease | where we are right now |
 | `docs/baton/journal/` | you, append-only | why a decision was made |
 
 Your memory is not on this list. After a compaction it is a summary of a
 summary. Everything you believe about progress must be re-derived from the
 files and the repository.
+
+That is also what caps `state.md` at 60 lines: it exists to be taken in whole
+by a session with no memory of the one that wrote it, and a file too long to
+be read that way stops being read closely at all. The journal is its overflow
+— detail that will not fit goes into an entry, and `state.md` keeps a pointer.
+
+## Operating mode
+
+The constitution says who you are in this run, and the default is
+orchestrator. That obliges two things at once. Implementation goes to
+subagents and workflows — you do not write code in the primary session. And
+you stay answerable for it: a subagent's report is a claim, checked against
+the repository like every other claim, and carrying the wave to its exit
+criteria is yours. Delegating the work does not delegate the duty.
+
+Nothing fails at the moment you break this. The change you made yourself is
+usually correct, and it genuinely was quicker. What it spent is context — the
+one resource the run cannot refill — and the bill arrives at the next
+compaction, when everything you were holding in your head and did not write
+down is gone. That is why this is the rule that gets dropped silently:
+breaking it never looks like a failure at the time.
 
 ## The two logs
 
@@ -46,29 +50,49 @@ matters when something has to be reconstructed.
 | | Event log | Decision log |
 |---|---|---|
 | Where | `git log -p docs/baton/state.md` | `docs/baton/journal/` |
-| Answers | where we were at every moment | why we chose what we chose |
+| Answers | where we were at each checkpoint | why we chose what we chose |
 | Complete | yes, nothing is filtered | no, filtered by significance |
 | Rebuilds state | yes | no, and it is not meant to |
 
-State is recoverable because every checkpoint is a commit. That is why a
-checkpoint that changes nothing writes nothing: a file left dirty in the
-working tree is state living outside the log.
+The event log's grain is the checkpoint, not the moment: work landing between
+two of them is nowhere in it until the next one runs, which is why the
+PreCompact hook writes `.baton/precompact-facts` and why `baton-resume`
+compares that against `observed_sha`.
+
+State is recoverable because every checkpoint is a commit, and a file left
+dirty in the working tree is state living outside the log — so a write either
+commits or does not happen at all.
+
+Skipping a write that would change nothing is a separate rule for a separate
+reason: an idle checkpoint has nothing to record, and a commit carrying only a
+fresh timestamp is noise in the log that has to stay readable.
 
 ## Divergence policy
 
 When state and repository disagree, what you do depends on which kind of field
 diverged.
 
-- **Observed fields** — `observed_sha`, `observed_branch`, `tree_clean`. Fix
-  them silently. They describe the repository, and the repository is right.
-- **Claimed fields** — a wave marked `done`, a gate marked `pass`. Never fix
-  these. Set `suspect: true`, describe the divergence in the `Suspect` line,
+- **Observed fields** — `observed_sha`, `observed_branch`, `tree_clean`,
+  `writer`, `updated_at`. Fix them silently. Each describes something you can
+  check at this moment — the repository, the lease file, the clock — so the
+  file's copy of it is never the authority.
+- **Claimed fields** — a wave marked `done`, a gate marked `pass`, the
+  `closed_at_sha` recorded against a closed wave, which is the one claim
+  `baton-resume` checks mechanically. Never fix these. Set `suspect: true`,
+  describe the divergence in the `Suspect` line of `state.md`'s `Now` section,
   and surface it. Silently correcting a claim destroys the evidence that
   something went wrong.
 
-## Decisions worth journaling
+A field on neither list is claimed. These lists are what the schema carries
+today, and the default has to be the reading that preserves evidence.
 
-Write an entry only if at least one holds:
+`suspect` and `needs_human` are neither kind. You raise them and a human
+clears them. Clearing your own `suspect` is the same act as silently fixing
+the claim that raised it.
+
+## The threshold
+
+Write a journal entry only if at least one holds:
 
 - the decision is hard to reverse;
 - it touches something outside the declared scope of the current wave;
@@ -78,8 +102,12 @@ Write an entry only if at least one holds:
 Everything else goes unwritten. A journal nobody reads is its own failure
 mode, and volume is what makes it unreadable.
 
-Entries are immutable. Superseding a decision means writing a new entry and
-marking the old one `superseded-by`, never editing it. The truth is the chain.
+Entries are immutable: nothing under `docs/baton/journal/` is edited once it
+lands. Superseding a decision means writing a new entry that carries
+`supersedes: DEC-NNNN` in its frontmatter. The old entry is not touched, and
+nothing marks it from the inside, so any entry is current only until a later
+one supersedes it. Read forward to the end of the chain before acting on one.
+The truth is the chain.
 
 ## New input mid-run
 
@@ -96,10 +124,8 @@ These thoughts mean stop — you are rationalising.
 | Thought | Reality |
 |---|---|
 | "I remember finishing that wave" | Your memory did not survive the compaction. Read state.md. |
-| "The state file is probably stale, I'll just work" | Then fix it first. Stale state is worse than none. |
-| "This isn't implemented, I'll write it" | Search first. Not finding it by the name you expected is the documented way agents overwrite working code. |
-| "I'll fix the wave status to match reality" | Only for observed fields. A claimed field that diverged is evidence, not a typo. |
-| "Checkpointing now would interrupt my flow" | The flow ends at the next compaction either way. |
+| "The state file is probably stale, I'll just work" | Run `baton-resume` and reconcile it first. Stale state is worse than none. |
+| "This is a small change, faster if I just do it" | It is faster, and speed is not the constraint. The context it spends is what the run needed to reach the end. Delegate it. |
 | "This decision is too small to journal" | Check it against the four criteria rather than against your sense of size. |
 | "I'll update the constitution to match what we learned" | You do not write the constitution. Record an `incoming` entry. |
 | "The exit criterion is unrealistic, I'll read it loosely" | A criterion read loosely is a gate not run. Escalate instead. |

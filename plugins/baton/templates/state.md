@@ -21,12 +21,12 @@ needs_human: false
 
 | # | name | status | branch/worktree | spec | plan | closed_at_sha | gate |
 |---|------|--------|-----------------|------|------|---------------|------|
-| 1 | REPLACE | todo | — | — | — | — | — |
+| 1 | REPLACE-WITH-WAVE-NAME | todo | — | — | — | — | — |
 
 **Status:** `todo | doing | done | blocked`.
 `blocked` waits on a dependency; `needs_human: true` (frontmatter) stops the whole run.
 
-**Current wave:** 1 — REPLACE
+**Current wave:** 1 — REPLACE-WITH-WAVE-NAME
 
 ## Now
 

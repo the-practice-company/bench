@@ -9,7 +9,20 @@ assert_valid_json "$HOOKS/hooks.json" "hooks.json is valid JSON"
 cfg="$(cat "$HOOKS/hooks.json")"
 assert_contains "$cfg" '"PreCompact"' "registers PreCompact"
 assert_contains "$cfg" '"SessionStart"' "registers SessionStart"
-assert_contains "$cfg" '"compact"' "SessionStart matches the compact event"
+
+# SessionStart fires on five distinct events, and this hook has to run on
+# every one of them. A matcher naming only "compact" left four of the five
+# unhooked -- including `startup` and `resume`, which are how day two of a
+# multi-day run begins, with the least surviving context and the most need
+# for deterministic state injection. The hook has no compact-specific logic
+# and already exits 0 silently outside a baton run, so there is no event it
+# should decline.
+session_start_matcher="$(python3 -c \
+    "import json,sys; print(json.load(open(sys.argv[1]))['hooks']['SessionStart'][0]['matcher'])" \
+    "$HOOKS/hooks.json")"
+for event in startup resume clear compact fork; do
+    assert_contains "$session_start_matcher" "$event" "SessionStart matches the $event event"
+done
 
 make_fixture_repo
 export CLAUDE_PLUGIN_ROOT="$REPO_ROOT/plugins/baton"
@@ -56,12 +69,26 @@ assert_contains "$out" "never modify the billing schema" "session-start carries 
 assert_contains "$out" "widget.spec.ts" "session-start carries the next action"
 assert_contains "$out" "baton-resume" "session-start tells the agent to resume"
 
-"$HOOKS/pre-compact" < /dev/null 2>/dev/null
+# Captures the exit code rather than letting it fall through this file's own
+# set -e, because the exit code is one of the things under test: for
+# PreCompact, a non-zero exit is not a louder warning, it is a BLOCKED
+# compaction. Left to set -e, a regression to exit 2 would abort this file at
+# the first invocation with no failed assertion naming what went wrong.
+run_pre_compact() {
+    set +e
+    pre_compact_stdout="$("$HOOKS/pre-compact" < /dev/null 2>/dev/null)"
+    pre_compact_rc=$?
+    set -e
+}
+
+run_pre_compact
+assert_equals "$pre_compact_rc" "0" \
+    "pre-compact exits 0 - anything else blocks the compaction instead of reporting on it"
 assert_file_exists ".baton/precompact-facts" "pre-compact records facts when the run is under baton"
 assert_contains "$(cat .baton/precompact-facts)" "sha=" "recorded facts include the SHA"
 
 state_before="$(cat docs/baton/state.md)"
-"$HOOKS/pre-compact" < /dev/null 2>/dev/null
+run_pre_compact
 assert_equals "$(cat docs/baton/state.md)" "$state_before" \
     "pre-compact never writes state.md - the lock holder is the only writer"
 
@@ -121,9 +148,21 @@ needs_human: false
 - **Next action:** run npm test -- widget.spec.ts and fix the failing assertion
 EOF
 
-stderr_current="$( { "$HOOKS/pre-compact" < /dev/null >/dev/null; } 2>&1 )"
-assert_equals "$stderr_current" "" \
-    "pre-compact stays silent when observed_sha matches HEAD and the tree is clean"
+# A warning is a `systemMessage` JSON object on stdout, with exit 0 -- these
+# assertions used to certify a line on stderr, which is a channel nothing
+# reads: Claude Code discards a hook's stderr on exit 0, and for PreCompact
+# it does not surface stdout in the transcript either, so every warning this
+# hook produced reached neither the human nor the model. The exit code is
+# asserted alongside the message on purpose. Exit 2 is the other channel a
+# hook can be seen through, and for PreCompact it BLOCKS the compaction --
+# a stalled run in place of a warning -- so a future change that reaches for
+# it has to fail here, loudly, rather than pass as "the warning is visible
+# now".
+run_pre_compact
+assert_equals "$pre_compact_stdout" "" \
+    "pre-compact says nothing when observed_sha matches HEAD and the tree is clean"
+assert_equals "$pre_compact_rc" "0" \
+    "pre-compact exits 0 when the checkpoint is current"
 assert_file_exists ".baton/precompact-facts" \
     "pre-compact still writes facts even when the checkpoint is current"
 assert_not_contains "$(cat .baton/precompact-facts)" "observe_failed" \
@@ -133,13 +172,19 @@ echo "more work landed" > later-work.txt
 git add later-work.txt
 git commit -q -m "more work landed after the checkpoint"
 
-stderr_behind="$( { "$HOOKS/pre-compact" < /dev/null >/dev/null; } 2>&1 )"
-if [ -n "$stderr_behind" ]; then
-    pass "pre-compact warns when observed_sha is behind HEAD"
-else
-    fail "pre-compact warns when observed_sha is behind HEAD"
-fi
-assert_contains "$stderr_behind" "$head_now" \
+run_pre_compact
+assert_equals "$pre_compact_rc" "0" \
+    "pre-compact exits 0 when it warns - exit 2 would block the compaction, not report on it"
+printf '%s\n' "$pre_compact_stdout" > behind-warning.json
+assert_valid_json "behind-warning.json" \
+    "pre-compact warns with a JSON object Claude Code can parse, not a bare line"
+# `|| true` so that a regression producing unparseable output fails the
+# assertions below with the field it could not read, instead of aborting
+# this file under set -e and taking every later assertion with it.
+behind_message="$(json_get behind-warning.json systemMessage 2>/dev/null || true)"
+assert_contains "$behind_message" "checkpoint is behind" \
+    "the warning goes out through systemMessage, the field that is actually shown to the user"
+assert_contains "$behind_message" "$head_now" \
     "the warning names the stale observed_sha, not just that something diverged"
 
 # --- a genuine baton-observe failure must be recorded, not silently
@@ -152,17 +197,21 @@ assert_contains "$stderr_behind" "$head_now" \
 # surfaced anywhere. ---
 rm -f .baton/precompact-facts
 chmod 000 .git/index
-set +e
-observe_fail_stderr="$( { "$HOOKS/pre-compact" < /dev/null >/dev/null; } 2>&1 )"
-observe_fail_rc=$?
-set -e
+run_pre_compact
 chmod 644 .git/index
 
-assert_equals "$observe_fail_rc" "0" \
+assert_equals "$pre_compact_rc" "0" \
     "pre-compact still exits 0 when baton-observe fails - a hook must not break the session"
-assert_contains "$observe_fail_stderr" "could not establish repository facts" \
+printf '%s\n' "$pre_compact_stdout" > observe-failed-warning.json
+# git's own `fatal:` text is quoted into this message verbatim, so this
+# assertion is also the one that catches an escaper that lets a stray quote
+# or newline through and turns the whole warning back into silence.
+assert_valid_json "observe-failed-warning.json" \
+    "the observe-failure warning is still a parseable JSON object once git's fatal: text is quoted into it"
+observe_fail_message="$(json_get observe-failed-warning.json systemMessage 2>/dev/null || true)"
+assert_contains "$observe_fail_message" "could not establish repository facts" \
     "pre-compact says plainly that facts could not be established, rather than guessing"
-assert_not_contains "$observe_fail_stderr" "work_sha ()" \
+assert_not_contains "$observe_fail_message" "work_sha ()" \
     "pre-compact never fabricates a comparison against an empty work_sha when observe failed"
 assert_file_exists ".baton/precompact-facts" \
     "pre-compact still writes a facts file when baton-observe fails"

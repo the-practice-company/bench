@@ -31,6 +31,49 @@ plugin_root="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 observe="$plugin_root/scripts/baton-observe"
 [ -x "$observe" ] || exit 0
 
+# Every warning below goes out as a `systemMessage` JSON object on stdout,
+# not as a line on stderr. Stderr was the original channel and it reached
+# nobody: on exit 0 Claude Code discards a hook's stderr, and for PreCompact
+# it does not surface stdout in the transcript either, so all four warnings
+# this hook can produce were written to a channel that is thrown away --
+# verified empirically, neither the human nor the model ever saw one. A JSON
+# object with a `systemMessage` field is a universal hook output shape and
+# is shown to the user.
+#
+# Do NOT reach for exit 2 to make a warning visible. For PreCompact, exit 2
+# BLOCKS the compaction: the run stops instead of compacting, which is a far
+# worse outcome than the staleness being reported. The whole point of this
+# hook is that the compaction proceeds and resume can tell what happened --
+# so it warns on stdout and exits 0, always.
+#
+# The message is escaped rather than interpolated raw: it can carry
+# baton-observe's stderr (git's own `fatal:` text, quotes and newlines
+# included) and observed_sha straight out of state.md, and a single
+# unescaped quote in either would produce a JSON object nothing can parse,
+# turning a warning into silence again. Control bytes below 0x20 other than
+# \n, \r, \t are dropped instead of \u-encoded, the same way session-start
+# does it: nothing that belongs in a warning is lost, and the escaper below
+# only has to handle the characters it lists.
+strip_disallowed_control_chars() {
+    LC_ALL=C tr -d '\000-\010\013\014\016-\037'
+}
+
+escape_for_json() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    printf '%s' "$s"
+}
+
+warn() {
+    local message
+    message="$(printf '%s' "$1" | strip_disallowed_control_chars)"
+    printf '{\n  "systemMessage": "%s"\n}\n' "$(escape_for_json "$message")"
+}
+
 mkdir -p .baton
 tmp=".baton/.precompact-facts.tmp.$$"
 
@@ -60,7 +103,7 @@ if [ "$observe_rc" -ne 0 ]; then
     # staleness comparison runs below: state.md's observed_sha compared
     # against an unknown work_sha is not a fact, it is a guess dressed up
     # as one, which is exactly what the old behaviour did.
-    echo "baton: could not establish repository facts before compaction - baton-observe failed ($observe_output). No staleness comparison can be trusted this run; observe_failed=true was recorded in .baton/precompact-facts instead of guessed-at fields." >&2
+    warn "baton: could not establish repository facts before compaction - baton-observe failed ($observe_output). No staleness comparison can be trusted this run; observe_failed=true was recorded in .baton/precompact-facts instead of guessed-at fields."
     exit 0
 fi
 
@@ -98,11 +141,11 @@ if [ -f "$state" ]; then
 fi
 
 if [ -z "$observed_sha" ]; then
-    echo "baton: cannot tell whether the checkpoint is current - docs/baton/state.md has no readable observed_sha. Facts saved to .baton/precompact-facts." >&2
+    warn "baton: cannot tell whether the checkpoint is current - docs/baton/state.md has no readable observed_sha. Facts saved to .baton/precompact-facts."
 elif [ "$observed_sha" != "$current_work_sha" ]; then
-    echo "baton: checkpoint is behind - state.md's observed_sha ($observed_sha) is not the repository's current work_sha ($current_work_sha) - work landed since the last checkpoint. Facts saved to .baton/precompact-facts; run /baton:checkpoint before compacting if you can." >&2
+    warn "baton: checkpoint is behind - state.md's observed_sha ($observed_sha) is not the repository's current work_sha ($current_work_sha) - work landed since the last checkpoint. Facts saved to .baton/precompact-facts; run /baton:checkpoint before compacting if you can."
 elif [ "$tree_clean" != "true" ]; then
-    echo "baton: checkpoint is behind - observed_sha matches the current work_sha, but the working tree has uncommitted changes since then. Facts saved to .baton/precompact-facts; run /baton:checkpoint before compacting if you can." >&2
+    warn "baton: checkpoint is behind - observed_sha matches the current work_sha, but the working tree has uncommitted changes since then. Facts saved to .baton/precompact-facts; run /baton:checkpoint before compacting if you can."
 fi
 # else: observed_sha matches the current work_sha and the tree is clean --
 # the checkpoint is current. Say nothing.

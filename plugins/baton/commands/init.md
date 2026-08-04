@@ -1,5 +1,6 @@
 ---
-description: Start a baton run - decompose an umbrella spec into waves and write the constitution
+description: Start a baton run - decompose a spec, write the constitution
+disable-model-invocation: true
 ---
 
 Set up a baton run in this repository.
@@ -67,18 +68,32 @@ happened — it starts here, at the first write, not whenever something later
 happens to trigger `baton-resume`:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/scripts/baton-lock" acquire "$CLAUDE_SESSION_ID"
+"${CLAUDE_PLUGIN_ROOT}/scripts/baton-lock" acquire "${CLAUDE_CODE_SESSION_ID:-$CLAUDE_SESSION_ID}"
 ```
+
+Both names, in that order, deliberately: `CLAUDE_CODE_SESSION_ID` is what
+Claude Code actually exports, and neither name is a documented contract, so
+the fallback is what keeps this working if the exported name changes again.
+`baton-lock` refuses an empty id outright rather than granting a shared
+lease, so if it exits 64 saying the session id must not be empty, the
+environment gave neither name — say so and stop rather than inventing an id.
 
 `${CLAUDE_PLUGIN_ROOT}/templates/constitution.md` and
 `${CLAUDE_PLUGIN_ROOT}/templates/state.md` are read-only: they are the shipped
 shape for every run on this machine, not this run's draft, and editing them in
 place would corrupt every future `/baton:init`. Read them for the frontmatter
 fields and sections required, then compose the filled document from the
-conversation and write it to a scratch file of your own — `/tmp/constitution.md`,
-`/tmp/state.md` — rather than the template path. Every `REPLACE-` marker must
-be gone except `ratified_by`, `ratified_at` and `git_anchor`: those three are
-the human's to fill at ratification in step 6, not the agent's to invent.
+conversation and write it to a scratch file of your own —
+`.baton/init-constitution.md` and `.baton/init-state.md` — rather than the
+template path. Every `REPLACE-` marker must be gone except `ratified_by`,
+`ratified_at` and `git_anchor`: those three are the human's to fill at
+ratification in step 6, not the agent's to invent.
+
+Scratch goes in `.baton/`, not `/tmp`. `/tmp/constitution.md` is a fixed name
+in a directory shared by everything on the machine, so two runs initialising at
+once would silently overwrite each other's draft; `.baton/` belongs to this
+repository, the lease you just took is what keeps a second session out of it,
+and the next step puts it in `.gitignore` before anything is committed.
 
 Add `.baton/` to `.gitignore` if it is not already there — check first, and
 append in a way that tolerates a missing trailing newline, since a bare `>>`
@@ -102,16 +117,24 @@ through `baton-write`:
 
 ```bash
 mkdir -p docs/baton
-cp /tmp/constitution.md docs/baton/constitution.md
+cp .baton/init-constitution.md docs/baton/constitution.md
 git add docs/baton/constitution.md
 git commit -q -m "baton: constitution for <run>"
 ```
+
+That `cp` is the one hole in the refusal, which is why this command carries
+`disable-model-invocation: true` in its frontmatter. A refusal the agent can
+route around by calling `/baton:init` on itself mid-run is not a refusal, so
+the door is closed at the only place it can be: this command is invokable by
+the human typing it, and by nothing else. `/baton:checkpoint` and
+`/baton:status` stay open to the model — they write nothing the agent is
+judged by.
 
 Then write the initial state through `baton-write` so it lands atomically and
 gets committed, the same way every checkpoint after it will:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/scripts/baton-write" -m "baton: initial state" docs/baton/state.md < /tmp/state.md
+"${CLAUDE_PLUGIN_ROOT}/scripts/baton-write" -m "baton: initial state" docs/baton/state.md < .baton/init-state.md
 ```
 
 ## 6. Hand it back for ratification

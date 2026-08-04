@@ -169,8 +169,10 @@ assert_exit_code 64 "usage error: too many arguments" "$LOCK" acquire session-f 
 
 # --- an empty session id is a usage error, not a silently shared lease ---
 # baton-lock validated argument count but never that the session id itself
-# was non-empty. Every real caller passes "$CLAUDE_SESSION_ID" verbatim, so
-# one unset environment variable was enough for two independent callers to
+# was non-empty. Every real caller passes
+# "${CLAUDE_CODE_SESSION_ID:-$CLAUDE_SESSION_ID}" verbatim, and neither name
+# is a documented contract, so an environment providing neither -- the case
+# that fallback exists for -- was enough for two independent callers to
 # both read the lock as "ours" (an empty owner field equals an empty
 # caller id) and both get exit 0 with no takeover= line and no error at
 # all -- the single-writer guarantee gone with nothing to show for it.

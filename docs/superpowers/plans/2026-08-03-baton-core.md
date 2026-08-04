@@ -1512,6 +1512,28 @@ git commit -m "feat: baton-checkpoint skill"
 
 ### Task 9: Skill `baton-resume`
 
+> **Superseded during implementation, 2026-08-03.** The block below names the
+> session-id environment variable `CLAUDE_SESSION_ID` (in the `acquire` call
+> and again in the `takeover` sentence beside it). That variable does not
+> exist: it appears nowhere in the shipped Claude Code bundle, and what this
+> install (v2.1.220) actually exports is `CLAUDE_CODE_SESSION_ID`. Because
+> `baton-lock` refuses an empty session id at entry, before verb dispatch,
+> every documented lock call inherited from here — `acquire`, `release` and
+> `takeover` alike — exited 64 rather than doing anything. The writer lease
+> was never acquirable, and the `takeover` escape hatch this very block
+> describes as always succeeding was unreachable along with it.
+>
+> The shipped skills, `commands/init.md` and `skills/baton-checkpoint`
+> pass `"${CLAUDE_CODE_SESSION_ID:-$CLAUDE_SESSION_ID}"` instead. The
+> fallback is not decoration: `CLAUDE_CODE_SESSION_ID` is undocumented too,
+> so neither name is a contract, and the tolerant form is what keeps the
+> lease working if the exported name changes again rather than trading one
+> magic name for another.
+>
+> The shipped `plugins/baton/skills/baton-resume/SKILL.md` is the source of
+> truth. The block below is kept as the record of where the wrong name
+> entered the plugin.
+
 **Files:**
 - Create: `plugins/baton/skills/baton-resume/SKILL.md`
 

@@ -18,6 +18,16 @@ git config user.email "baton@example.invalid"
 git config commit.gpgsign false
 
 mkdir -p src docs/baton/journal
+
+# .baton/ gitignored from the start, as a real /baton:init'd repository has
+# it -- see build-diverged.sh's comment on the same lines. It matters most
+# here of all three fixtures: the stale lease written below lives in
+# .baton/, and without this it is untracked noise rather than the invisible
+# leftover of a crashed session it is meant to be.
+printf '.baton/\n' > .gitignore
+git add .gitignore
+git commit -q -m "baton: gitignore .baton/"
+
 cat > src/auth.js <<'EOF'
 export function login(user) {
   return { user, token: "signed" };
@@ -94,7 +104,7 @@ needs_human: false
 
 | # | name | status | branch/worktree | spec | plan | closed_at_sha | gate |
 |---|------|--------|-----------------|------|------|---------------|------|
-| 1 | login | done | main | — | — | $wave1_sha | pass |
+| 1 | login | done | main | — | — | $wave1_sha | — |
 | 2 | session | doing | main | — | — | — | — |
 
 **Current wave:** 2 — session

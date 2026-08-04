@@ -1,5 +1,5 @@
 ---
-description: Where the run stands - deviations first, for a human with thirty seconds
+description: Show where the run stands, deviations first
 ---
 
 Render the run for a human who just opened their laptop and wants to know
