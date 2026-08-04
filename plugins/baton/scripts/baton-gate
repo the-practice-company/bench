@@ -18,7 +18,8 @@
 #   1   not a git repository
 #   3   docs/baton/constitution.md is missing, is not ratified, or still
 #       carries an unfilled placeholder marker
-#   4   verify_cmd is empty, or names a command that cannot be run
+#   4   verify_cmd is empty, names a command that cannot be run, or .baton/
+#       could not be prepared to receive the log
 #   64  usage error, including a --since that is not a commit
 #   *   any other non-zero code comes from awk or git, not from this
 #       script's own logic, and means the constitution could not be read
@@ -126,6 +127,13 @@ if grep -q 'REPLACE-WITH' "$constitution"; then
     exit 3
 fi
 
+# --since sits here, between the two groups of constitution checks above and
+# below it, deliberately -- not because "repo state" ends and "the rest"
+# begins. verify_cmd's own checks below are repo state too, and they run
+# after --since, not before it. Everything above this point is a handful of
+# file reads; everything below it can run a whole test suite. A typo'd
+# --since must not cost a real test run, so it is the last cheap thing
+# checked before the expensive one, not the last thing checked, full stop.
 if ! git rev-parse --verify -q "${since}^{commit}" >/dev/null 2>&1; then
     echo "baton-gate: --since '$since' is not a commit in this repository" >&2
     exit 64
@@ -137,11 +145,45 @@ if [ -z "$verify_cmd" ]; then
     exit 4
 fi
 
-# The first word only. verify_cmd is a shell line, so this misses the case
-# where the missing binary is the second command in a pipeline -- that one
-# surfaces as a non-zero verify_exit instead, which is the correct reading
-# anyway: the suite ran and did not pass.
-verify_bin="${verify_cmd%% *}"
+# "CI=1 npm test", "NODE_ENV=test npx jest", "RAILS_ENV=test bundle exec
+# rspec" are the ordinary shape of a test command, not an exotic one --
+# CI=1 names npm, not CI=1. Refusing them would stop the run over nothing,
+# and exit 4 means stop: verify_cmd lives in the constitution, which no tool
+# here can edit to unblock it, so this guard errs toward letting a command
+# word through rather than refusing one it merely failed to parse. What it
+# strips is a leading run of plain NAME=VALUE words; a builtin, a keyword,
+# or a first word carrying shell syntax (`[[`, a subshell, a redirect) is
+# left alone and falls through to command -v below, which will correctly
+# say no -- none of those is a runnable binary either.
+verify_head="$verify_cmd"
+while :; do
+    case "$verify_head" in
+        [[:space:]]*) verify_head="${verify_head#[[:space:]]}"; continue ;;
+    esac
+    verify_word="${verify_head%%[[:space:]]*}"
+    case "$verify_word" in
+        [A-Za-z_][A-Za-z0-9_]*=*) verify_head="${verify_head#"$verify_word"}" ;;
+        *) break ;;
+    esac
+done
+verify_bin="${verify_head%%[[:space:]]*}"
+
+# command -v is asked about bash's own idea of "$verify_bin" -- which is why
+# the run below uses bash too, not sh. A guard that consults one shell's
+# builtins and keywords while the run uses another would pass words the run
+# cannot execute: on the Debian family /bin/sh is dash, and bash's
+# command -v vouches for `[[`, `source`, `let`, `declare` and `function`,
+# none of which dash has. A verify_cmd of "[[ 1 == 1 ]]" run there under
+# `sh -c` reports verify_exit=127 -- a command that was never found,
+# arriving dressed as a suite that failed. This check is the first word
+# only, so a binary missing later in the line (a pipeline's second stage, an
+# `&&`'d command) is not caught here either -- that also surfaces as
+# verify_exit=127, and the script deliberately does not remap it to a code
+# of its own: a real test runner can legitimately propagate a 127 from
+# something it invoked, and guessing which case this is would be worse than
+# reporting the number as given. 127 means "did not run", not "did not
+# pass" -- that reading belongs to the caller, and the baton-autopilot skill
+# states it.
 if ! command -v "$verify_bin" >/dev/null 2>&1; then
     echo "baton-gate: verify_cmd names '$verify_bin', which is not runnable here" >&2
     exit 4
@@ -150,10 +192,35 @@ fi
 # .baton/ is gitignored by every /baton:init'd repository, which is the
 # point: a gate run that left an untracked log behind would show up as a
 # dirty tree at the next checkpoint and read as work in flight.
-mkdir -p .baton
+#
+# Both steps below are guarded, and both exit 4 rather than letting a
+# failure fall through into verify_exit: without this, a read-only .baton/
+# (stale permissions, a full disk, a leftover root-owned log) makes the run
+# below fail before the command is ever reached, and the $? from THAT looks
+# exactly like a suite with a failing test -- the gate being unable to
+# gather evidence, presenting as evidence that the code is broken. The mkdir
+# guard also covers the case where .baton already exists as a plain file
+# rather than a directory: unguarded, `mkdir -p` fails there and set -e
+# would abort with no baton-gate: prefix and exit 1 -- a code the header
+# table above already spends on "not a git repository".
+mkdir -p .baton || {
+    echo "baton-gate: cannot create .baton/ -- check whether something at that path is not a directory, or the parent is not writable" >&2
+    exit 4
+}
 verify_log=".baton/gate-verify.log"
+: > "$verify_log" || {
+    echo "baton-gate: cannot write $verify_log -- check .baton/'s permissions and the filesystem's free space" >&2
+    exit 4
+}
+
 verify_exit=0
-sh -c "$verify_cmd" > "$verify_log" 2>&1 || verify_exit=$?
+# bash, the same shell command -v consulted above -- see the comment on the
+# guard. Stdin is /dev/null regardless of what this script inherited: a
+# verify_cmd that reads stdin (a bare `cat`, a runner left waiting on a
+# prompt it was never given) would otherwise hang forever with no one left
+# to answer it, which is the one outcome this whole feature exists to
+# avoid -- it produces neither a closed wave nor a named stopping point.
+bash -c "$verify_cmd" < /dev/null > "$verify_log" 2>&1 || verify_exit=$?
 
 printf 'verify_cmd=%s\n' "$verify_cmd"
 printf 'verify_exit=%s\n' "$verify_exit"

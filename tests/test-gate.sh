@@ -9,6 +9,17 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 GATE="$REPO_ROOT/plugins/baton/scripts/baton-gate"
 . "$SCRIPT_DIR/helpers.sh"
 
+# Extracts field NAME's exact value from the gate's captured key=value
+# output. Mirrors test-lock.sh's lock_field, adapted for output already
+# captured in a variable rather than read from a file: an exact match, not
+# assert_contains, since "verify_exit=1" is an unanchored substring of
+# "verify_exit=127" and "verify_exit=130" -- exactly the codes that mean
+# "did not run", not "did not pass". An assertion checking for exit code 1
+# with assert_contains would pass against either by accident.
+gate_field() {
+    printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -1
+}
+
 # Write a ratified constitution carrying the given verify_cmd.
 write_constitution() {
     mkdir -p docs/baton
@@ -82,9 +93,17 @@ assert_exit_code 0 "a green verify_cmd exits 0" "$GATE" --since "$base"
 
 write_constitution "false"
 out="$("$GATE" --since "$base")"
-assert_contains "$out" "verify_exit=1" "a red verify_cmd reports its exit code"
+assert_equals "$(gate_field "$out" verify_exit)" "1" "a red verify_cmd reports its exit code, exactly (not merely a string that contains it)"
 assert_exit_code 0 "a RED verify_cmd still exits 0 -- the script reports, it does not judge" \
     "$GATE" --since "$base"
+
+# The guard consults bash's own command -v, so the run has to be bash too --
+# under /bin/sh-as-dash (Debian, Ubuntu) this bashism would otherwise report
+# verify_exit=127, a command that was never found, arriving dressed as a
+# suite that failed.
+write_constitution "[[ 1 == 1 ]]"
+out="$("$GATE" --since "$base")"
+assert_equals "$(gate_field "$out" verify_exit)" "0" "verify_cmd runs under bash, the shell whose command -v vouched for it"
 
 # The log is where the agent reads what actually broke, so it has to exist
 # and hold the command's own output.
@@ -100,9 +119,52 @@ assert_contains "$(cat .baton/gate-verify.log)" "boom-from-the-verify-command" \
 assert_contains "$out" "verify_log=.baton/gate-verify.log" "the evidence names where the log went"
 
 # A command that cannot be run at all is the script failing, not the gate.
+# The message is checked, not just the exit code: command -v "" also fails,
+# so the empty-verify_cmd guard and the not-runnable guard both produce
+# exit 4, and an exit-code-only assertion passes whether or not the empty
+# guard exists at all -- it does not test the guard it is named for.
 write_constitution ""
 assert_exit_code 4 "refuses an empty verify_cmd" "$GATE" --since "$base"
+empty_verify_stderr="$("$GATE" --since "$base" 2>&1 >/dev/null || true)"
+assert_contains "$empty_verify_stderr" "verify_cmd is empty" \
+    "the empty refusal names itself, distinct from the not-runnable refusal below"
+
 write_constitution "definitely-not-a-real-command-9d3f"
 assert_exit_code 4 "refuses a verify_cmd whose command does not exist" "$GATE" --since "$base"
+
+# "CI=1 npm test" names npm, not CI=1 -- an env-var prefix is the ordinary
+# shape of a test command, and exit 4 means stop the run, so refusing this
+# would halt overnight work over nothing.
+write_constitution "CI=1 true"
+out="$("$GATE" --since "$base")"
+assert_equals "$(gate_field "$out" verify_exit)" "0" "an env-var prefix names the command after it, not the assignment"
+
+# --- a failed log write is the gate unable to gather evidence, not a red
+# suite -- both must exit 4, with their own message, not present as
+# verify_exit=<something small>. Skipped as root: root ignores the mode
+# bits below, so the assertion would fail for the wrong reason.
+if [ "$(id -u)" != "0" ]; then
+    write_constitution "true"
+    rm -rf .baton
+    mkdir -p .baton
+    chmod 555 .baton
+    unwritable_stderr="$("$GATE" --since "$base" 2>&1 >/dev/null || true)"
+    assert_exit_code 4 "refuses when .baton/'s log cannot be written" "$GATE" --since "$base"
+    assert_contains "$unwritable_stderr" "cannot write" \
+        "the refusal names what could not be written, not just a bare exit code"
+    chmod 755 .baton
+else
+    pass "(skipped as root) an unwritable .baton/ is the gate failing, not the suite"
+fi
+
+# .baton existing as a plain file, not a directory, is the same class of
+# bug: unguarded, mkdir -p fails there and set -e aborts with no
+# baton-gate: prefix and exit 1 -- a code the header table already spends
+# on "not a git repository".
+write_constitution "true"
+rm -rf .baton
+touch .baton
+assert_exit_code 4 "refuses when .baton exists as a file, not a directory" "$GATE" --since "$base"
+rm -f .baton
 
 finish
