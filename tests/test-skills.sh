@@ -64,6 +64,16 @@ assert_contains "$checkpoint" '`auto`, not `pass`' \
 # cannot close, and step 5 is the only place any entry's shape is written down.
 assert_contains "$checkpoint" 'type: blocked' \
     "checkpoint documents the blocked entry the autopilot path requires"
+assert_contains "$checkpoint" 'type: autopilot' \
+    "checkpoint documents the grant entry autopilot_grant points at"
+# Two ways this file silently resets the autopilot's attempt ceiling: its own
+# definition of In flight ("what was interrupted, or nothing") and its rule
+# sending a long In flight to a journal entry. Both are correct for every other
+# use of that line and wrong for the one value that is a ceiling.
+assert_contains "$checkpoint" "One exception: an" \
+    "checkpoint excepts the attempt counter from the In flight nothing default"
+assert_contains "$checkpoint" "never moves out" \
+    "checkpoint keeps the attempt counter out of the journal-overflow rule"
 # The gate column used to stay `—`, so closing was three edits and the column
 # was not one of them. Now both paths write it. A stale count here does not
 # fail loudly: it closes the wave and leaves the cell empty, which every
@@ -124,6 +134,25 @@ autopilot="$(cat "$SKILLS/baton-autopilot/SKILL.md")"
 assert_contains "$autopilot" "may always turn it off, and never on" \
     "autopilot skill states the asymmetry: the agent clears the grant, never sets it"
 
+# The description is a model-invocable trigger. Worded as a state-file
+# condition ("autopilot is not off") it fires on its own on a fresh startup,
+# because the hook injects that very fact -- the skill authorising itself off a
+# file read, which is what disable-model-invocation on /baton:auto exists to
+# prevent. The trigger has to name the decision, which only baton-resume or a
+# human's /baton:continue can make.
+autopilot_desc="$(sed -n 's/^description: //p' "$SKILLS/baton-autopilot/SKILL.md")"
+assert_contains "$autopilot_desc" "baton-resume has decided" \
+    "autopilot triggers on the decision that the grant applies to this session"
+assert_contains "$autopilot_desc" "/baton:continue" \
+    "autopilot's other trigger is the human's command"
+assert_not_contains "$autopilot_desc" "set to anything but off" \
+    "autopilot does not trigger off a state.md condition it can read for itself"
+# Single-line substring on purpose: assert_contains is grep -F, which reads a
+# needle containing a newline as two independent patterns and matches EITHER --
+# weaker than the one-line form, not stronger.
+assert_contains "$autopilot" "Reading the field yourself is not the decision" \
+    "autopilot's prerequisite refuses a grant inferred from the field alone"
+
 # Eligibility has three conditions and the third is the one that would be
 # dropped as pedantic -- two waves can be independent in the graph and
 # still share a contract the blocked wave was to define. Which is why the
@@ -132,6 +161,15 @@ assert_contains "$autopilot" "may always turn it off, and never on" \
 # condition it is meant to defend had been deleted.
 assert_contains "$autopilot" "transitive" \
     "autopilot skill requires the whole transitive dependency closure to be done"
+# The eligibility rule existed but governed only the post-block search, so the
+# main loop could start a wave whose depends_on was still todo and nothing in
+# the file caught it. Both halves of the fix are pinned: the order, which must
+# match /baton:auto's so the human reviews the sequence that actually runs, and
+# the check itself being applied before a wave is started at all.
+assert_contains "$autopilot" "the constitution's wave order, restricted to waves in scope" \
+    "autopilot walks waves in the order the human reviewed, not a re-derived one"
+assert_contains "$autopilot" "**Check it is available.**" \
+    "autopilot checks availability before starting a wave, not only after a block"
 assert_contains "$autopilot" 'nothing in its `consumes` appears in the `produces`' \
     "autopilot skill excludes a wave that consumes what a blocked wave produces"
 
@@ -141,6 +179,12 @@ assert_contains "$autopilot" "unchanged evidence" \
 assert_contains "$autopilot" "three attempts" "autopilot skill states the absolute ceiling"
 assert_contains "$autopilot" "In flight" \
     "autopilot skill keeps the attempt counter in state.md, not in the session"
+# The counter only exists once a checkpoint writes it, so "checkpoint between
+# waves" left a compaction mid-attempt handing the next session a free one --
+# a ceiling that resets, which is the one thing a ceiling must not do. The two
+# other reset paths are in baton-checkpoint and pinned below.
+assert_contains "$autopilot" "And between attempts, not only between waves" \
+    "autopilot checkpoints per attempt, so the ceiling survives a compaction"
 
 # What autonomy never covers.
 assert_contains "$autopilot" "contradicts the constitution" "autopilot skill stops on a constitution contradiction"
@@ -155,7 +199,11 @@ assert_contains "$autopilot" '`suspect: true` and stop' "autopilot skill stops o
 assert_contains "$autopilot" '`baton-lock` exit 3' "autopilot skill stops when another session holds the lease"
 assert_contains "$autopilot" "weaken the gate" "autopilot skill forbids weakening the gate"
 
-assert_contains "$autopilot" "baton-gate" "autopilot skill calls the evidence script"
+# Pinned to the invocation, not the name. Mutation-tested: deleting the whole
+# ```bash block, --since argument and all, left the suite green off two
+# incidental prose mentions of baton-gate elsewhere in the file.
+assert_contains "$autopilot" 'scripts/baton-gate" --since' \
+    "autopilot skill calls the evidence script, with the argument that scopes it"
 assert_contains "$autopilot" "docs/baton/gates/" "autopilot skill files the verdict"
 
 # The three readings of baton-gate's output that no script can enforce and
@@ -174,16 +222,33 @@ assert_contains "$autopilot" "truncated on every run" \
 # count the keys, and the verdict template's "copy them verbatim" is the one
 # that bites: an agent working from a stale count copies nine and drops
 # tree_clean -- the one key that says whether the sha it filed alongside names
-# the tree the suite ran against. Asserting that the word tree_clean appears
-# somewhere would not catch that, because the count is the thing that goes
-# stale, so the count is what is pinned -- in both directions, since the
-# template's line and the prose's line rot independently.
+# the tree the suite ran against.
+#
+# Both lines are pinned, because they rot independently and an earlier version
+# of this block only pinned the prose. Mutation-tested: rewriting the template
+# line to "<the key=value lines, verbatim>" -- exactly the edit that makes an
+# agent drop a key -- left the whole suite green.
 assert_contains "$autopilot" "ten keys" \
     "autopilot skill counts the evidence block as ten keys"
+assert_contains "$autopilot" "<the ten key=value lines, verbatim>" \
+    "the verdict template tells the agent to copy all ten, not an unnumbered some"
 assert_not_contains "$autopilot" "nine key" \
     "no stale nine-key count survives anywhere in the autopilot skill"
 assert_contains "$autopilot" "tree_clean" \
     "autopilot skill reads the tree fact that qualifies sha"
+# The resolving command must ask the same question baton-observe asked when it
+# produced tree_clean=false. Plain `git status --porcelain` reports nothing
+# under status.showUntrackedFiles=no, and an empty list makes "every path is
+# accounted for" vacuously true -- the agent takes the ordinary branch over a
+# file it never saw, or reads the empty list as proof the fact was spurious.
+assert_contains "$autopilot" "status --porcelain -uall --ignore-submodules=none" \
+    "autopilot resolves dirty paths with the same flags that produced tree_clean"
+# produces is a contract name, required only of waves with a non-empty
+# parallel_with, so a rule resting on it alone finds an empty set for an
+# ordinary serial wave -- every path lands outside it and the ordinary case
+# becomes the stop. The union is what keeps the night from ending on wave one.
+assert_contains "$autopilot" "union" \
+    "autopilot accounts for a dirty path against a union of sets that actually exist"
 # A dirty tree splits into ordinary work and a stop, and only the second is
 # load-bearing: the first is what an agent does anyway.
 assert_contains "$autopilot" "cannot account for as this wave" \

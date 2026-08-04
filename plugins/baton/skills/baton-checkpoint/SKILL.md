@@ -148,7 +148,11 @@ at a checkpoint instead of only at the resume after the next compaction.
   memory of this one executes it without asking. "Continue the API work" is a
   failure. "Run `npm test -- auth.spec.ts` and fix the two failing assertions
   in `src/auth/session.ts`" is not.
-- `In flight` — what was interrupted mid-way, or `nothing`.
+- `In flight` — what was interrupted mid-way, or `nothing`. One exception: an
+  autopilot attempt counter (`wave 2: attempt 2 of 3`) stays, even when nothing
+  is mid-edit and `nothing` is otherwise the honest answer. It is not a note
+  about interrupted work but the only copy of a ceiling, and writing `nothing`
+  over it hands the next session a fresh count — see `baton-autopilot`.
 - `Open questions` — or `none`.
 
 Write these from the repository, not from your recollection of the last hour —
@@ -167,6 +171,12 @@ be something a session with no memory of this one can take in whole, and one
 that outgrows that stops getting read closely. Detail that does not fit — a long
 "In flight", a Suspect writeup worth keeping — goes to a journal entry, and
 `state.md` keeps only a pointer to it (e.g. "see DEC-0008").
+
+An autopilot attempt counter is the one thing that never moves out. It is nine
+characters and it is a ceiling; a pointer to it in a journal entry is a ceiling
+the next session has to go and look for, which is a ceiling it will sometimes
+miss. Send the surrounding narrative to the entry and keep
+`wave 2: attempt 2 of 3` on the line.
 
 **5. Journal anything that crossed the threshold.** Write an entry only if at
 least one holds:
@@ -211,7 +221,7 @@ needs_review: false
 ## Invalidated if
 ```
 
-Three other entry types are required elsewhere in these skills — same envelope,
+Four other entry types are required elsewhere in these skills — same envelope,
 same `baton-journal` allocation, different `type` and sections:
 
 - **`takeover`** — whenever a `baton-lock` call prints
@@ -221,6 +231,12 @@ same `baton-journal` allocation, different `type` and sections:
 - **`incoming`** — when new input arrives mid-run (see the `baton` skill's "New
   input mid-run"). `type: incoming`, `needs_review: true`; sections
   `## What arrived`, `## From whom`, `## What it affects`.
+- **`autopilot`** — written by `/baton:auto` when a human grants the run, and
+  named by `state.md`'s `autopilot_grant`. `type: autopilot`; the body carries
+  the scope, the readiness review as it stood when the human approved it, and
+  the base if one was named. You do not write this one — a human's command
+  does — but the morning reads it to find out what was authorised, so a
+  `autopilot_grant` pointing at nothing is a grant with no record of its terms.
 - **`blocked`** — when a wave cannot close and moves to `blocked` (see
   `baton-autopilot`'s "The pat"). `type: blocked`, `needs_human: true`;
   sections `## What stopped`, `## The evidence`, `## What was tried`,

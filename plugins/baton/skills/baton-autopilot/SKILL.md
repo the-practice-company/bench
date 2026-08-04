@@ -1,6 +1,6 @@
 ---
 name: baton-autopilot
-description: Use when docs/baton/state.md has autopilot set to anything but off - carries waves to closure with no human present, files a verdict for each one, and stops the right way when it cannot
+description: Use when baton-resume has decided the autopilot grant applies to this session, or when a human has just typed /baton:continue - carries waves to closure with no human present under an existing grant, files a verdict for each one, and stops the right way when it cannot. Not triggered by reading autopilot in state.md; that field is set for every session, including ones a human opened to check one thing
 ---
 
 # baton Autopilot
@@ -11,10 +11,24 @@ and, more importantly, what it does not.
 **Announce at start:** "Autopilot is on for <scope> — carrying waves without
 stopping for confirmation."
 
-**Prerequisite:** `autopilot` in `state.md` is not `off`, and you hold the
-writer lease. That field is also the scope: `all` is every wave in the run, a
-number is that wave and no other. If it reads `off`, this skill does not
-apply — closing a wave then needs a human, and `baton-checkpoint` says how.
+**Prerequisite:** not that `autopilot` reads something other than `off`. That
+fact sits on disk for every session of a granted run, including one a human
+opened to check a single thing, so it cannot be what starts unattended work.
+What this skill needs is the *decision* that the grant applies to **this**
+session, which is made in exactly two places:
+
+- `baton-resume`'s step 7 reached its `compact`/`resume` row — same session,
+  the human is still away;
+- or a human typed `/baton:continue`.
+
+Plus the writer lease. Reading the field yourself is not the decision. A grant
+you infer from a file is a grant you gave yourself, and this whole skill is
+built on your not being able to do that.
+
+Once one of those holds, the field is also the scope: `all` is every wave in
+the run, a number is that wave and no other. If it reads `off`, this skill does
+not apply at all — closing a wave then needs a human, and `baton-checkpoint`
+says how.
 
 ## The grant is asymmetric
 
@@ -35,8 +49,23 @@ the run was allowed to do before it stopped.
 
 ## The loop
 
-For each wave in scope, in Waves-table order:
+Take waves in **the constitution's wave order, restricted to waves in scope**.
+`depends_on` is a constraint that order must satisfy, not the thing that
+generates it: two independent waves have no topological order between them, so
+sorting by `depends_on` would pick one arbitrarily and run it in an order the
+human never reviewed. If the constitution's own order violates its own
+`depends_on`, stop — the constitution is wrong, and it is the human's.
 
+Then, for each wave:
+
+0. **Check it is available.** The three conditions under
+   [The pat](#the-pat) — in scope and `todo`, the whole transitive
+   `depends_on` closure `done`, nothing in its `consumes` produced by a
+   `blocked` wave. They are not only for picking up after a block: a wave
+   whose dependency is still `todo` is no more startable the first time than
+   the second, and being next in the constitution's order is not the same as
+   being ready. Not available, and not blocked either — skip it and take the
+   next; the order is a sequence to walk, not a queue that stalls.
 1. **Spec.** If the wave's `spec` cell in the Waves table names a file, that
    spec is the human's and you work to it. If it reads `—`, derive one from
    the constitution: the wave's `exit_criteria`, its `produces` and `consumes`,
@@ -54,6 +83,12 @@ For each wave in scope, in Waves-table order:
 Checkpoint between waves, always. A wave closed and not checkpointed is a
 wave that did not happen, as far as the next session can tell.
 
+**And between attempts, not only between waves.** The attempt counter lives in
+`state.md` (see "When fixing stops being fixing"), so it only exists once a
+checkpoint has written it. A compaction during attempt 2, with the last
+checkpoint still saying attempt 1, hands the resumed session a free attempt —
+the ceiling silently resets, which is the one thing a ceiling must not do.
+
 ## The gate
 
 Run the evidence collector first:
@@ -69,22 +104,35 @@ that moved the work rather than the checkpoint commit that followed it.
 `--since` does not move between attempts on the same wave. What is being gated
 is the whole wave, not the part of it since the last failed attempt.
 
-For the first wave in a run, `--since` is whatever base the human named at
-`/baton:auto`, and otherwise the repository's root commit:
+For the first wave in a run, `--since` is the base the human named at
+`/baton:auto` — the command takes `--since <ref>` for exactly this, and
+records it in the grant entry, so a run that needs a particular base has a
+place to say so. Read it from there before deriving anything. Only when no
+base was named does it fall back to the repository's root commit:
 
 ```bash
 git rev-list --max-parents=0 HEAD | tail -1
 ```
 
 That prints one line in a repository with one root, which is the ordinary
-case. More than one line means the history has more than one root — an
-unrelated history merged in — and `tail -1` then picks whichever of them has
-the oldest commit date. A diff from a root cannot report what was already in
-that root's own tree, so everything that arrived with the sibling root falls
-outside the scan, and nothing in the output says so: a gate that quietly looked
-at less than the wave. Count the lines before using it. More than one, with no
-base named at `/baton:auto`, is a stop — `needs_human: true`, saying what
-clears it, which is a `/baton:auto` that names a base.
+case, and the fallback is right there.
+
+More than one line means the history has more than one root — an unrelated
+history merged in — and `tail -1` then picks whichever has the oldest commit
+date. What escapes the scan is **that root's own tree**: a diff from a commit
+cannot report what was already in it. The sibling root's files are reachable
+from the picked one and do get scanned; it is the picked root's own content
+that is invisible, and nothing in the output says so. Which root `tail -1`
+lands on is decided by commit dates — not by anything about the work — so
+which files are exempt is arbitrary. Count the lines before using it. More
+than one, with no base named at `/baton:auto`, is a stop: `needs_human: true`,
+naming the roots and saying what clears it, which is
+`/baton:auto --since <ref>`.
+
+Even in the single-root case the root's own tree is outside the scan, for the
+same reason. That is usually harmless — a `/baton:init`'d run's work all
+postdates it — but it is why a wave whose changes predate the base is not
+something the gate can speak to.
 
 Read the exit code before the output:
 
@@ -145,42 +193,7 @@ constitution's pattern list before treating a zero as a clean bill: a run whose
 human turned the scan off gets the same `0` as one that searched every changed
 file and found nothing.
 
-## A dirty tree at gate time
-
-`tree_clean=false` means the evidence describes a tree no `sha` names. The
-suite ran against files that are not in the repository — an uncommitted fix, a
-test a subagent wrote and never committed — so nothing a later session can
-check out reproduces this run, and a green verdict filed on it is a claim about
-a tree that exists nowhere. `/baton:auto` refuses to hand a run over with a
-dirty tree, so any dirt here arrived during the run: it is the run's own doing,
-and yours to resolve.
-
-Which of two things it is decides what happens, and do not settle it from
-recollection — that is precisely what the next compaction takes. Name the paths
-first:
-
-```bash
-git status --porcelain
-```
-
-Then check each against what this wave declared it would touch: its `produces`
-in the constitution, and the file list in its plan. That comparison is against
-documents, not against your memory of the last hour, which is the only reason
-it is worth anything at 03:40.
-
-- **Every path is inside that set.** Ordinary work, not a pat. Commit it and
-  gate again. Committing moves `HEAD`, so the evidence in your hands is already
-  stale — `verify_cmd` has to run against the tree that will still be there in
-  the morning. This does not count against the three-attempt ceiling: the gate
-  never rendered a verdict, and finishing the work is not a fix for a red one.
-  But if the tree comes back dirty on that next run, something is writing files
-  nothing accounts for, and that is the case below rather than this one again.
-- **A path is outside it** — something you cannot account for as this wave's
-  work. `needs_human: true`, name the paths, stop. Committing a change you
-  cannot explain into a wave is worse than stopping, and there is nobody awake
-  to say what it is. Do not stash it either: stashing hides it from the next
-  session as well as from the gate, which is strictly worse than leaving it
-  where a human will see it.
+## Red, green, and neither
 
 **Some non-zero `verify_exit` values are not evidence about the code.**
 `verify_exit=127` means the command was never found — it reports that the suite
@@ -211,6 +224,77 @@ repository — not against your impression of the work. No script will ever do
 this part: "the system shall preserve the subject when a token is renewed" is
 a claim about behaviour, and only reading the behaviour settles it.
 
+## A dirty tree at gate time
+
+`tree_clean=false` means the evidence describes a tree no `sha` names. The
+suite ran against files that are not in the repository — an uncommitted fix, a
+test a subagent wrote and never committed — so nothing a later session can
+check out reproduces this run, and a green verdict filed on it is a claim about
+a tree that exists nowhere.
+
+**The premise, stated so it can be checked:** both doors into an unattended run
+verify the tree is clean before opening — `/baton:auto` at step 1, and
+`/baton:continue` before it carries the run on. So dirt found here arrived
+*during* the run and is the run's own doing. That is what makes the ordinary
+branch below ordinary. Weaken either check and this section is wrong: a dirty
+path could then predate the grant, be nobody's work in particular, and get
+committed into a wave for no better reason than that it was lying there.
+
+Which of two things it is decides what happens, and do not settle it from
+recollection — that is precisely what the next compaction takes. Name the paths
+first:
+
+```bash
+git -c core.quotePath=false status --porcelain -uall --ignore-submodules=none
+```
+
+Those flags are not decoration — they are `baton-observe`'s, and it computed
+the `tree_clean=false` you are now resolving. A plain `git status --porcelain`
+answers a narrower question: under `status.showUntrackedFiles=no` it reports
+nothing at all while the tree is genuinely dirty, and an empty list makes "every
+path is accounted for" **vacuously true**. You would take the ordinary branch
+over a file you never saw, or read the empty list as proof the fact was
+spurious and file a green verdict. `core.quotePath=false` matters for the same
+reason: a C-quoted non-ASCII path cannot be matched against any document, so it
+would land in the second branch for a reason that is about encoding rather than
+about the work.
+
+Then check each path against the **union** of three sets — inside *any* of them
+is accounted for:
+
+- the file list in the wave's plan;
+- the wave's spec, if the Waves table names one;
+- the diff since this wave's `--since`. A file the wave has already committed
+  changes to and is still editing is plausibly still its work.
+
+The union matters because the obvious single answer does not exist. `produces`
+is a *contract name* in the constitution, required only of waves with a
+non-empty `parallel_with` — an ordinary serial wave has none, so a rule resting
+on `produces` alone would find an empty set, put every dirty path outside it,
+and turn the ordinary case into the stop. "Closed waves, or one named stopping
+point" would become the stopping point, most nights.
+
+What all three have in common is that they are documents. The comparison is
+against them, not against your memory of the last hour, which is the only
+reason it is worth anything at 03:40.
+
+- **Every path is inside the union.** Ordinary work — not grounds to park the
+  wave and move on, which is what "The pat" below covers. Commit it and
+  gate again. Committing moves `HEAD`, so the evidence in your hands is already
+  stale — `verify_cmd` has to run against the tree that will still be there in
+  the morning. This does not count against the three-attempt ceiling: the gate
+  never rendered a verdict, and finishing the work is not a fix for a red one.
+  But if the tree comes back dirty on that next run, something is writing files
+  nothing accounts for, and that is the case below rather than this one again.
+- **A path is outside all three** — something you
+  cannot account for as this wave's work, and a brand-new file in none of them
+  is the clearest case.
+  `needs_human: true`, name the paths, stop. Committing a change you
+  cannot explain into a wave is worse than stopping, and there is nobody awake
+  to say what it is. Do not stash it either: stashing hides it from the next
+  session as well as from the gate, which is strictly worse than leaving it
+  where a human will see it.
+
 ## The verdict file
 
 `verify_log` is unbounded — a verbose suite produces tens of megabytes — so
@@ -228,7 +312,8 @@ rather than a reference to it. Left out, the morning's account of what broke at
 compaction takes.
 
 Write it through `baton-write`, to
-`docs/baton/gates/wave-<N>-attempt-<K>-<short_sha>.md`:
+`docs/baton/gates/wave-<N>-attempt-<K>-<short_sha>.md`, where `<short_sha>` is
+the short form of `sha` — the tree this verdict judged, not `work_sha`:
 
 ```markdown
 ---
