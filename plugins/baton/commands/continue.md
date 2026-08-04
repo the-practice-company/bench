@@ -33,20 +33,64 @@ unconditionally once verification comes back clean; carrying the run on
 without a grant is exactly what this command exists to gate, so treat resume
 as finished once it has written what it found, and continue below instead.
 
-## 2. Stop if the run is already stopped
+## 2. Stop if resume already stopped
 
-If step 1 stopped — raised `suspect` itself, or found `suspect` or
-`needs_human` already set and never reached the lease — this command's job is
-done: report what resume reported and go no further. A pat nobody has
-resolved does not stop being a pat because a human typed `continue`, and
-clearing either flag is the human's decision, not this command's. Resume
-released the lease itself if it ever took one, so there is nothing here to
-clean up.
+`baton-resume` stops for more than one reason — not a baton run, an
+unratified constitution, `suspect` or `needs_human` already on disk, another
+session's live lease, a divergence this resume found itself — and the action
+here is the same regardless of which one fired: report what resume reported
+and go no further. A pat nobody has resolved does not stop being a pat
+because a human typed `continue`, and resolving it, whichever kind it is, is
+the human's decision, not this command's.
 
-## 3. Check there is a grant
+Resume releases the lease on every one of those paths except one: if its own
+final write fails, its error handling — `baton-checkpoint`'s "If the write
+fails" table — reports and stops without releasing, because most of those
+failures need a human to look at the repository before anything writes under
+that lease again. If you land here holding a lease you did not expect to be
+holding, do not release it and do not write through it: report the write
+failure by name — the exit code and the message — and stop. Whether that
+lease is still good is a human's call, not a guess this command makes for
+them.
 
-Read `autopilot` from the state step 1 just verified. If it is `off`, release
-the lease step 1 took:
+## 3. Check there is a grant, and that it is safe to act on
+
+Read `autopilot` from the state step 1 just verified, normalized the same way
+the session-start hook already does before comparing it — trim whitespace,
+strip a trailing `\r`, strip one layer of matching quotes, fold case —
+because `state.md` is written by an agent, not validated input, and the
+unsafe direction here is a false positive: carrying an unattended run forward
+on a value that only looks like a grant is worse than stopping on one that is
+not.
+
+**Absent or unrecognized reads as `off`.** A run initialised before this field
+existed has no `autopilot` key at all; treat that the same as `off` rather
+than as a value to interpret — the session-start hook makes the same choice,
+for the same reason.
+
+**A grant with no journal entry behind it is not a grant.** If `autopilot` is
+not `off` but `autopilot_grant` is `—` or otherwise names no entry, that is a
+claim pointing at nothing. Refuse to act on it the same as `off`, but say so
+plainly rather than folding it into the ordinary case: the two fields
+disagreeing is itself something the human needs to know, not only that the
+run happens to be unattended or not right now.
+
+**The tree has to be clean too.** `baton-autopilot`'s dirty-tree handling
+reasons that any dirt it finds mid-run is the run's own doing, because
+`/baton:auto` refuses to hand a run over with a dirty tree in the first
+place. That premise does not hold here: `baton-resume`'s own dirty-tree
+handling, back in step 1, reports what it finds and continues regardless — it
+does not stop for it. Check it here, the same way `/baton:auto` does:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/baton-observe"
+```
+
+`tree_clean` must be `true`; `dirty_count` names how much is outstanding if it
+is not.
+
+If any of the three is not satisfied — no grant, an ungrounded one, or a
+dirty tree — release the lease step 1 took:
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/baton-lock" release "${CLAUDE_CODE_SESSION_ID:-$CLAUDE_SESSION_ID}"
@@ -68,8 +112,12 @@ one mistake this step cannot recover from:
 "${CLAUDE_PLUGIN_ROOT}/scripts/baton-lock" check "${CLAUDE_CODE_SESSION_ID:-$CLAUDE_SESSION_ID}"
 ```
 
-Exit 0: it is still ours. Anything else: the lease is gone — stop and report
-rather than starting unattended work without holding it.
+| Exit | Meaning | What to do |
+|---|---|---|
+| 0 | Still ours. | Continue. |
+| 3 | Another session holds it live — the loudest of the three, not the lease being gone: someone is actively writing right now. | Stop and report. Do not take over a live session from a command nobody is watching run. |
+| 4 | It expired — stale long enough that another session could have taken it over, though none did. | Stop and report; re-run `/baton:continue` rather than silently re-acquiring here, which would carry the run on without the fresh verification step 1 exists to require. |
+| 5 | No lease file at all. | Stop and report the same way. |
 
 Report in two or three lines where the run stopped and what comes next, then
 use the `baton-autopilot` skill and continue.
