@@ -126,4 +126,17 @@ assert_contains "$autopilot" "tree_clean" \
 assert_contains "$autopilot" "cannot account for as this wave" \
     "autopilot skill stops on an uncommitted path it cannot attribute to the wave"
 
+# Verified against the script's behaviour, not its header comment: an absent
+# verify_cmd exits 4 (reported as "empty"), an absent placeholder_patterns
+# exits 3. Reading across from one field to the other is the natural mistake,
+# the two rows hand the human different jobs, and a tidying edit that merges
+# them back into one parenthetical is exactly how this was wrong before.
+assert_contains "$autopilot" "Absence is not symmetric" \
+    "autopilot skill keeps the two fields' absence causes on their own exit codes"
+# An empty pattern list is a legitimate constitution, so a zero here can mean
+# the scan was never asked anything -- indistinguishable, in the output, from
+# a scan that read every changed file and found nothing.
+assert_contains "$autopilot" "only evidence if the scan was asked anything" \
+    "autopilot skill refuses to read placeholder_hits=0 as clean when patterns are empty"
+
 finish

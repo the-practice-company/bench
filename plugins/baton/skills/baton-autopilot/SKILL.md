@@ -92,10 +92,18 @@ Read the exit code before the output:
 |---|---|---|
 | 0 | Evidence gathered. | Read `verify_exit` and `placeholder_hits`. This is the only row a verdict can come out of. |
 | 1 | Not a git repository. | Stop and report; nothing here works without git. |
-| 3 | The constitution is unfit to gate against: missing, not `ratified`, still carrying an unfilled placeholder marker, or a frontmatter value (`verify_cmd`, `placeholder_patterns`) absent where required or opening a quote it never closes. | Stop, `needs_human: true`. The constitution is the human's and `baton-write` refuses that path, so this is not something to route around — least of all when the fix looks like one character. |
-| 4 | The constitution reads fine and the gate could not gather evidence from it: `verify_cmd` or `placeholder_patterns` empty or unusable (a command that cannot be run, a pattern that does not compile), `.baton/` not preparable for the log, a changed path that could not be scanned, or `baton-observe` itself failed. | Stop and report the message, which names which of those it was. Do not substitute a command you think is equivalent — `verify_cmd` is in the constitution precisely so you do not choose it. Some causes here are the machine's rather than the constitution's, and a human can clear those without amending anything. |
+| 3 | The constitution is unfit to gate against: missing, not `ratified`, still carrying an unfilled placeholder marker, `placeholder_patterns` absent, or either it or `verify_cmd` opening a quote it never closes. | Stop, `needs_human: true`. The constitution is the human's and `baton-write` refuses that path, so this is not something to route around — least of all when the fix looks like one character. |
+| 4 | The constitution reads fine and the gate could not gather evidence from it: `verify_cmd` absent, empty, or naming something that cannot be run; `placeholder_patterns` holding a pattern that does not compile; `.baton/` not preparable for the log; a changed path that could not be scanned; or `baton-observe` itself failed. | Stop and report the message, which names which of those it was. Do not substitute a command you think is equivalent — `verify_cmd` is in the constitution precisely so you do not choose it. Some causes here are the machine's rather than the constitution's, and a human can clear those without amending anything. |
 | 64 | Usage, including a `--since` that is not a commit in this repository. | Fix the argument and rerun. It is checked before `verify_cmd` runs, so nothing was spent. |
 | anything else | Not this script's own logic — awk or git failed underneath it. | Stop and report. A tooling failure, not a verdict: the gate did not decide against the wave, it never got to look. |
+
+**Absence is not symmetric between those two fields**, and reading across from
+one to the other is how this table gets misremembered. A missing
+`placeholder_patterns` is exit 3 — `/baton:init` always writes that field, so
+its absence means somebody removed it, which is a statement about the
+constitution. A missing `verify_cmd` is exit 4, reported as "empty": there is
+simply nothing to run. Both stop the run, and they hand the human different
+jobs.
 
 Exit 0 is not a pass. It means the evidence exists. A red gate is exit 0 with
 `verify_exit` non-zero, and that distinction is the reason to read the code
@@ -129,6 +137,13 @@ the work and that checkpoint is never scanned at all.
 whose only change was deleting files reports 0 — there is nothing left on disk
 to scan. So does a stretch that touched only `docs/baton/`, which the scan
 excludes as describing the work rather than being it.
+
+`placeholder_hits=0` is only evidence if the scan was asked anything.
+`placeholder_patterns: ""` is a legitimate constitution meaning scan nothing,
+and the gate then exits 0 having looked at no file for markers at all. Read the
+constitution's pattern list before treating a zero as a clean bill: a run whose
+human turned the scan off gets the same `0` as one that searched every changed
+file and found nothing.
 
 ## A dirty tree at gate time
 
