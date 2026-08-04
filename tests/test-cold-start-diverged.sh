@@ -33,7 +33,9 @@ assert_not_contains "$constitution" "REPLACE-WITH" "the diverged fixture's const
 # divergence this fixture is for; a fixture that instead produced 128
 # ("not a valid commit") would be exercising a different failure than the
 # one it claims to.
-closed="$(sed -n 's/^| 1 |.*| \([0-9a-f]\{7,\}\) | pass |$/\1/p' docs/baton/state.md)"
+assert_not_contains "$(cat docs/baton/state.md)" "| pass |" \
+    "no diverged-fixture wave claims a verdict no gate produced"
+closed="$(sed -n 's/^| 1 |.*| \([0-9a-f]\{7,\}\) | — |$/\1/p' docs/baton/state.md)"
 if [ -n "$closed" ]; then
     pass "state.md names a closed_at_sha for wave 1"
 else

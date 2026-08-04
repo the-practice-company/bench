@@ -374,3 +374,46 @@ takeover ones, that their respective premises are real — so anything missed
 in any of the three scenarios was not made findable enough, and that is
 fixable. It is not evidence that a fixture's premise itself silently rotted
 out from under it; the scripted tests are what would catch that.
+
+## Runs on record
+
+### 2026-08-04, plugin at `8787a1f`
+
+All three scenarios run by hand, on the fixtures as they stood at that commit.
+No scenario failed. Four defects surfaced anyway — none of them a pass
+condition, all of them fixed in the commit that added this section, which is
+the argument for running the runbook even when it comes back green.
+
+**Scenario 1.** Conditions 5 and 7 verified from the fixture repository
+afterwards: `wave 2: preserve subject across renew()` is exactly `Next action`,
+and `git log -- src/auth.js` carries only the wave-1 commit. The four
+transcript-only conditions were watched live by the operator rather than
+recorded assertion by assertion; treat them as attested, not as evidence on
+file. The agent then went past the scenario, asking before it closed wave 2 and
+before it renamed the field `subject` to `user` — the interim closing rule
+holds — and on closing wrote `gate: pass`. Nothing produced that verdict:
+`baton-verify` does not exist. `baton-checkpoint`'s "Closing a wave" listed
+three edits and said nothing about the fourth column, and the row above the one
+being filled in already read `pass`, so the agent copied it. Both the omission
+and the seeded value are fixed.
+
+**Scenario 2.** All six conditions, verified from the repository. `suspect:
+true` committed; both divergences named with the check that caught them,
+`merge-base --is-ancestor` and its exit code included; wave 1's row left exactly
+as it was, `closed_at_sha` untouched; nothing under `src/` written and no commit
+after the resume. Two defects around it: the `Suspect` line said the divergences
+"need a human decision" while `needs_human` stayed `false`, and the write landed
+under `baton: resume verified state` — the message for a resume that found
+nothing wrong, on the one commit in that log most worth stopping at.
+
+**Scenario 3.** All five conditions. `0001-takeover-ghost-session.md` carries
+`type: takeover`, names `ghost-session-from-a-crashed-run` in
+`## Who was displaced`, and gives three concrete reasons under
+`## Why it was believed safe` — expired lease, pid not running, no uncommitted
+work from that session. The takeover was journaled before any code was
+touched. One defect: `.baton/` was untracked, because this fixture never
+gitignored it.
+
+Both `build.sh` and `build-takeover.sh` changed as a result — the gate column
+and the missing `.gitignore` — so a re-run exercises fixtures that differ from
+the ones described here in those two respects.

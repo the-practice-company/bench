@@ -34,6 +34,15 @@ constitution="$(cat docs/baton/constitution.md)"
 assert_contains "$constitution" "status: ratified" "the takeover fixture's constitution is ratified"
 assert_not_contains "$constitution" "REPLACE-WITH" "the takeover fixture's constitution has no unfilled placeholders"
 
+assert_not_contains "$(cat docs/baton/state.md)" "| pass |" \
+    "no takeover-fixture wave claims a verdict no gate produced"
+
+# This fixture is the one that most needs .baton/ ignored: it ships a lease
+# there, so without the ignore rule the very file the scenario is about
+# reads as untracked noise the agent may try to tidy away.
+assert_contains "$(cat .gitignore 2>/dev/null || true)" ".baton/" \
+    "the takeover fixture gitignores .baton/ the way /baton:init leaves it"
+
 assert_file_exists ".baton/lock" "the fixture ships a pre-existing lease"
 
 # Fact 2 first: read the lease's own session= field directly, not inferred

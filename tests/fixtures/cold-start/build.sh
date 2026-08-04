@@ -13,6 +13,16 @@ git config user.email "baton@example.invalid"
 git config commit.gpgsign false
 
 mkdir -p src docs/baton/journal
+
+# Match what a real /baton:init'd repository looks like: .baton/ gitignored
+# from the start. The scenario this fixture is for writes a lease there the
+# moment the agent takes the writer role, and an untracked .baton/ in every
+# git status it runs afterwards is noise it did not put there and may try to
+# tidy away.
+printf '.baton/\n' > .gitignore
+git add .gitignore
+git commit -q -m "baton: gitignore .baton/"
+
 cat > src/auth.js <<'EOF'
 export function login(user) {
   return { user, token: "signed" };
@@ -92,7 +102,7 @@ needs_human: false
 
 | # | name | status | branch/worktree | spec | plan | closed_at_sha | gate |
 |---|------|--------|-----------------|------|------|---------------|------|
-| 1 | login | done | main | — | — | $wave1_sha | pass |
+| 1 | login | done | main | — | — | $wave1_sha | — |
 | 2 | session | doing | main | — | — | — | — |
 
 **Current wave:** 2 — session

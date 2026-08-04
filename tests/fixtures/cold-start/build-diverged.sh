@@ -159,7 +159,7 @@ needs_human: false
 
 | # | name | status | branch/worktree | spec | plan | closed_at_sha | gate |
 |---|------|--------|-----------------|------|------|---------------|------|
-| 1 | login | done | main | — | — | $orphaned_wave1_sha | pass |
+| 1 | login | done | main | — | — | $orphaned_wave1_sha | — |
 | 2 | session | doing | main | — | — | — | — |
 
 **Current wave:** 2 — session

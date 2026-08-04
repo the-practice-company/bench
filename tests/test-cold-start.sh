@@ -24,8 +24,19 @@ else
 fi
 assert_contains "$next" "src/session.js" "next action names the exact file to touch"
 
+# No gate is built yet, so no row may carry a gate verdict. This is not
+# cosmetic: state.md is the one worked example an agent has in front of it
+# when it fills in a row of its own, and a seeded `pass` is what it copies.
+assert_not_contains "$state" "| pass |" "no fixture wave claims a verdict no gate produced"
+
+# The fixture looks like a repository /baton:init ran in, and that includes
+# .baton/ being ignored -- otherwise the lease and the precompact snapshot
+# show up as untracked noise in every git status the agent runs.
+assert_contains "$(cat .gitignore 2>/dev/null || true)" ".baton/" \
+    "the fixture gitignores .baton/ the way /baton:init leaves it"
+
 # A wave claimed done must be verifiable against the repository, not believed.
-closed="$(sed -n 's/^| 1 |.*| \([0-9a-f]\{7,\}\) | pass |$/\1/p' docs/baton/state.md)"
+closed="$(sed -n 's/^| 1 |.*| \([0-9a-f]\{7,\}\) | — |$/\1/p' docs/baton/state.md)"
 if git merge-base --is-ancestor "$closed" HEAD; then
     pass "the closed wave's SHA is an ancestor of HEAD, so the claim checks out"
 else
