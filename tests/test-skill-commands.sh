@@ -27,14 +27,22 @@ DOC_FILES="
 commands/init.md
 commands/checkpoint.md
 commands/status.md
+commands/auto.md
+commands/continue.md
 skills/baton/SKILL.md
 skills/baton-resume/SKILL.md
 skills/baton-checkpoint/SKILL.md
+skills/baton-autopilot/SKILL.md
 "
 
 # The subset that invokes baton-lock, and so has a session id to get right.
+# baton-autopilot is deliberately not here: it names baton-lock only in prose
+# (exit 3 stops the run), and the guard below fails a listed file that never
+# invokes it -- which is the guard working, not a file to paper over.
 LOCK_DOC_FILES="
 commands/init.md
+commands/auto.md
+commands/continue.md
 skills/baton-resume/SKILL.md
 skills/baton-checkpoint/SKILL.md
 "
@@ -104,6 +112,11 @@ rm -f "$referenced"
 # baton-resume", "baton-write exits non-zero" -- but a line inside a ```bash
 # block is a line the agent will run, and a bare `baton-lock check ...`
 # there is a command not found, not an instruction.
+#
+# Every script under plugins/baton/scripts/ belongs in the alternation. A
+# script missing from it is not checked at all, which is how baton-gate went
+# uncovered from the day it was written until the day the doc lists were
+# extended to the files that call it.
 bare="$(
     for rel in $DOC_FILES; do
         awk -v rel="$rel" '
@@ -111,7 +124,7 @@ bare="$(
             /^```/      { inblock = 0; next }
             inblock     { print rel ":" FNR ": " $0 }
         ' "$PLUGIN/$rel"
-    done | sed 's#scripts/baton-[a-z]*##g' | grep -E 'baton-(lock|observe|write|journal)' || true
+    done | sed 's#scripts/baton-[a-z]*##g' | grep -E 'baton-(lock|observe|write|journal|gate)' || true
 )"
 if [ -n "$bare" ]; then
     fail "no bash block invokes a baton script by bare name (it is not on PATH)"
@@ -177,5 +190,14 @@ else
 fi
 
 set -u
+
+# --- the runbook covers the autopilot ---
+# The scripted autopilot test pins the fixture's premise and says so itself:
+# what an agent does with that fixture is the runbook's job, run by a human.
+# Without a scenario there, the fixture is built and checked by nobody.
+runbook="$(cat "$REPO_ROOT/tests/fixtures/cold-start/RUNBOOK.md")"
+assert_contains "$runbook" "Scenario 4" "the runbook has a scenario for the autopilot"
+assert_contains "$runbook" "build-autopilot.sh" "scenario 4 names the fixture it runs against"
+assert_contains "$runbook" "/baton:continue" "scenario 4 exercises the fresh-session pickup"
 
 finish
