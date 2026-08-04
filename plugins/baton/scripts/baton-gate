@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# Gather the mechanical half of a wave gate: run the constitution's
+# verify_cmd, and scan the files a wave touched for placeholder markers.
+#
+# This script decides nothing. It does not know what a wave is, does not
+# read state.md, and never sets a status. Exit criteria are EARS prose and
+# only the agent can check them; what a machine can establish is what this
+# collects, so that the agent's verdict has something under it besides
+# recollection.
+#
+# Exit codes:
+#   0   evidence gathered -- read verify_exit and placeholder_hits. A red
+#       gate is exit 0 with verify_exit non-zero, NOT a non-zero exit of
+#       this script. A script that exited non-zero both when the tests
+#       failed and when it could not run them would make those two
+#       indistinguishable to its only caller, and they call for opposite
+#       responses: fix the code, versus stop and report the tooling.
+#   1   not a git repository
+#   3   docs/baton/constitution.md is missing, is not ratified, or still
+#       carries an unfilled placeholder marker
+#   4   verify_cmd is empty, or names a command that cannot be run
+#   64  usage error, including a --since that is not a commit
+set -euo pipefail
+
+usage() { echo "usage: baton-gate --since <SHA>" >&2; exit 64; }
+
+since=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --since)
+            [ $# -ge 2 ] || usage
+            since="$2"
+            shift 2
+            ;;
+        -h|--help) usage ;;
+        *) usage ;;
+    esac
+done
+[ -n "$since" ] || usage
+
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    echo "baton-gate: not a git repository" >&2
+    exit 1
+fi
+
+# baton-write, baton-lock, baton-journal and baton-observe were each fixed
+# for this once already: invoked from a subdirectory, every relative path
+# below names something that is not there.
+cd "$(git rev-parse --show-toplevel)"
+
+constitution="docs/baton/constitution.md"
+if [ ! -f "$constitution" ]; then
+    echo "baton-gate: $constitution not found: there is no run here to gate" >&2
+    exit 3
+fi
+
+# Lines between the opening and closing --- only. A "status:" further down
+# in the prose is not the frontmatter's.
+frontmatter="$(awk 'NR==1 && $0=="---" { infm=1; next } infm && $0=="---" { exit } infm { print }' "$constitution")"
+
+fm_field() {
+    printf '%s\n' "$frontmatter" | sed -n "s/^$1: *//p" | head -1
+}
+
+# One layer of surrounding quotes, since verify_cmd is conventionally
+# written quoted and placeholder_patterns always is.
+unquote() {
+    local s="$1"
+    case "$s" in
+        \"*\") s="${s#\"}"; s="${s%\"}" ;;
+        \'*\') s="${s#\'}"; s="${s%\'}" ;;
+    esac
+    printf '%s' "$s"
+}
+
+status="$(fm_field status)"
+if [ "$status" != "ratified" ]; then
+    echo "baton-gate: constitution status is '${status:-unset}', not ratified: gating a run that was never handed over judges work against rules nobody signed" >&2
+    exit 3
+fi
+
+if grep -q 'REPLACE-WITH' "$constitution"; then
+    echo "baton-gate: the constitution still carries an unfilled placeholder marker; it has not been ratified whatever its status field says" >&2
+    exit 3
+fi
+
+if ! git rev-parse --verify -q "${since}^{commit}" >/dev/null 2>&1; then
+    echo "baton-gate: --since '$since' is not a commit in this repository" >&2
+    exit 64
+fi
+
+exit 0
