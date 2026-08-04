@@ -104,7 +104,7 @@ opposite responses.
 
 ## Reading the evidence
 
-Exit 0 prints nine keys, in this order:
+Exit 0 prints ten keys, in this order:
 
 | Key | Reads |
 |---|---|
@@ -117,6 +117,7 @@ Exit 0 prints nine keys, in this order:
 | `since` | the `--since` you passed, resolved to a SHA. |
 | `sha` | HEAD when the evidence was gathered — the tree `verify_cmd` actually ran against. |
 | `work_sha` | the last commit outside `docs/baton/`. |
+| `tree_clean` | whether the working tree was clean when the evidence was gathered. It qualifies `sha` — see below. |
 
 `sha` and `work_sha` answer different questions, and the next wave needs the
 second one: its `--since` resolves from `work_sha`, not from `sha`, because a
@@ -128,6 +129,43 @@ the work and that checkpoint is never scanned at all.
 whose only change was deleting files reports 0 — there is nothing left on disk
 to scan. So does a stretch that touched only `docs/baton/`, which the scan
 excludes as describing the work rather than being it.
+
+## A dirty tree at gate time
+
+`tree_clean=false` means the evidence describes a tree no `sha` names. The
+suite ran against files that are not in the repository — an uncommitted fix, a
+test a subagent wrote and never committed — so nothing a later session can
+check out reproduces this run, and a green verdict filed on it is a claim about
+a tree that exists nowhere. `/baton:auto` refuses to hand a run over with a
+dirty tree, so any dirt here arrived during the run: it is the run's own doing,
+and yours to resolve.
+
+Which of two things it is decides what happens, and do not settle it from
+recollection — that is precisely what the next compaction takes. Name the paths
+first:
+
+```bash
+git status --porcelain
+```
+
+Then check each against what this wave declared it would touch: its `produces`
+in the constitution, and the file list in its plan. That comparison is against
+documents, not against your memory of the last hour, which is the only reason
+it is worth anything at 03:40.
+
+- **Every path is inside that set.** Ordinary work, not a pat. Commit it and
+  gate again. Committing moves `HEAD`, so the evidence in your hands is already
+  stale — `verify_cmd` has to run against the tree that will still be there in
+  the morning. This does not count against the three-attempt ceiling: the gate
+  never rendered a verdict, and finishing the work is not a fix for a red one.
+  But if the tree comes back dirty on that next run, something is writing files
+  nothing accounts for, and that is the case below rather than this one again.
+- **A path is outside it** — something you cannot account for as this wave's
+  work. `needs_human: true`, name the paths, stop. Committing a change you
+  cannot explain into a wave is worse than stopping, and there is nobody awake
+  to say what it is. Do not stash it either: stashing hides it from the next
+  session as well as from the gate, which is strictly worse than leaving it
+  where a human will see it.
 
 **Some non-zero `verify_exit` values are not evidence about the code.**
 `verify_exit=127` means the command was never found — it reports that the suite
@@ -190,13 +228,14 @@ sha: <the sha= from the evidence>
 work_sha: <the work_sha= from the evidence>
 verify_exit: 0
 placeholder_hits: 0
+tree_clean: true
 ---
 
 # Gate: wave 2 — attempt 1
 
 ## Evidence
 
-<the nine key=value lines, verbatim>
+<the ten key=value lines, verbatim>
 
 ## Verify output
 
@@ -216,7 +255,10 @@ Closed under the autopilot. No human confirmed this.
 
 Both shas are in the frontmatter because they answer different questions
 later: `sha` is the tree this verdict judged, `work_sha` is where the next
-wave's scan starts.
+wave's scan starts. `tree_clean` is there because it qualifies `sha` — it is
+what tells the morning whether `sha` names the tree the suite actually ran
+against, and a verdict that records the first without the second cannot be
+told apart from one filed over uncommitted work.
 
 A red attempt gets a file too, with `verdict: fail`. What broke at 03:40 is
 exactly what the morning needs, and it is gone by then if only successes are
@@ -309,6 +351,7 @@ stop the run regardless of how many waves are left:
 | "I'll set autopilot back on after this stop" | You cannot. Turning it on is the human's, always, and this is the exact moment that rule is for. |
 | "Nobody will read a fail verdict, I'll just fix it" | The morning reads it. It is the only account of what happened at 03:40, and the log it came from is overwritten by the next attempt. |
 | "The suite exited 127, so something is broken" | Nothing ran. That is not evidence about the code, and fixing code against it spends the ceiling on a machine problem. |
+| "The tree is dirty but the gate is green, so it passed" | It passed against a tree no `sha` names, which nobody can check out in the morning. Account for every path, commit, gate again. |
 | "This wave doesn't depend on the blocked one, I'll take it" | Check `consumes` against the blocked wave's `produces` too. The graph is not the whole dependency. |
 | "It's faster if I write this bit myself" | It is faster, and speed is not the constraint. Nobody is here to notice the context going. |
 

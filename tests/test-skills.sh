@@ -107,4 +107,23 @@ assert_contains "$autopilot" 'resolves from `work_sha`, not from `sha`' \
 assert_contains "$autopilot" "truncated on every run" \
     "autopilot skill says the verify log does not survive the next attempt"
 
+# The evidence block gained a tenth key in 7929bd2. Two places in the skill
+# count the keys, and the verdict template's "copy them verbatim" is the one
+# that bites: an agent working from a stale count copies nine and drops
+# tree_clean -- the one key that says whether the sha it filed alongside names
+# the tree the suite ran against. Asserting that the word tree_clean appears
+# somewhere would not catch that, because the count is the thing that goes
+# stale, so the count is what is pinned -- in both directions, since the
+# template's line and the prose's line rot independently.
+assert_contains "$autopilot" "ten keys" \
+    "autopilot skill counts the evidence block as ten keys"
+assert_not_contains "$autopilot" "nine key" \
+    "no stale nine-key count survives anywhere in the autopilot skill"
+assert_contains "$autopilot" "tree_clean" \
+    "autopilot skill reads the tree fact that qualifies sha"
+# A dirty tree splits into ordinary work and a stop, and only the second is
+# load-bearing: the first is what an agent does anyway.
+assert_contains "$autopilot" "cannot account for as this wave" \
+    "autopilot skill stops on an uncommitted path it cannot attribute to the wave"
+
 finish
