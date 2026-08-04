@@ -191,4 +191,22 @@ else
     fail "state template is still within the 60-line cap after the status legend ($lines2 lines)"
 fi
 
+# The grant has to live on disk or it does not survive the compaction it
+# exists to survive. Frontmatter, not prose, because baton-resume and the
+# session-start hook both read it without parsing the body.
+assert_contains "$state" "autopilot: off" "state carries the autopilot flag, defaulting to off"
+assert_contains "$state" "autopilot_grant:" "state points at the journal entry that granted autonomy"
+
+# Three values, and the fact that two of them mean different things, is
+# the whole point -- see the v0.1.0 runbook run, where an agent wrote pass
+# into a column nothing claimed ownership of.
+assert_contains "$state" "auto\` closed under the autopilot" "state's gate legend distinguishes auto from pass"
+
+lines3="$(wc -l < "$TPL/state.md" | tr -d ' ')"
+if [ "$lines3" -le 60 ]; then
+    pass "state template is still within the 60-line cap after the autopilot fields ($lines3 lines)"
+else
+    fail "state template is still within the 60-line cap after the autopilot fields ($lines3 lines)"
+fi
+
 finish
