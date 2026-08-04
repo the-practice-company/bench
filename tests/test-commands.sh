@@ -27,6 +27,8 @@ assert_contains "$status" "does not exist" "status covers the not-a-baton-run ca
 assert_contains "$status" "docs/baton/journal/" "status names the journal directory"
 assert_contains "$status" "CLAUDE_PLUGIN_ROOT" "status invokes baton-observe via the plugin root"
 assert_contains "$status" "work_sha" "status compares observed_sha against work_sha, not raw HEAD"
+assert_contains "$status" "autopilot" "status says whether the run is unattended"
+assert_contains "$status" "docs/baton/gates/" "status points at the verdicts behind auto-closed waves"
 
 auto="$(cat "$CMD/auto.md")"
 
