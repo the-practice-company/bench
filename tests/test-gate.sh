@@ -236,4 +236,165 @@ out_root="$("$GATE" --since "$scan_base")"
 out_deep="$(cd deep/nested && "$GATE" --since "$scan_base")"
 assert_equals "$out_deep" "$out_root" "invoked from a subdirectory it reports the same evidence"
 
+# --- an invalid pattern is the gate unable to look, not a clean scan ---
+# grep -Eq exits 2 on a pattern that does not compile; discarding that
+# behind 2>/dev/null used to read as "no match", reporting a scan that
+# never happened as placeholder_hits=0.
+write_constitution "true" "TODO("
+git add docs/baton/constitution.md
+git commit -q -m "a placeholder_patterns that does not compile"
+bad_ere_base="$(git rev-parse HEAD)"
+printf 'TODO(alice)\n' > has-marker.js
+git add has-marker.js
+git commit -q -m "a file with a real marker, under a pattern that cannot compile"
+bad_ere_stderr="$("$GATE" --since "$bad_ere_base" 2>&1 >/dev/null || true)"
+assert_exit_code 4 "an invalid ERE is the gate unable to look, not a clean scan" "$GATE" --since "$bad_ere_base"
+assert_contains "$bad_ere_stderr" "not a valid extended regular expression" \
+    "the refusal names the pattern, distinct from the not-runnable and empty verify_cmd refusals"
+rm -f has-marker.js
+
+# A file the scan cannot read is the same class of failure, discovered per
+# file instead of once for the whole pattern. Skipped as root for the same
+# reason the .baton/ write-permission test above is: root ignores the mode
+# bits, so the assertion would fail for the wrong reason.
+if [ "$(id -u)" != "0" ]; then
+    write_constitution "true"
+    git add docs/baton/constitution.md
+    git commit -q -m "a valid constitution again, for the unreadable-file check"
+    unreadable_scan_base="$(git rev-parse HEAD)"
+    printf 'TODO\n' > cannot-read.js
+    chmod 000 cannot-read.js
+    unreadable_scan_stderr="$("$GATE" --since "$unreadable_scan_base" 2>&1 >/dev/null || true)"
+    assert_exit_code 4 "a file the scan cannot read is the gate unable to look, not a clean scan" "$GATE" --since "$unreadable_scan_base"
+    assert_contains "$unreadable_scan_stderr" "could not scan cannot-read.js" \
+        "the refusal names the unreadable file, distinct from the invalid-pattern refusal above"
+    chmod 644 cannot-read.js
+    rm -f cannot-read.js
+else
+    pass "(skipped as root) a file the scan cannot read is the gate failing, not a clean scan"
+fi
+
+# --- three inputs that used to scan nothing and say so with a green face ---
+
+# A trailing comment after the closing quote is not part of the pattern --
+# unquote only strips a leading quote when the matching trailing one is
+# right there, so "TODO|FIXME" # markers we forbid used to become the
+# pattern in full, quotes and comment included, which matched nothing.
+mkdir -p docs/baton
+cat > docs/baton/constitution.md <<'EOF'
+---
+schema: baton/constitution/v1
+run_id: gate-fixture
+status: ratified
+verify_cmd: "true"
+placeholder_patterns: "TODO|FIXME" # markers we forbid
+---
+# Gate fixture
+EOF
+git add docs/baton/constitution.md
+git commit -q -m "a trailing comment after placeholder_patterns' closing quote"
+comment_base="$(git rev-parse HEAD)"
+assert_exit_code 3 "a trailing comment after placeholder_patterns' closing quote is refused, not read as the whole literal string" \
+    "$GATE" --since "$comment_base"
+
+# /baton:init's template always writes placeholder_patterns, so an absent
+# field means someone removed it -- a different statement from writing it
+# empty, which is the deliberate "scan nothing" case tested above.
+cat > docs/baton/constitution.md <<'EOF'
+---
+schema: baton/constitution/v1
+run_id: gate-fixture
+status: ratified
+verify_cmd: "true"
+---
+# Gate fixture
+EOF
+git add docs/baton/constitution.md
+git commit -q -m "placeholder_patterns removed entirely"
+absent_base="$(git rev-parse HEAD)"
+absent_stderr="$("$GATE" --since "$absent_base" 2>&1 >/dev/null || true)"
+assert_exit_code 3 "an absent placeholder_patterns is refused, distinct from a deliberately empty one" "$GATE" --since "$absent_base"
+assert_contains "$absent_stderr" "placeholder_patterns is not set" \
+    "the refusal says what to write if scanning nothing is what is meant"
+
+# A CRLF line ending left a carriage return attached to the end of the
+# extracted value, which defeated unquote's exact match on the trailing
+# quote and made a well-formed pattern read as unusable.
+printf -- '---\nschema: baton/constitution/v1\nrun_id: gate-fixture\nstatus: ratified\nverify_cmd: "true"\nplaceholder_patterns: "TODO|FIXME"\r\n---\n# Gate fixture\n' > docs/baton/constitution.md
+git add docs/baton/constitution.md
+git commit -q -m "a CRLF line ending on placeholder_patterns"
+crlf_base="$(git rev-parse HEAD)"
+printf 'TODO here\n' > crlf-marker.js
+git add crlf-marker.js
+git commit -q -m "wave work under the CRLF constitution"
+crlf_out="$("$GATE" --since "$crlf_base")"
+assert_contains "$crlf_out" "placeholder_hits=1" "a CRLF line ending on placeholder_patterns does not defeat the scan"
+rm -f crlf-marker.js
+
+# --- baton-observe failing must not throw away a completed verify_cmd run ---
+
+# --since is resolved to a SHA before baton-observe ever sees it, so a
+# --since that also names a tracked path (ambiguous to a bare
+# `git diff --name-only`) no longer reaches baton-observe as the ambiguous
+# string at all.
+write_constitution "true"
+git add docs/baton/constitution.md
+git commit -q -m "a valid constitution, for the ambiguous --since check"
+git branch ambiguous-ref
+mkdir -p ambiguous-ref
+echo x > ambiguous-ref/f.txt
+git add ambiguous-ref
+git commit -q -m "a tracked path that shares its name with a ref"
+resolved_ambiguous="$(git rev-parse ambiguous-ref^{commit})"
+assert_exit_code 0 "a --since that is also a tracked path does not crash baton-observe" "$GATE" --since ambiguous-ref
+ambiguous_out="$("$GATE" --since ambiguous-ref)"
+assert_contains "$ambiguous_out" "since=$resolved_ambiguous" \
+    "the verdict's since= holds the resolved SHA, not the ambiguous ref name baton-observe would choke on"
+
+# --- a path git C-quotes is refused, not silently dropped from the count ---
+
+# core.quotePath=false (set in baton-observe) only unquotes non-ASCII
+# bytes; a backslash, a literal quote or a control character in a path
+# still comes back C-quoted, and `[ -f "$f" ]` on that literal quoted
+# string used to fail silently, undercounting both placeholder_hits and
+# changed_files in the direction of a greener gate. HEAD is already a
+# valid ratified constitution from the ambiguous-ref check above, so it is
+# reused as the base rather than recommitted -- write_constitution "true"
+# would stage nothing, since the content would be byte-identical to what
+# is already committed, and `git commit` with nothing staged fails.
+quoted_base="$(git rev-parse HEAD)"
+printf 'TODO backslash\n' > 'back\slash.js'
+quoted_stderr="$("$GATE" --since "$quoted_base" 2>&1 >/dev/null || true)"
+assert_exit_code 4 "a git-C-quoted path (one containing a backslash) is refused, not silently dropped from the scan" \
+    "$GATE" --since "$quoted_base"
+# git's C-quoting escapes the backslash itself, so the path this refusal
+# names is "back\\slash.js" (two backslashes) -- the file on disk is
+# named with one, git's quoted rendering of it doubles the escape.
+assert_contains "$quoted_stderr" 'cannot scan "back\\slash.js"' \
+    "the refusal names the quoted path, not a garbled or silently-skipped one"
+rm -f 'back\slash.js'
+
+# --- sha and work_sha, read from baton-observe rather than recomputed ---
+
+# A checkpoint commit that touches only docs/baton/ moves HEAD without
+# moving the work -- sha and work_sha must diverge across exactly that
+# commit, or the next wave's --since would resolve from the wrong point.
+# HEAD is already a valid ratified constitution (reused for the same
+# reason as the quoted-path check above), so it is used directly as the
+# base rather than recommitted.
+sha_check_base="$(git rev-parse HEAD)"
+printf 'export const y = 1;\n' > sha-work.js
+git add sha-work.js
+git commit -q -m "real work"
+real_work_sha="$(git rev-parse HEAD)"
+mkdir -p docs/baton/journal
+printf 'checkpoint note\n' > docs/baton/journal/sha-check.md
+git add docs/baton/journal/sha-check.md
+git commit -q -m "baton: a checkpoint-only commit"
+head_after_checkpoint="$(git rev-parse HEAD)"
+sha_out="$("$GATE" --since "$sha_check_base")"
+assert_contains "$sha_out" "sha=$head_after_checkpoint" "sha is HEAD, the tree verify_cmd actually ran against"
+assert_contains "$sha_out" "work_sha=$real_work_sha" "work_sha is the last commit outside docs/baton/, not HEAD -- they differ across a checkpoint commit"
+rm -f docs/baton/journal/sha-check.md sha-work.js
+
 finish
