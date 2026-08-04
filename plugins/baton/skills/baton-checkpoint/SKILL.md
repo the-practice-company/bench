@@ -232,18 +232,33 @@ same `baton-journal` allocation, different `type` and sections:
   input mid-run"). `type: incoming`, `needs_review: true`; sections
   `## What arrived`, `## From whom`, `## What it affects`.
 - **`autopilot`** — written by `/baton:auto` when a human grants the run, and
-  named by `state.md`'s `autopilot_grant`. `type: autopilot`; the body carries
-  the scope, the readiness review as it stood when the human approved it, and
-  the base if one was named. You do not write this one — a human's command
-  does — but the morning reads it to find out what was authorised, so a
-  `autopilot_grant` pointing at nothing is a grant with no record of its terms.
+  named by `state.md`'s `autopilot_grant`. `type: autopilot`, plus
+  **`base:` in the frontmatter** — the resolved sha of `--since <ref>`, or `—`
+  when none was given. Sections `## Scope`, `## The readiness review`,
+  `## The human's corrections`. You do not write this one — a human's does — but the
+  morning reads it to find out what was authorised, so an `autopilot_grant`
+  pointing at nothing is a grant with no record of its terms.
+
+  `base:` belongs in the frontmatter and nowhere else. `baton-autopilot` reads
+  it from there to set the first wave's `--since`, and it reads only there: a
+  base described in the body is a base nothing finds, so the run falls back to
+  the repository's root commit and silently disagrees with the human who took
+  the trouble to name one.
 - **`blocked`** — when a wave cannot close and moves to `blocked` (see
-  `baton-autopilot`'s "The pat"). `type: blocked`, `needs_human: true`;
-  sections `## What stopped`, `## The evidence`, `## What was tried`,
+  `baton-autopilot`'s "The pat"). `type: blocked`; sections
+  `## What stopped`, `## The evidence`, `## What was tried`,
   `## Why each attempt did not move it`. The last section is the one that
   earns the entry: a human reading it at breakfast needs to know which
   explanations have already been ruled out, and an entry that lists three
   attempts without saying why each failed sends them back through all three.
+
+  This entry carries no `needs_human`. That is a granted field in `state.md`,
+  not part of any entry's envelope — unlike `incoming`'s `needs_review: true`
+  above, which really is one — and under the autopilot a parked wave
+  deliberately does **not** raise it: `baton-resume` and `/baton:continue` both
+  halt on finding it set, so raising it while the run carries on stops the run
+  at its next compaction. `baton-autopilot`'s "The pat" says when it is raised,
+  which is when there is no wave left to move to.
 
 Pipe it through `baton-write` so it lands atomically and gets committed:
 
@@ -400,7 +415,7 @@ Exit 3's causes, told apart by the message:
 | empty-or-whitespace-only content over existing committed state | Your draft was empty or nothing but whitespace — a single newline counts, and that is what a failed command substitution or an empty heredoc usually produces. Rebuild it from the file you read in step 1. |
 | does not resolve to a path inside the repository | Should never fire from this skill's own calls: `docs/baton/state.md` and the journal paths `baton-journal` hands back are always repo-root-relative. Something upstream built the wrong path. |
 | refusing to write `docs/baton/constitution.md` | This skill only ever writes `state.md` and journal entries, so you targeted the wrong path. The constitution is never a checkpoint target. |
-| over the 60-line cap | Move the excess detail into a journal entry (`baton-journal`), leave `state.md` holding only a pointer to it, and write again. |
+| over the 60-line cap | Move the excess detail into a journal entry (`baton-journal`), leave `state.md` holding only a pointer to it, and write again — except an autopilot attempt counter, which stays on the `In flight` line whatever else moves out (see step 4). |
 
 Exit 0 with no commit is not a failure — see step 7.
 

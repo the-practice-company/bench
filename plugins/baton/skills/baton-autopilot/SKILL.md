@@ -114,34 +114,28 @@ names. So:
   you would derive.
 - **`base:` is `—`** — no base was named. Fall back to the repository's root
   commit, with the count and the stop below.
+- **`base:` is absent entirely** — an older entry, or one written from a
+  description that put the base in the body. Treat it as `—`, say so in the
+  report, and do not go hunting for a sha in the prose: guessing which one was
+  meant is worse than falling back.
 
-Deriving without looking is the failure worth naming: the human may have set a
-base *because* the fallback is wrong for this repository, and the fallback
-fails quietly, so nothing downstream would tell you that you had ignored them.
+Deriving without looking is the failure worth naming. The human may have set a
+base *because* the fallback is wrong here, and the fallback fails quietly —
+nothing downstream would tell you that you had overridden them.
 
 ```bash
 git rev-list --max-parents=0 HEAD | tail -1
 ```
 
-That prints one line in a repository with one root, which is the ordinary
-case, and the fallback is right there.
+**Count the lines.** One is the ordinary case and the fallback is right there.
+A diff from any base cannot report what was already in that base's own tree, so
+the root's own content is outside the scan either way — harmless for a
+`/baton:init`'d run, whose work all postdates it.
 
-More than one line means the history has more than one root — an unrelated
-history merged in — and `tail -1` then picks whichever has the oldest commit
-date. What escapes the scan is **that root's own tree**: a diff from a commit
-cannot report what was already in it. The sibling root's files are reachable
-from the picked one and do get scanned; it is the picked root's own content
-that is invisible, and nothing in the output says so. Which root `tail -1`
-lands on is decided by commit dates — not by anything about the work — so
-which files are exempt is arbitrary. Count the lines before using it. More
-than one, with no base named at `/baton:auto`, is a stop: `needs_human: true`,
-naming the roots and saying what clears it, which is
-`/baton:auto --since <ref>`.
-
-Even in the single-root case the root's own tree is outside the scan, for the
-same reason. That is usually harmless — a `/baton:init`'d run's work all
-postdates it — but it is why a wave whose changes predate the base is not
-something the gate can speak to.
+More than one line means more than one root, and `tail -1` picks by commit
+date — nothing to do with the work — so *which* root's tree is exempt is
+arbitrary. That is a stop: `needs_human: true`, name the roots, and say what
+clears it, which is `/baton:auto --since <ref>`.
 
 Read the exit code before the output:
 
@@ -391,10 +385,9 @@ written down. The attempt number is in the filename because two red attempts
 without a commit between them share a `short_sha`, and the second would
 otherwise overwrite the first.
 
-Then close the wave the way `baton-checkpoint` describes, with one difference:
-the `gate` column takes `auto`, not `pass`. `pass` says a human confirmed it,
-and none did. The morning's job is turning `auto` into `pass` or into an
-objection, and it cannot be done if the two were already conflated overnight.
+Then close the wave exactly the way `baton-checkpoint` describes — four edits,
+`gate` taking `auto`. It carries the rule and the reason for it; there is no
+autopilot-specific variation to remember here.
 
 Filing the verdict does not disturb the closure: it lands under `docs/baton/`,
 which `work_sha` excludes, so `closed_at_sha` is the same whether the verdict
@@ -426,11 +419,20 @@ human clearing the `blocked` status.
 When a wave cannot close:
 
 1. wave `status` → `blocked`;
-2. `needs_human: true`;
-3. a journal entry, `type: blocked` — what stopped, the evidence, what you
+2. a journal entry, `type: blocked` — what stopped, the evidence, what you
    tried, and why each attempt did not move it;
-4. checkpoint;
-5. look for another wave.
+3. checkpoint;
+4. look for another wave.
+
+**Do not raise `needs_human` here.** It is the run-level stop flag: `baton-resume`
+and `/baton:continue` both halt on finding it set, before the lease is taken.
+Raising it while carrying on means the run stops at its next compaction and
+stays stopped until a human clears it — the exact failure this whole feature
+exists to prevent, arrived at by parking one wave and continuing correctly.
+
+Nothing is lost by leaving it alone: the parked wave is already recorded three
+times over — `status: blocked`, the `type: blocked` entry, `/baton:status` —
+and the flag would add no fact to that account, only a halt nobody asked for.
 
 **A wave is available only if all three hold:**
 
@@ -445,8 +447,16 @@ contract that the blocked wave was supposed to define; building on a contract
 nobody has defined yet produces work that has to be thrown away, which is
 worse than the night of idling it was meant to avoid.
 
-If no wave is available: checkpoint, write `autopilot: off`, and stop with a
-report.
+If no wave is available, the run is over and this is where the flag belongs:
+checkpoint, `needs_human: true` **if anything is `blocked`**, write
+`autopilot: off`, and stop with a report. Nothing is left to carry, so the halt
+costs nothing and the morning meets the flag at the one moment it is true.
+
+Name every blocked wave in that report, and say what each was waiting on. A run
+that parked wave 2 and then closed 3, 4 and 5 ends with four green rows and one
+that nobody has to scroll to; without the flag and the naming it reads as a
+clean night. If nothing is blocked and the scope simply finished, leave
+`needs_human` alone — that run wants no one.
 
 ## What the autopilot never covers
 

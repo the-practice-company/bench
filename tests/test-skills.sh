@@ -58,6 +58,10 @@ assert_contains "$checkpoint" 'The `gate` column takes one of three values' \
 assert_contains "$checkpoint" "autopilot" "checkpoint's closing rule knows about the second path"
 assert_contains "$checkpoint" 'While `autopilot` reads `off`' \
     "checkpoint gates the second path on the flag, not on whether a human happens to be replying"
+# Mutation survivor: deleting the whole second path left the suite green, since
+# the assertions above pin only the first path's opener and the word autopilot.
+assert_contains "$checkpoint" 'While `autopilot` names a scope' \
+    "checkpoint describes the second closing path, not just the flag that selects it"
 assert_contains "$checkpoint" '`auto`, not `pass`' \
     "checkpoint says which value the autopilot path writes into the gate column"
 # Raised in task 6: the autopilot skill requires a blocked entry when a wave
@@ -66,6 +70,18 @@ assert_contains "$checkpoint" 'type: blocked' \
     "checkpoint documents the blocked entry the autopilot path requires"
 assert_contains "$checkpoint" 'type: autopilot' \
     "checkpoint documents the grant entry autopilot_grant points at"
+# This file was the one document telling an agent where to put base:, and it
+# said the body. baton-autopilot reads the frontmatter and only the frontmatter,
+# so an entry written from the old description puts the base where nothing
+# looks, and the run falls back to the root commit against the human's wishes.
+assert_contains "$checkpoint" '**`base:` in the frontmatter**' \
+    "checkpoint sends base: to the frontmatter, where its only reader looks"
+assert_contains "$checkpoint" '## The human'"'"'s corrections' \
+    "the grant entry gets the section list every other entry type has"
+# needs_human is a state.md granted field, not an entry envelope field, and it
+# sat in the identical construction as incoming's needs_review, which is one.
+assert_contains "$checkpoint" "This entry carries no \`needs_human\`" \
+    "checkpoint separates the run-level flag from the blocked entry's envelope"
 # Two ways this file silently resets the autopilot's attempt ceiling: its own
 # definition of In flight ("what was interrupted, or nothing") and its rule
 # sending a long In flight to a journal entry. Both are correct for every other
@@ -80,6 +96,19 @@ assert_contains "$checkpoint" "never moves out" \
 # reader downstream is entitled to read as "nothing closed this".
 assert_contains "$checkpoint" "four edits to this checkpoint's draft" \
     "checkpoint counts the gate column among the edits that close a wave"
+# The count and the enumeration are separate things, and pinning only the count
+# was the same mistake as pinning "eleven keys" without the table: a mutation
+# that keeps "four edits" and deletes the gate bullet leaves three bullets under
+# a count of four, and the suite stays green -- which is the exact failure the
+# four-edits change was made to prevent.
+assert_contains "$checkpoint" 'the `gate` column → `pass` or `auto`' \
+    "the fourth edit is actually enumerated, not just counted"
+# Likewise the three-value table: its lead sentence is pinned above, so
+# deleting every row beneath it survived.
+assert_contains "$checkpoint" '| `auto` | Closed under the autopilot' \
+    "the gate table still has the auto row that its lead sentence promises"
+assert_contains "$checkpoint" '## Why each attempt did not move it' \
+    "the blocked entry keeps the section that earns it, not only its type"
 assert_contains "$checkpoint" "Read the current state, whole" "checkpoint skill instructs reading the current state file first"
 assert_contains "$checkpoint" "baton-lock" "checkpoint skill mentions the lock script"
 assert_contains "$checkpoint" "release" "checkpoint skill covers releasing the lease"
@@ -219,6 +248,19 @@ assert_contains "$autopilot" 'scripts/baton-gate" --since' \
 # nothing downstream surfaces.
 assert_contains "$autopilot" "read the base off the grant" \
     "autopilot takes the first wave's --since from the grant before deriving one"
+# The multi-root block was compressed to make room and had no assertion on it,
+# which is how the inverted claim it once carried survived a review. What must
+# not come back: the sibling root's files are NOT what escapes. Pinned on the
+# call and the stop, the two things the compression had to keep.
+assert_contains "$autopilot" "git rev-list --max-parents=0 HEAD | tail -1" \
+    "autopilot still names the command that finds the fallback base"
+assert_contains "$autopilot" 'root'"'"'s tree is exempt is' \
+    "autopilot says it is the picked root's own tree that escapes, not the sibling's"
+# An absent base: has no branch in an is-a-sha/is-a-dash enumeration, so it
+# falls through to the fallback -- the silent disagreement with the human that
+# the paragraph above exists to forbid.
+assert_contains "$autopilot" "is absent entirely" \
+    "autopilot gives an absent base its own branch rather than letting it fall through"
 assert_contains "$autopilot" "docs/baton/gates/" "autopilot skill files the verdict"
 
 # The three readings of baton-gate's output that no script can enforce and
@@ -288,6 +330,17 @@ assert_contains "$autopilot" "Discount \`.baton/\` before anything else" \
     "autopilot does not put the gate's own log on trial as unattributable work"
 # A dirty tree splits into ordinary work and a stop, and only the second is
 # load-bearing: the first is what an agent does anyway.
+# The pat used to raise needs_human on a parked wave AND carry on. But
+# baton-resume and /baton:continue both halt on finding it set, so the run
+# stopped at its next compaction and stayed stopped -- the exact failure the
+# feature exists to prevent, reached by parking one wave and continuing
+# correctly. The flag now belongs only to the branch where nothing is left.
+assert_contains "$autopilot" "Do not raise \`needs_human\` here" \
+    "the pat does not raise the run-level stop flag on a wave it is stepping past"
+assert_contains "$autopilot" "if anything is \`blocked\`" \
+    "the flag is raised where the run actually ends, and only if a wave was parked"
+assert_contains "$autopilot" "Name every blocked wave in that report" \
+    "a run that parked a wave and finished the rest does not read as a clean night"
 assert_contains "$autopilot" "cannot account for as this wave" \
     "autopilot skill stops on an uncommitted path it cannot attribute to the wave"
 

@@ -312,6 +312,9 @@ will tell you it happened.
 `state.md` is capped at 60 lines and `baton-write` refuses anything longer; a
 `Suspect` writeup with real detail is what usually pushes it over. Put the
 detail in a journal entry and leave a pointer ("see DEC-0008") in the line.
+An autopilot attempt counter on the `In flight` line is the one thing that
+never moves out that way: it is a ceiling, and a ceiling behind a pointer is
+one the next session has to go and look for.
 For any other non-zero exit, `baton-checkpoint`'s "If the write fails" table
 says which situation you are in and what it needs; do not retry blindly.
 
