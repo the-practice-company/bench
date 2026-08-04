@@ -126,9 +126,17 @@ A wave marked `done` whose `closed_at_sha` is not an ancestor of `HEAD` is a
 different finding: `closed_at_sha` is claimed, so it is a divergence, never
 repaired silently. Check every wave marked `done`, not only the most recent —
 a run on day three has several, and the older claim is likelier to have been
-rebased out from under. Skip any whose `closed_at_sha` is the template's `—`
-placeholder: it means "not closed here", and `merge-base` answers it with exit
-128, which reads as history moving when nothing did.
+rebased out from under.
+
+The template's `—` placeholder means "no sha recorded here", and what that is
+worth depends entirely on the wave's status. On a wave that is not `done` it is
+simply the default, so do not run the check against it at all — `merge-base`
+would answer exit 128 and that reads as history moving when nothing did. On a
+wave marked `done` it is a divergence, and the strongest kind: nothing recorded
+the sha, so the claim cannot be checked at all, and unverifiable is
+indistinguishable from false from outside. `baton-checkpoint` reaches the same
+verdict on the same cell, deliberately — a wave declared finished with nothing
+behind the declaration is the exact failure this whole check exists to catch.
 
 Capture the exit code and the message together — the table below keys one row
 on what the command printed:
