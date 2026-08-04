@@ -104,11 +104,20 @@ that moved the work rather than the checkpoint commit that followed it.
 `--since` does not move between attempts on the same wave. What is being gated
 is the whole wave, not the part of it since the last failed attempt.
 
-For the first wave in a run, `--since` is the base the human named at
-`/baton:auto` — the command takes `--since <ref>` for exactly this, and
-records it in the grant entry, so a run that needs a particular base has a
-place to say so. Read it from there before deriving anything. Only when no
-base was named does it fall back to the repository's root commit:
+For the first wave in a run, read the base off the grant. `/baton:auto` takes
+`[wave] [--since <ref>]`, resolves the ref, and records it as **`base:`** in
+the frontmatter of the `type: autopilot` journal entry that `autopilot_grant`
+names. So:
+
+- **`base:` is a sha** — that is the first wave's `--since`. It is the human's
+  answer to this exact question, already resolved, and it outranks anything
+  you would derive.
+- **`base:` is `—`** — no base was named. Fall back to the repository's root
+  commit, with the count and the stop below.
+
+Deriving without looking is the failure worth naming: the human may have set a
+base *because* the fallback is wrong for this repository, and the fallback
+fails quietly, so nothing downstream would tell you that you had ignored them.
 
 ```bash
 git rev-list --max-parents=0 HEAD | tail -1
@@ -160,13 +169,14 @@ opposite responses.
 
 ## Reading the evidence
 
-Exit 0 prints ten keys, in this order:
+Exit 0 prints eleven keys, in this order:
 
 | Key | Reads |
 |---|---|
 | `verify_cmd` | the constitution's command, as it was run. |
 | `verify_exit` | 0 is green; non-zero is red, except for the codes below, which are not a verdict at all. |
 | `verify_log` | `.baton/gate-verify.log` — relative to the repository root, not to your cwd. |
+| `placeholder_patterns` | what the scan was asked to look for. Empty means it was asked nothing. |
 | `placeholder_hits` | **files that matched**, not markers. Three markers in one file is one hit. |
 | `placeholder_files` | which files, comma-separated; empty when there were none. |
 | `changed_files` | files this scan considered. |
@@ -186,12 +196,17 @@ whose only change was deleting files reports 0 — there is nothing left on disk
 to scan. So does a stretch that touched only `docs/baton/`, which the scan
 excludes as describing the work rather than being it.
 
-`placeholder_hits=0` is only evidence if the scan was asked anything.
-`placeholder_patterns: ""` is a legitimate constitution meaning scan nothing,
-and the gate then exits 0 having looked at no file for markers at all. Read the
-constitution's pattern list before treating a zero as a clean bill: a run whose
-human turned the scan off gets the same `0` as one that searched every changed
-file and found nothing.
+`placeholder_hits=0` is only evidence if the scan was asked anything. An empty
+`placeholder_patterns` is a legitimate constitution meaning scan nothing, and
+the gate then exits 0 having looked at no file for markers at all — the same
+`0` a scan gets when it read every changed file and found none.
+
+The two are told apart without leaving the evidence block: `placeholder_patterns`
+is printed immediately above `placeholder_hits` for exactly this, so the answer
+sits beside its own question. An empty value next to a zero says the scan was
+never asked; a pattern next to a zero says it was asked and found nothing. Both
+land in the verdict, so the morning can tell them apart too — which it could
+not when reading a zero meant going and opening the constitution.
 
 ## Red, green, and neither
 
@@ -327,6 +342,7 @@ since: <the since= from the evidence>
 sha: <the sha= from the evidence>
 work_sha: <the work_sha= from the evidence>
 verify_exit: 0
+placeholder_patterns: <the placeholder_patterns= from the evidence>
 placeholder_hits: 0
 tree_clean: true
 ---
@@ -335,7 +351,7 @@ tree_clean: true
 
 ## Evidence
 
-<the ten key=value lines, verbatim>
+<the eleven key=value lines, verbatim>
 
 ## Verify output
 

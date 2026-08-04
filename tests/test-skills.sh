@@ -204,6 +204,13 @@ assert_contains "$autopilot" "weaken the gate" "autopilot skill forbids weakenin
 # incidental prose mentions of baton-gate elsewhere in the file.
 assert_contains "$autopilot" 'scripts/baton-gate" --since' \
     "autopilot skill calls the evidence script, with the argument that scopes it"
+# /baton:auto resolves --since and records it as base: on the grant entry, and
+# this skill is the only thing that reads it. Unread, the human sets a base
+# because the root-commit fallback is wrong for their repository, and the run
+# silently uses the fallback anyway -- a disagreement with the human that
+# nothing downstream surfaces.
+assert_contains "$autopilot" "read the base off the grant" \
+    "autopilot takes the first wave's --since from the grant before deriving one"
 assert_contains "$autopilot" "docs/baton/gates/" "autopilot skill files the verdict"
 
 # The three readings of baton-gate's output that no script can enforce and
@@ -228,12 +235,27 @@ assert_contains "$autopilot" "truncated on every run" \
 # of this block only pinned the prose. Mutation-tested: rewriting the template
 # line to "<the key=value lines, verbatim>" -- exactly the edit that makes an
 # agent drop a key -- left the whole suite green.
-assert_contains "$autopilot" "ten keys" \
-    "autopilot skill counts the evidence block as ten keys"
-assert_contains "$autopilot" "<the ten key=value lines, verbatim>" \
-    "the verdict template tells the agent to copy all ten, not an unnumbered some"
+assert_contains "$autopilot" "eleven keys" \
+    "autopilot skill counts the evidence block as eleven keys"
+assert_contains "$autopilot" "<the eleven key=value lines, verbatim>" \
+    "the verdict template tells the agent to copy all eleven, not an unnumbered some"
+# Every superseded count, not just the last one. This block has been wrong at
+# nine and at ten; a negative that only chases the previous value goes stale
+# the same way the positive did.
 assert_not_contains "$autopilot" "nine key" \
     "no stale nine-key count survives anywhere in the autopilot skill"
+assert_not_contains "$autopilot" "ten key" \
+    "no stale ten-key count survives anywhere in the autopilot skill"
+# placeholder_patterns is printed beside placeholder_hits precisely so a zero
+# can be told apart from a scan nobody asked for, without opening another
+# file. If the verdict does not carry it, the morning is back to guessing.
+assert_contains "$autopilot" "placeholder_patterns: <the placeholder_patterns= from the evidence>" \
+    "the verdict records what the scan was asked, beside what it found"
+# The prose count and the table are separate things: "eleven keys" stays true
+# to the eye with ten rows under it. Mutation-tested -- deleting this row left
+# the suite green.
+assert_contains "$autopilot" "what the scan was asked to look for" \
+    "the key table has a row for placeholder_patterns, not just a count that includes it"
 assert_contains "$autopilot" "tree_clean" \
     "autopilot skill reads the tree fact that qualifies sha"
 # The resolving command must ask the same question baton-observe asked when it
