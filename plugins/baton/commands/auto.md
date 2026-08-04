@@ -31,9 +31,15 @@ Exit 3 means another session holds a live lease: stop and report it. Exit 64
 means the environment gave neither session-id name: report it and stop rather
 than inventing an id.
 
-Then check the tree is clean, with `baton-observe`. Uncommitted work at the
-moment the human leaves is work that no later session can tell apart from work
-in flight.
+Then check the tree is clean:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/baton-observe"
+```
+
+`tree_clean` must be `true`; `dirty_count` names how much is outstanding if it
+is not. Uncommitted work at the moment the human leaves is work that no later
+session can tell apart from work in flight.
 
 ## 2. Establish the scope
 
@@ -66,12 +72,23 @@ to state and yours to fold in and show again — do not argue it down.
 
 Three writes, in this order:
 
-**The journal entry.** `baton-journal autopilot-grant` for the id and path,
-then write it through `baton-write`. `type: autopilot`, and the body carries
-the scope, the review as it stood when approved, and the human's corrections.
-This entry is the grant; everything else points at it.
+**The journal entry.** Allocate the id and path:
 
-**The state.** Through `baton-write`, in the same checkpoint:
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/baton-journal" autopilot-grant
+# id=DEC-0007
+# path=docs/baton/journal/0007-autopilot-grant.md
+```
+
+`type: autopilot`, and the body carries the scope, the review as it stood when
+approved, and the human's corrections. Write it through `baton-write` as
+`baton-checkpoint` step 5 does. This entry is the grant; everything else points
+at it.
+
+**The state.** In the same checkpoint, and by `baton-checkpoint`'s procedure
+rather than a bare `baton-write` — that skill owns the state write, and its
+step 6 diff is what stops a draft assembled from memory from dropping a
+section, committing the deletion, and leaving the tree clean behind it. Set
 `autopilot: <all|N>`, `autopilot_grant: DEC-NNNN`, and a **Next action** that
 names the first concrete step of the first wave.
 
