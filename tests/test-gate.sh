@@ -238,7 +238,7 @@ assert_contains "$out" "placeholder_files=new.js,uncommitted.js" \
 # sequence, not merely that each key is present somewhere in the output.
 key_order="$(printf '%s\n' "$out" | sed -n 's/^\([a-z_]*\)=.*/\1/p' | paste -sd, -)"
 assert_equals "$key_order" \
-    "verify_cmd,verify_exit,verify_log,placeholder_hits,placeholder_files,changed_files,since,sha,work_sha,tree_clean" \
+    "verify_cmd,verify_exit,verify_log,placeholder_patterns,placeholder_hits,placeholder_files,changed_files,since,sha,work_sha,tree_clean" \
     "the verdict's keys appear in exactly this order"
 rm -f uncommitted.js
 
@@ -255,6 +255,41 @@ rm -f docs/baton/journal/0001-note.md
 write_constitution "true" ""
 out="$("$GATE" --since "$scan_base")"
 assert_contains "$out" "placeholder_hits=0" "an empty placeholder_patterns scans nothing rather than matching everything"
+
+# ...and the block has to SAY the scan was switched off, because that zero
+# and a real zero are the same three characters. A human who writes
+# placeholder_patterns: "" gets placeholder_hits=0; so does a wave whose
+# every changed file was read and found clean. The agent under /baton:auto
+# reads the second as the placeholder half of a green gate and closes the
+# wave -- unattended, with nobody to ask -- and reading the first the same
+# way closes a wave over a scan that never ran.
+#
+# changed_files does not separate them: the loop counts a file before it
+# consults the pattern, so a disabled scan still reports files considered.
+# Verified against a constitution with an empty pattern list over a tree
+# holding a real marker: changed_files=1, placeholder_hits=0, and nothing
+# else in the block moved.
+#
+# Emitting the pattern list is what separates them, and it belongs in the
+# verdict rather than in a second call the morning would have to know to
+# make: the value that was scanned FOR is evidence about the scan in the
+# same way the command that was run is evidence about the tests.
+disabled_out="$("$GATE" --since "$scan_base")"
+write_constitution "true" "NOTHING-IN-THIS-FIXTURE-MATCHES-THIS"
+clean_out="$("$GATE" --since "$scan_base")"
+assert_equals "$(gate_field "$clean_out" placeholder_hits)" "0" \
+    "the control arm is a real scan that found nothing, so both arms report the same placeholder_hits"
+# Presence is asserted separately from emptiness, because gate_field cannot
+# tell them apart: an absent key and a key with an empty value both come
+# back as the empty string, so the emptiness assertion below would pass
+# against a script that never printed the key at all.
+disabled_keys="$(printf '%s\n' "$disabled_out" | sed -n 's/^\([a-z_]*\)=.*/\1/p' | paste -sd, -)"
+assert_contains "$disabled_keys" "placeholder_patterns" \
+    "a disabled scan still emits the key rather than omitting it, which is what makes the empty value readable as an answer"
+assert_equals "$(gate_field "$disabled_out" placeholder_patterns)" "" \
+    "and its value is empty, so placeholder_hits=0 can be read as 'nothing was asked'"
+assert_equals "$(gate_field "$clean_out" placeholder_patterns)" "NOTHING-IN-THIS-FIXTURE-MATCHES-THIS" \
+    "a real scan reports the pattern it looked for, so the same zero can be read as 'asked, and found nothing'"
 
 # --- invoked from a subdirectory, same answer ---
 write_constitution "true"

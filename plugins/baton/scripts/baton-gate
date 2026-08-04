@@ -9,12 +9,16 @@
 # recollection.
 #
 # Exit codes:
-#   0   evidence gathered -- read verify_exit and placeholder_hits. A red
-#       gate is exit 0 with verify_exit non-zero, NOT a non-zero exit of
-#       this script. A script that exited non-zero both when the tests
-#       failed and when it could not run them would make those two
-#       indistinguishable to its only caller, and they call for opposite
-#       responses: fix the code, versus stop and report the tooling.
+#   0   evidence gathered -- read verify_exit, and placeholder_hits beside
+#       placeholder_patterns (the count alone cannot distinguish a clean
+#       scan from one the constitution switched off; see the note on that
+#       key below). A red gate is exit 0 with verify_exit non-zero, NOT a
+#       non-zero exit of this script. A script that exited non-zero both
+#       when the tests failed and when it could not run them would make
+#       those two indistinguishable to its only caller, and they call for
+#       opposite responses: fix the code, versus stop and report the
+#       tooling. An empty placeholder_patterns is also exit 0: scanning
+#       nothing is a configuration, not a failure.
 #   1   not a git repository
 #   3   docs/baton/constitution.md is missing, is not ratified, still
 #       carries an unfilled placeholder marker, or a frontmatter value
@@ -23,11 +27,15 @@
 #       against, independent of anything this script tried to do with it.
 #       Only placeholder_patterns is named for absence, and the omission of
 #       verify_cmd from that list is not an oversight: see 4.
-#   4   verify_cmd or placeholder_patterns is empty or unusable (a command
-#       that cannot be run, a pattern that does not compile), .baton/ could
-#       not be prepared to receive the log, a changed path could not be
-#       scanned, or baton-observe itself failed -- the constitution reads
-#       fine, but the gate could not gather evidence from it. An ABSENT
+#   4   verify_cmd is empty or unusable (a command that cannot be run),
+#       placeholder_patterns is unusable (a pattern that does not compile),
+#       .baton/ could not be prepared to receive the log, a changed path
+#       could not be scanned, or baton-observe itself failed -- the
+#       constitution reads fine, but the gate could not gather evidence
+#       from it. "Empty" attaches to verify_cmd only, and the asymmetry is
+#       the point: an empty placeholder_patterns is a human saying scan
+#       nothing, which is exit 0, while an empty verify_cmd leaves nothing
+#       to run at all. An ABSENT
 #       verify_cmd lands here too, not on 3: fm_field returns an empty
 #       string whether the field was written empty or never written at
 #       all, so this script cannot tell those apart and does not try --
@@ -515,6 +523,22 @@ EOF
 printf 'verify_cmd=%s\n' "$verify_cmd"
 printf 'verify_exit=%s\n' "$verify_exit"
 printf 'verify_log=%s\n' "$verify_log"
+# Immediately above placeholder_hits, because the two are one statement and
+# the count alone is ambiguous in the direction that closes waves. A human
+# who writes placeholder_patterns: "" gets placeholder_hits=0, and so does a
+# wave whose every changed file was read and found clean -- the same three
+# characters for "nothing was asked" and "asked, and found nothing".
+# changed_files does not separate them either: the loop counts a file before
+# it consults the pattern, so a switched-off scan still reports files
+# considered. An agent running unattended reads that zero as the placeholder
+# half of a green gate and closes the wave, which is exactly the reading
+# that must not be available without the evidence for it.
+#
+# The unquoted value is printed, the same form the scan actually used and
+# the same treatment verify_cmd gets above -- what the gate looked for
+# belongs in the verdict beside what it found, for the same reason the
+# command that was run belongs there beside its exit code.
+printf 'placeholder_patterns=%s\n' "$patterns"
 printf 'placeholder_hits=%s\n' "$placeholder_hits"
 printf 'placeholder_files=%s\n' "$placeholder_files"
 printf 'changed_files=%s\n' "$changed_files"
