@@ -5,7 +5,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SKILLS="$REPO_ROOT/plugins/baton/skills"
 . "$SCRIPT_DIR/helpers.sh"
 
-for name in baton baton-checkpoint baton-resume; do
+for name in baton baton-checkpoint baton-resume baton-autopilot; do
     f="$SKILLS/$name/SKILL.md"
     assert_file_exists "$f" "skill $name exists"
     [ -f "$f" ] || continue
@@ -53,5 +53,58 @@ assert_contains "$resume" "baton: resume found a divergence" \
 assert_contains "$resume" "128" "resume skill explains the merge-base exit-128 case"
 assert_contains "$resume" "fatal:" "resume skill explains the merge-base fatal: message"
 assert_contains "$resume" "is an ancestor of \`HEAD\`. The claim holds." "resume skill explains merge-base exit 0"
+
+autopilot="$(cat "$SKILLS/baton-autopilot/SKILL.md")"
+
+# The asymmetry is the whole safety story. Stated once in prose, it is the
+# first thing to go when the file is next edited for length.
+assert_contains "$autopilot" "may always turn it off, and never on" \
+    "autopilot skill states the asymmetry: the agent clears the grant, never sets it"
+
+# Eligibility has three conditions and the third is the one that would be
+# dropped as pedantic -- two waves can be independent in the graph and
+# still share a contract the blocked wave was to define. Which is why the
+# third is pinned to its whole clause: `consumes` alone also appears where
+# the skill derives a spec, so the bare word would stay green after the
+# condition it is meant to defend had been deleted.
+assert_contains "$autopilot" "transitive" \
+    "autopilot skill requires the whole transitive dependency closure to be done"
+assert_contains "$autopilot" 'nothing in its `consumes` appears in the `produces`' \
+    "autopilot skill excludes a wave that consumes what a blocked wave produces"
+
+# The pat is bounded by evidence first and a counter second.
+assert_contains "$autopilot" "unchanged evidence" \
+    "autopilot skill names unchanged evidence as the signal that fixing has stopped being fixing"
+assert_contains "$autopilot" "three attempts" "autopilot skill states the absolute ceiling"
+assert_contains "$autopilot" "In flight" \
+    "autopilot skill keeps the attempt counter in state.md, not in the session"
+
+# What autonomy never covers.
+assert_contains "$autopilot" "contradicts the constitution" "autopilot skill stops on a constitution contradiction"
+# Both of the next two are pinned to the whole clause rather than to the bare
+# word. "suspect" appears in the Red Flags and in the divergence prose alike,
+# and "exit 3" now names two different scripts in this one file -- baton-lock's
+# held lease and baton-gate's unfit constitution. A bare-substring assertion
+# would go green on either occurrence while its message claims the other, which
+# is worse than no assertion: it reports that the rule is present after the
+# sentence carrying it has been deleted.
+assert_contains "$autopilot" '`suspect: true` and stop' "autopilot skill stops on a diverged claim"
+assert_contains "$autopilot" '`baton-lock` exit 3' "autopilot skill stops when another session holds the lease"
+assert_contains "$autopilot" "weaken the gate" "autopilot skill forbids weakening the gate"
+
+assert_contains "$autopilot" "baton-gate" "autopilot skill calls the evidence script"
+assert_contains "$autopilot" "docs/baton/gates/" "autopilot skill files the verdict"
+
+# The three readings of baton-gate's output that no script can enforce and
+# nothing else in the plugin writes down. Each is one sentence in the skill,
+# and each is silently expensive to lose: a wave failed over a missing test
+# runner, a scan run over the wrong range, a verdict whose only account of the
+# failure was overwritten by the attempt that followed it.
+assert_contains "$autopilot" "did not run, not did not pass" \
+    "autopilot skill reads verify_exit 127 as the suite not running, not as the code being wrong"
+assert_contains "$autopilot" 'resolves from `work_sha`, not from `sha`' \
+    "autopilot skill sends the next wave's --since to work_sha rather than to HEAD"
+assert_contains "$autopilot" "truncated on every run" \
+    "autopilot skill says the verify log does not survive the next attempt"
 
 finish
