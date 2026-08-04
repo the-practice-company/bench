@@ -147,9 +147,13 @@ autopilot_grant_norm="$(trim_unquote "$autopilot_grant")"
 # empty field, or a typo like "al". Under the whitelist, all of those fail
 # toward NO autonomy instead -- the only direction an unrecognized value
 # is allowed to fail in, for a field only a human is meant to turn on.
+# "all" is case-folded (the digits branch needs no folding: a digit has no
+# case) so that direction stays the only one that fails silently -- an
+# agent that writes "ALL" gets the grant it wrote, not a run that quietly
+# ignored a human's decision with nothing saying why.
 is_autopilot_on=0
 case "$autopilot_norm" in
-    all) is_autopilot_on=1 ;;
+    [Aa][Ll][Ll]) is_autopilot_on=1 ;;  # case-folded, like the old off check was
     ''|*[!0-9]*) ;;  # neither "all" nor purely digits -- no grant
     *) is_autopilot_on=1 ;;  # purely digits, non-empty -- a wave number
 esac

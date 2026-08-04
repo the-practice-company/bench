@@ -442,6 +442,34 @@ out="$("$HOOKS/session-start" < /dev/null)"
 assert_contains "$out" "Autopilot: 3" "a bare wave number still grants autopilot for that wave"
 assert_contains "$out" "granted DEC-0100)" "the grant id still shows for a wave-number grant"
 
+# The off side is already case-folded ([Oo][Ff][Ff] before the inversion,
+# and the whitelist's ''|*[!0-9]* branch is case-blind by construction
+# since digits have no case) -- "all" was not. An agent that hand-writes
+# "ALL" into state.md got a run that quietly did not apply a grant a
+# human gave, with no line saying why: safe (fails toward off), but
+# silently wrong in the other direction from everything else this file
+# guards against. Digits stay strict on purpose -- only the word gets
+# folded.
+cat > docs/baton/state.md <<'EOF'
+---
+schema: baton/state/v1
+autopilot: ALL
+autopilot_grant: DEC-0200
+---
+
+# State
+
+**Goal:** g
+**Operating mode:** m
+**Non-negotiables:** n
+
+## Now
+- **Next action:** a
+EOF
+out="$("$HOOKS/session-start" < /dev/null)"
+assert_contains "$out" "Autopilot: ALL" "a grant spelled ALL is still a grant, not silently dropped"
+assert_contains "$out" "granted DEC-0200)" "the grant id still shows for an ALL-spelled grant"
+
 # The CRLF "off" case above staying silent is not, on its own, proof that
 # CRLF parses correctly -- a block match broken by "---\r" not matching
 # "^---$" would ALSO stay silent, for the wrong reason. Prove the block
