@@ -123,13 +123,13 @@ assert_exit_code 0 "a well-formed invocation passes every guard" "$GATE" --since
 
 # --- verify_cmd: the evidence, and the exit code that is NOT the evidence ---
 write_constitution "true"
-out="$("$GATE" --since "$base")"
+out="$("$GATE" --since "$base" || true)"
 assert_contains "$out" "verify_exit=0" "a green verify_cmd reports verify_exit=0"
 assert_contains "$out" "verify_cmd=true" "the evidence names the command that was run"
 assert_exit_code 0 "a green verify_cmd exits 0" "$GATE" --since "$base"
 
 write_constitution "false"
-out="$("$GATE" --since "$base")"
+out="$("$GATE" --since "$base" || true)"
 assert_equals "$(gate_field "$out" verify_exit)" "1" "a red verify_cmd reports its exit code, exactly (not merely a string that contains it)"
 assert_exit_code 0 "a RED verify_cmd still exits 0 -- the script reports, it does not judge" \
     "$GATE" --since "$base"
@@ -139,7 +139,7 @@ assert_exit_code 0 "a RED verify_cmd still exits 0 -- the script reports, it doe
 # verify_exit=127, a command that was never found, arriving dressed as a
 # suite that failed.
 write_constitution "[[ 1 == 1 ]]"
-out="$("$GATE" --since "$base")"
+out="$("$GATE" --since "$base" || true)"
 assert_equals "$(gate_field "$out" verify_exit)" "0" "verify_cmd runs under bash, the shell whose command -v vouched for it"
 
 # Stdin is redirected from /dev/null, so a verify_cmd that reads it gets EOF
@@ -155,7 +155,7 @@ assert_not_contains "$(cat .baton/gate-verify.log)" "SHOULD-NOT-REACH-THE-VERIFY
 # The log is where the agent reads what actually broke, so it has to exist
 # and hold the command's own output.
 write_constitution "echo boom-from-the-verify-command; exit 3"
-out="$("$GATE" --since "$base")"
+out="$("$GATE" --since "$base" || true)"
 assert_contains "$out" "verify_exit=3" "the exact non-zero exit code is passed through, not flattened to 1"
 assert_file_exists ".baton/gate-verify.log" "the command's output is captured to a log"
 assert_contains "$(cat .baton/gate-verify.log)" "boom-from-the-verify-command" \
@@ -172,7 +172,7 @@ assert_contains "$out" "verify_log=.baton/gate-verify.log" "the evidence names w
 # guard exists at all -- it does not test the guard it is named for.
 write_constitution ""
 assert_exit_code 4 "refuses an empty verify_cmd" "$GATE" --since "$base"
-empty_verify_stderr="$("$GATE" --since "$base" 2>&1 >/dev/null || true)"
+empty_verify_stderr="$("$GATE" --since "$base" 2>&1 >/dev/null || true || true)"
 assert_contains "$empty_verify_stderr" "verify_cmd is empty" \
     "the empty refusal names itself, distinct from the not-runnable refusal below"
 
@@ -183,7 +183,7 @@ assert_exit_code 4 "refuses a verify_cmd whose command does not exist" "$GATE" -
 # shape of a test command, and exit 4 means stop the run, so refusing this
 # would halt overnight work over nothing.
 write_constitution "CI=1 true"
-out="$("$GATE" --since "$base")"
+out="$("$GATE" --since "$base" || true)"
 assert_equals "$(gate_field "$out" verify_exit)" "0" "an env-var prefix names the command after it, not the assignment"
 
 # --- a failed log write is the gate unable to gather evidence, not a red
@@ -212,7 +212,61 @@ write_constitution "true"
 rm -rf .baton
 touch .baton
 assert_exit_code 4 "refuses when .baton exists as a file, not a directory" "$GATE" --since "$base"
+# The message, not just the code: the log-write guard a few lines below the
+# mkdir guard in the script also returns 4, so deleting the mkdir guard
+# entirely leaves this exit-code assertion passing. Same trap as the empty
+# verify_cmd and the not-runnable one, and the same escape -- the two
+# messages differ, so one of them can be asserted.
+baton_file_stderr="$("$GATE" --since "$base" 2>&1 >/dev/null || true || true)"
+assert_contains "$baton_file_stderr" "cannot create .baton/" \
+    "the refusal names the directory it could not create, distinct from the log-write refusal that shares its exit code"
 rm -f .baton
+
+# fm_field takes the first matching line and no more. A constitution with
+# the same key twice is malformed, but it is malformed in a way nothing
+# here refuses, so the question is only which value wins -- and without
+# head -1 sed emits both, the two glue into one string across a newline,
+# and what reaches `command -v` is a word that was never written in the
+# file. The first value winning is also what makes the `|| true` on that
+# pipeline necessary: sed keeps writing after head has taken its line and
+# exited, and the SIGPIPE status would otherwise abort the script.
+write_constitution "true"
+cat > docs/baton/constitution.md <<'EOF'
+---
+schema: baton/constitution/v1
+run_id: gate-fixture
+status: ratified
+verify_cmd: "true"
+verify_cmd: "false"
+placeholder_patterns: "TODO|FIXME"
+---
+# Gate fixture
+EOF
+dup_out="$("$GATE" --since "$base" 2>/dev/null || true || true)"
+assert_equals "$(gate_field "$dup_out" verify_cmd)" "true" \
+    "a key repeated in the frontmatter takes its first value, not both glued across a newline"
+assert_equals "$(gate_field "$dup_out" verify_exit)" "0" \
+    "...and the command that actually ran is that first one"
+
+# Two defects, and the constitution-syntax one is reported first. Exit 3 is
+# "this file is not fit to gate against" and exit 4 is "the gate could not
+# gather evidence from it"; reported the other way round the human fixes
+# verify_cmd, reruns, and only then learns placeholder_patterns is missing,
+# paying two round trips for one reading of one file.
+cat > docs/baton/constitution.md <<'EOF'
+---
+schema: baton/constitution/v1
+run_id: gate-fixture
+status: ratified
+verify_cmd: "definitely-not-a-real-command-9d3f"
+---
+# Gate fixture
+EOF
+both_stderr="$("$GATE" --since "$base" 2>&1 >/dev/null || true || true)"
+assert_exit_code 3 "a constitution both missing placeholder_patterns and naming an unrunnable verify_cmd is exit 3, the constitution defect, not exit 4" \
+    "$GATE" --since "$base"
+assert_contains "$both_stderr" "placeholder_patterns is not set" \
+    "and it is the missing field that gets named, so one run reports the defect that has to be fixed first"
 
 # --- the placeholder scan runs over what the wave touched ---
 write_constitution "true"
@@ -226,13 +280,13 @@ git add old.js
 git commit -q -m "old work with a marker"
 scan_base="$(git rev-parse HEAD)"
 
-out="$("$GATE" --since "$scan_base")"
+out="$("$GATE" --since "$scan_base" || true)"
 assert_contains "$out" "placeholder_hits=0" "a marker outside the wave's diff is not counted"
 
 printf 'export function renew() { /* TODO: finish */ }\n' > new.js
 git add new.js
 git commit -q -m "wave work with a marker"
-out="$("$GATE" --since "$scan_base")"
+out="$("$GATE" --since "$scan_base" || true)"
 assert_contains "$out" "placeholder_hits=1" "a marker in a file the wave touched is counted"
 assert_contains "$out" "placeholder_files=new.js" "the evidence names the file the marker is in"
 assert_contains "$out" "changed_files=1" "the evidence counts the files considered"
@@ -240,7 +294,7 @@ assert_contains "$out" "changed_files=1" "the evidence counts the files consider
 # An uncommitted file is the most common shape of in-flight work and must
 # be seen -- baton-observe already reports it, this must not filter it out.
 printf 'const x = 1; // FIXME\n' > uncommitted.js
-out="$("$GATE" --since "$scan_base")"
+out="$("$GATE" --since "$scan_base" || true)"
 assert_contains "$out" "placeholder_hits=2" "an uncommitted file is scanned too"
 # The exact joined list, not just the count: baton-observe's
 # --changed-since pipes the committed diff and the untracked-file list
@@ -264,14 +318,14 @@ rm -f uncommitted.js
 # gate verdict quoting one, is prose about the work, not a stub in it.
 mkdir -p docs/baton/journal
 printf 'A decision about the TODO markers we allow.\n' > docs/baton/journal/0001-note.md
-out="$("$GATE" --since "$scan_base")"
+out="$("$GATE" --since "$scan_base" || true)"
 assert_contains "$out" "placeholder_hits=1" "docs/baton/ is excluded from the scan"
 rm -f docs/baton/journal/0001-note.md
 
 # An empty pattern list means no scan, not a pattern that matches
 # everything: grep -E '' matches every line.
 write_constitution "true" ""
-out="$("$GATE" --since "$scan_base")"
+out="$("$GATE" --since "$scan_base" || true)"
 assert_contains "$out" "placeholder_hits=0" "an empty placeholder_patterns scans nothing rather than matching everything"
 
 # ...and the block has to SAY the scan was switched off, because that zero
@@ -292,9 +346,9 @@ assert_contains "$out" "placeholder_hits=0" "an empty placeholder_patterns scans
 # verdict rather than in a second call the morning would have to know to
 # make: the value that was scanned FOR is evidence about the scan in the
 # same way the command that was run is evidence about the tests.
-disabled_out="$("$GATE" --since "$scan_base")"
+disabled_out="$("$GATE" --since "$scan_base" || true)"
 write_constitution "true" "NOTHING-IN-THIS-FIXTURE-MATCHES-THIS"
-clean_out="$("$GATE" --since "$scan_base")"
+clean_out="$("$GATE" --since "$scan_base" || true)"
 assert_equals "$(gate_field "$clean_out" placeholder_hits)" "0" \
     "the control arm is a real scan that found nothing, so both arms report the same placeholder_hits"
 # Presence is asserted separately from emptiness, because gate_field cannot
@@ -324,7 +378,7 @@ assert_equals "$(gate_field "$clean_out" placeholder_patterns)" "NOTHING-IN-THIS
 # earlier assertions left in the diff.
 printf 'export function stub() { /* RED-SCAN-MARKER: not finished */ }\n' > red-stub.js
 write_constitution "false" "RED-SCAN-MARKER"
-red_out="$("$GATE" --since "$scan_base" 2>/dev/null || true)"
+red_out="$("$GATE" --since "$scan_base" 2>/dev/null || true || true)"
 assert_equals "$(gate_field "$red_out" verify_exit)" "1" \
     "a red verify_cmd reports its exit code"
 assert_equals "$(gate_field "$red_out" placeholder_hits)" "1" \
@@ -336,7 +390,7 @@ rm -f red-stub.js
 # --- invoked from a subdirectory, same answer ---
 write_constitution "true"
 mkdir -p deep/nested
-out_root="$("$GATE" --since "$scan_base")"
+out_root="$("$GATE" --since "$scan_base" || true)"
 out_deep="$(cd deep/nested && "$GATE" --since "$scan_base")"
 assert_equals "$out_deep" "$out_root" "invoked from a subdirectory it reports the same evidence"
 
@@ -354,7 +408,7 @@ cp "$GATE" vendor/baton/scripts/baton-gate
 cp "$REPO_ROOT/plugins/baton/scripts/baton-observe" vendor/baton/scripts/baton-observe
 chmod +x vendor/baton/scripts/baton-gate vendor/baton/scripts/baton-observe
 relative_base="$(git rev-parse HEAD)"
-out_absolute="$("$GATE" --since "$relative_base")"
+out_absolute="$("$GATE" --since "$relative_base" || true)"
 # `|| true`, because the way this breaks is not a wrong answer but no
 # answer: with dirname "$0" computed after the cd, the relative path is
 # resolved against repo_root, baton-gate dies on its own `cd` with
@@ -383,7 +437,7 @@ bad_ere_base="$(git rev-parse HEAD)"
 printf 'TODO(alice)\n' > has-marker.js
 git add has-marker.js
 git commit -q -m "a file with a real marker, under a pattern that cannot compile"
-bad_ere_stderr="$("$GATE" --since "$bad_ere_base" 2>&1 >/dev/null || true)"
+bad_ere_stderr="$("$GATE" --since "$bad_ere_base" 2>&1 >/dev/null || true || true)"
 assert_exit_code 4 "an invalid ERE is the gate unable to look, not a clean scan" "$GATE" --since "$bad_ere_base"
 assert_contains "$bad_ere_stderr" "not a valid extended regular expression" \
     "the refusal names the pattern, distinct from the not-runnable and empty verify_cmd refusals"
@@ -448,7 +502,7 @@ EOF
 git add docs/baton/constitution.md
 git commit -q -m "placeholder_patterns removed entirely"
 absent_base="$(git rev-parse HEAD)"
-absent_stderr="$("$GATE" --since "$absent_base" 2>&1 >/dev/null || true)"
+absent_stderr="$("$GATE" --since "$absent_base" 2>&1 >/dev/null || true || true)"
 assert_exit_code 3 "an absent placeholder_patterns is refused, distinct from a deliberately empty one" "$GATE" --since "$absent_base"
 assert_contains "$absent_stderr" "placeholder_patterns is not set" \
     "the refusal says what to write if scanning nothing is what is meant"
@@ -487,7 +541,7 @@ crlf_base="$(git rev-parse HEAD)"
 printf 'TODO here\n' > crlf-marker.js
 git add crlf-marker.js
 git commit -q -m "wave work under the CRLF constitution"
-crlf_out="$("$GATE" --since "$crlf_base")"
+crlf_out="$("$GATE" --since "$crlf_base" || true)"
 assert_contains "$crlf_out" "placeholder_hits=1" "a CRLF line ending on placeholder_patterns does not defeat the scan"
 rm -f crlf-marker.js
 
@@ -533,7 +587,7 @@ git commit -q -m "wave work under the all-CRLF constitution"
 # this line -- every assertion below would stop running, and the diagnostic
 # would be baton-gate's own stderr rather than anything saying which
 # property was lost.
-all_crlf_out="$("$GATE" --since "$all_crlf_base" 2>/dev/null || true)"
+all_crlf_out="$("$GATE" --since "$all_crlf_base" 2>/dev/null || true || true)"
 assert_contains "$all_crlf_out" "placeholder_hits=1" \
     "CRLF on every line, the --- delimiters included, is read rather than refused as an unratified constitution"
 rm -f all-crlf-marker.js
@@ -558,7 +612,7 @@ printf 'const a = 1; // TODO\n' > ws-no-space.js
 printf 'const b = 2; // TODO \n' > ws-space.js
 git add ws-no-space.js ws-space.js
 git commit -q -m "wave work under the trailing-whitespace constitution"
-ws_out="$("$GATE" --since "$ws_base" 2>/dev/null || true)"
+ws_out="$("$GATE" --since "$ws_base" 2>/dev/null || true || true)"
 assert_equals "$(gate_field "$ws_out" verify_exit)" "0" \
     "a trailing space after verify_cmd's closing quote is stripped, not read as a quote that was never closed"
 assert_equals "$(gate_field "$ws_out" placeholder_files)" "ws-space.js" \
@@ -581,7 +635,7 @@ git add ambiguous-ref
 git commit -q -m "a tracked path that shares its name with a ref"
 resolved_ambiguous="$(git rev-parse ambiguous-ref^{commit})"
 assert_exit_code 0 "a --since that is also a tracked path does not crash baton-observe" "$GATE" --since ambiguous-ref
-ambiguous_out="$("$GATE" --since ambiguous-ref)"
+ambiguous_out="$("$GATE" --since ambiguous-ref || true)"
 assert_contains "$ambiguous_out" "since=$resolved_ambiguous" \
     "the verdict's since= holds the resolved SHA, not the ambiguous ref name baton-observe would choke on"
 
@@ -598,7 +652,7 @@ assert_contains "$ambiguous_out" "since=$resolved_ambiguous" \
 # is already committed, and `git commit` with nothing staged fails.
 quoted_base="$(git rev-parse HEAD)"
 printf 'TODO backslash\n' > 'back\slash.js'
-quoted_stderr="$("$GATE" --since "$quoted_base" 2>&1 >/dev/null || true)"
+quoted_stderr="$("$GATE" --since "$quoted_base" 2>&1 >/dev/null || true || true)"
 assert_exit_code 4 "a git-C-quoted path (one containing a backslash) is refused, not silently dropped from the scan" \
     "$GATE" --since "$quoted_base"
 # git's C-quoting escapes the backslash itself, so the path this refusal
@@ -626,7 +680,7 @@ printf 'checkpoint note\n' > docs/baton/journal/sha-check.md
 git add docs/baton/journal/sha-check.md
 git commit -q -m "baton: a checkpoint-only commit"
 head_after_checkpoint="$(git rev-parse HEAD)"
-sha_out="$("$GATE" --since "$sha_check_base")"
+sha_out="$("$GATE" --since "$sha_check_base" || true)"
 assert_contains "$sha_out" "sha=$head_after_checkpoint" "sha is HEAD, the tree verify_cmd actually ran against"
 assert_contains "$sha_out" "work_sha=$real_work_sha" "work_sha is the last commit outside docs/baton/, not HEAD -- they differ across a checkpoint commit"
 rm -f docs/baton/journal/sha-check.md sha-work.js
@@ -649,12 +703,75 @@ rm -f docs/baton/journal/sha-check.md sha-work.js
 git commit -q -m "settle the tree" -- \
     all-crlf-marker.js crlf-marker.js docs/baton/journal/sha-check.md \
     has-marker.js sha-work.js ws-no-space.js ws-space.js
-out="$("$GATE" --since "$scan_base")"
+out="$("$GATE" --since "$scan_base" || true)"
 assert_contains "$out" "tree_clean=true" "reports a clean tree"
 printf 'scratch\n' > scratch.txt
-out="$("$GATE" --since "$scan_base")"
+out="$("$GATE" --since "$scan_base" || true)"
 assert_contains "$out" "tree_clean=false" "reports a dirty tree"
 rm -f scratch.txt
+
+# Where tree_clean comes from, not merely what it says. Swapping the read
+# off baton-observe for a plain `git status --porcelain` here passes both
+# assertions above, and the comment in the script defends three properties
+# none of which they touch. This is the one that bites: with
+# status.showUntrackedFiles=no set in the repository, a bare
+# `git status --porcelain` reports a clean tree over a directory of
+# uncommitted work. baton-observe passes -uall, which overrides it -- the
+# exact failure the script's comment says has hidden a dirty tree from this
+# suite before.
+git config status.showUntrackedFiles no
+printf 'export const invisible = 1;\n' > hidden-work.js
+hidden_out="$("$GATE" --since "$scan_base" || true)"
+assert_contains "$hidden_out" "tree_clean=false" \
+    "a repository configured to hide untracked files still reports a dirty tree -- tree_clean comes from baton-observe's -uall, not from a bare git status"
+rm -f hidden-work.js
+git config --unset status.showUntrackedFiles
+
+# changed_files is its own number. Two mutants lived here: printing
+# $placeholder_hits in its place, and moving the increment below the
+# empty-pattern check. Both survived because the one assertion covering
+# changed_files was taken where it happened to equal placeholder_hits.
+# A fresh base is taken so the count is exactly the two files below --
+# the constitution is modified too, and excluded, which is what makes the
+# expected number 2 rather than 3.
+cf_base="$(git rev-parse HEAD)"
+printf 'export const counted_one = 1; // CF-MARKER\n' > cf-one.js
+printf 'export const counted_two = 2;\n' > cf-two.js
+write_constitution "true" "CF-MARKER"
+cf_out="$("$GATE" --since "$cf_base" 2>/dev/null || true || true)"
+assert_equals "$(gate_field "$cf_out" changed_files)" "2" \
+    "changed_files counts every file considered, not the ones that matched"
+assert_equals "$(gate_field "$cf_out" placeholder_hits)" "1" \
+    "...and differs from placeholder_hits in the same run, so one cannot stand in for the other"
+
+# The second mutant, and the claim this file states as verified fact in the
+# comment on the disabled scan above: the loop counts a file before it
+# consults the pattern, so switching the scan off does not switch off the
+# count.
+write_constitution "true" ""
+cf_off_out="$("$GATE" --since "$cf_base" 2>/dev/null || true || true)"
+assert_equals "$(gate_field "$cf_off_out" changed_files)" "2" \
+    "a switched-off scan still counts the files it was handed -- the count happens before the pattern is consulted"
+assert_equals "$(gate_field "$cf_off_out" placeholder_hits)" "0" \
+    "...while reporting no hits, which is what leaves changed_files able to say whether the wave touched anything at all"
+rm -f cf-one.js cf-two.js
+
+# The .baton/ scan exclusion, in the shape it exists for. In this fixture it
+# is unreachable -- .gitignore keeps the log out of the changed set
+# entirely -- so deleting the exclusion passes the suite. Drop the ignore
+# line and the log becomes an ordinary untracked file the scan is handed,
+# and a verify_cmd that prints a marker into it makes the exclusion the
+# only thing standing between the gate and counting its own output as the
+# wave's work.
+printf '# the .baton/ line is gone\n' > .gitignore
+write_constitution "echo LOGMARKER-DO-NOT-COUNT" "LOGMARKER-DO-NOT-COUNT"
+nolog_out="$("$GATE" --since "$cf_base" 2>/dev/null || true || true)"
+assert_equals "$(gate_field "$nolog_out" placeholder_hits)" "0" \
+    "the gate's own verify log is never scanned, even where .gitignore no longer hides it and it holds a matching marker"
+assert_contains "$nolog_out" "tree_clean=false" \
+    "...though the tree does go dirty, the log being a real untracked file -- which is what the .gitignore line exists to prevent, and what the header now says"
+printf '.baton/\n' > .gitignore
+git checkout -q -- .gitignore 2>/dev/null || printf '.baton/\n' > .gitignore
 
 # --- the facts are read before the changed set, not after ---
 
@@ -754,6 +871,30 @@ rc=0
 assert_equals "$rc" "1" "refuses to run outside a git repository"
 rm -rf "$outside"
 
+# --- a bare repository ---
+# Deliberately left as it is rather than given a baton-gate: prefix. It is
+# the only exit path without one, and the header's catch-all row already
+# covers it: `git rev-parse --show-toplevel` fails with its own message,
+# and the assignment is kept separate from the cd precisely so that failure
+# aborts with git's text intact. Giving it a prefix would mean either
+# widening exit 1, which the table spends on "not a git repository" -- a
+# bare repo IS one, it just has no work tree -- or minting a code for it,
+# which is not a change to make in a review pass. What is worth pinning is
+# that it stays a refusal: no key=value block, and a non-zero status, so it
+# cannot drift into the green-looking exit 0 this whole round is about.
+bare="$(mktemp -d)"
+git init -q --bare "$bare/repo.git"
+bare_rc=0
+bare_out="$( ( cd "$bare/repo.git" && "$GATE" --since "$scan_base" ) 2>/dev/null )" || bare_rc=$?
+assert_not_contains "$bare_out" "verify_exit=" \
+    "a bare repository produces no evidence block -- whatever the code, it is not a verdict"
+if [ "$bare_rc" -ne 0 ]; then
+    pass "a bare repository is a refusal, not exit 0 (git's own code, $bare_rc, per the header's catch-all row)"
+else
+    fail "a bare repository is a refusal, not exit 0 (git's own code, $bare_rc, per the header's catch-all row)"
+fi
+rm -rf "$bare"
+
 # --- an unborn HEAD reports empty, not the literal string "HEAD" ---
 
 # `git rev-parse HEAD` prints its own argument straight back when it cannot
@@ -767,7 +908,7 @@ rm -rf "$outside"
 # currently points at it. This goes last: every assertion above it needs a
 # HEAD.
 git checkout -q --orphan unborn
-orphan_out="$("$GATE" --since "$scan_base")"
+orphan_out="$("$GATE" --since "$scan_base" || true)"
 assert_equals "$(gate_field "$orphan_out" sha)" "" \
     "an unborn HEAD reports sha= empty, not the literal string HEAD dressed as a commit"
 assert_equals "$(gate_field "$orphan_out" work_sha)" "" \

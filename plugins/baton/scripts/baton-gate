@@ -62,6 +62,23 @@
 # files reports changed_files=0, since there is nothing left on disk to
 # scan, not because nothing happened.
 #
+# placeholder_files is comma-joined and nothing escapes the separator, so a
+# path containing a comma is ambiguous in the output: a,b.js and c.js join
+# to "a,b.js,c.js", which reads as three files. Unlike a C-quoted path,
+# which the scan refuses outright, this one is reported and simply cannot
+# be split back apart with certainty. The count in placeholder_hits is
+# unaffected and remains authoritative -- read that, not the length of the
+# list. The format is left as it is deliberately: it is the format the
+# verdict file and baton-autopilot both already quote, and a comma in a
+# source path is rarer than the churn changing it would cause.
+#
+# .baton/gate-verify.log is this script's own output, not the wave's work.
+# It is excluded from the scan unconditionally, so it never reaches
+# placeholder_hits -- but it is a real untracked file, so in a repository
+# whose .gitignore has lost the .baton/ line it will turn tree_clean false.
+# That is the gate reporting its own artefact as work in flight, and the
+# fix is the gitignore line, not this script.
+#
 # sha and work_sha answer different questions, for the same reason
 # baton-observe reports both: sha is HEAD at the moment evidence was
 # gathered, the tree verify_cmd actually ran against; work_sha is the last
@@ -214,7 +231,7 @@ check_balanced_quotes() {
     case "$raw" in
         \"*\"|\'*\'|"") return 0 ;;
         \"*|\'*)
-            echo "baton-gate: $field's value in the constitution opens with a quote it never closes: $raw" >&2
+            echo "baton-gate: the value of $field in the constitution opens with a quote it never closes: $raw" >&2
             exit 3
             ;;
     esac
@@ -235,6 +252,26 @@ fi
 # prose, even as documentation, is refused until it is reworded.
 if grep -q 'REPLACE-WITH' "$constitution"; then
     echo "baton-gate: the constitution still carries an unfilled placeholder marker; it has not been ratified whatever its status field says" >&2
+    exit 3
+fi
+
+# Presence, here with the other exit-3 checks, and deliberately not down
+# beside the pattern's own quote and compile checks where it used to sit.
+# Those are exit 4 -- the gate unable to gather -- and this is exit 3, the
+# constitution not being fit to gate against, which is the group this file
+# already argues should be reported first. Left where it was, a constitution
+# missing this field AND naming an unrunnable verify_cmd reported only the
+# verify_cmd problem: the human fixes that, reruns, and only then learns
+# about the missing field, having paid two round trips for one reading of
+# one file.
+#
+# Absence is checked separately from an empty value, because they are
+# different callers asking different things -- /baton:init's template
+# always writes this field, so an absent one means someone removed it,
+# which does not carry the same "scan nothing, on purpose" meaning as
+# writing it empty does (see the empty-pattern comment in the scan loop).
+if ! printf '%s\n' "$frontmatter" | grep -q '^placeholder_patterns:'; then
+    echo "baton-gate: placeholder_patterns is not set in the constitution -- write placeholder_patterns: \"\" if scanning nothing is what is meant" >&2
     exit 3
 fi
 
@@ -313,21 +350,12 @@ if ! command -v "$verify_bin" >/dev/null 2>&1; then
     exit 4
 fi
 
-# placeholder_patterns is validated here too, before verify_cmd runs, for
-# the same reason --since is validated before it: a defect in the
+# The pattern's own syntax is checked here, still before verify_cmd runs,
+# for the same reason --since is validated before it: a defect in the
 # constitution is not something a test run can fix, so finding out only
 # after paying for one would repeat the mistake this file's header already
-# argues against making for the exit code.
-#
-# Absence is checked separately from an empty value, because they are
-# different callers asking different things -- /baton:init's template
-# always writes this field, so an absent one means someone removed it,
-# which does not carry the same "scan nothing, on purpose" meaning as
-# writing it empty does (see the empty-pattern comment in the loop below).
-if ! printf '%s\n' "$frontmatter" | grep -q '^placeholder_patterns:'; then
-    echo "baton-gate: placeholder_patterns is not set in the constitution -- write placeholder_patterns: \"\" if scanning nothing is what is meant" >&2
-    exit 3
-fi
+# argues against making for the exit code. Presence is checked much earlier,
+# with the other exit-3 constitution checks -- see the note there.
 patterns_raw="$(fm_field placeholder_patterns)"
 check_balanced_quotes placeholder_patterns "$patterns_raw"
 patterns="$(unquote "$patterns_raw")"
