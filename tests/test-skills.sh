@@ -26,6 +26,22 @@ done
 core="$(cat "$SKILLS/baton/SKILL.md")"
 assert_contains "$core" "Red Flags" "core skill lists the rationalisations to catch"
 assert_contains "$core" "git log" "core skill names git history as the event log"
+# A field on neither list is read as claimed -- evidence to preserve rather
+# than a grant to honour -- so the autopilot flag needs a kind of its own.
+assert_contains "$core" "Granted fields" "core skill classifies the autopilot flag as a third kind of field"
+assert_contains "$core" "toward more human involvement" \
+    "core skill states which direction the agent may move a granted field"
+# NOT `assert_contains "$core" "auto"`: `auto` is a substring of `autopilot`,
+# which this same change introduces, so the bare word goes green off the
+# granted-fields bullet and stays green with the gate paragraph deleted
+# outright. Pinned to the sentence carrying the distinction instead.
+assert_contains "$core" '`pass` is a second party saying so' \
+    "core skill distinguishes the gate column's auto from its pass"
+# An auto verdict is a claim -- more of one than pass, since no human checked
+# it. Left off the claimed list, it reads as repairable, which is the exact
+# act the divergence policy exists to forbid.
+assert_contains "$core" 'a gate marked `auto` or `pass`' \
+    "core skill counts an auto verdict among the claims it may never repair"
 
 checkpoint="$(cat "$SKILLS/baton-checkpoint/SKILL.md")"
 assert_contains "$checkpoint" "60 lines" "checkpoint skill states the state.md line cap"
