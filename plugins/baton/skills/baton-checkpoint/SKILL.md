@@ -313,6 +313,14 @@ closed until all three are in:
   for the reason step 3 gives;
 - **Current wave** → whatever is now in progress.
 
+The `gate` column stays `—`. It records a verdict `baton-verify` produced and
+filed under `docs/baton/gates/`, and until those exist nothing has produced
+one: the human's confirmation above stands in for the gate, it is not a gate
+result, and writing `pass` turns it into a claim with no record behind it —
+one a later resume, or a human deciding whether to trust this row, has nothing
+to check against. The row above the one you are filling in may already carry a
+value; that is the previous run's table, not an instruction.
+
 `closed_at_sha` is the only claim in this file anything checks mechanically:
 `baton-resume` and step 3 above both run `git merge-base --is-ancestor` against
 it for every wave marked `done`. Left at `—`, `done` is a claim with nothing

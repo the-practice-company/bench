@@ -275,16 +275,30 @@ precompact `work_sha` whose narrative fields describe an older repository:
 - describe the specifics in the `Suspect` line: which check failed, what each
   side said, which wave, and, for the ancestry check, whether it exited 1 or
   128;
+- leave `needs_human` alone. Stopping here feels like the run needs a human,
+  and it does — but that is what `suspect` already says, and step 4 treats
+  either flag, found set, as the whole job until resolved. Two flags raised
+  for one divergence reads, to the next session, as two things having gone
+  wrong. For the same reason, do not write a `Suspect` line that promises a
+  flag you are not setting;
 - report it, and stop. A suspect run does not continue to `Next action`;
   resolving the divergence is the next thing that happens here, and step 4
   says what resolving it means.
 
-Both cases go through one command:
+Both cases go through one command, and the message says which of the two it
+was — `baton: resume verified state` when this resume only repaired observed
+fields, `baton: resume found a divergence` when it raised `suspect`:
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/baton-write" \
     -m "baton: resume verified state" docs/baton/state.md < .baton/resume-state.md
 ```
+
+That is not decoration. `git log docs/baton/state.md` is the event log, and it
+is what someone scanning weeks of a run reads instead of opening every
+revision. A commit that raised the flag, filed under the message for one that
+found nothing wrong, hides the single entry in that log most worth stopping
+at.
 
 Pipe in the *whole file* — frontmatter, Goal, Operating mode, Non-negotiables,
 the Waves table, Now, Pointers — everything you read in step 1, byte for byte,
