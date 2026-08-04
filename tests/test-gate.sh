@@ -55,8 +55,22 @@ write_constitution "true"
 printf 'REPLACE-WITH-SOMETHING\n' >> docs/baton/constitution.md
 assert_exit_code 3 "refuses a constitution with an unfilled placeholder marker" "$GATE" --since "$base"
 
+# An unterminated frontmatter block must not promote the prose to
+# frontmatter. Failing open here would let a "status: ratified" written in
+# a paragraph gate a run nobody ratified.
+write_constitution "true"
+sed -i.bak '7s/^---$//' docs/baton/constitution.md
+rm -f docs/baton/constitution.md.bak
+assert_exit_code 3 "refuses a constitution whose frontmatter was never closed" "$GATE" --since "$base"
+
 # --- a SHA that is not a commit is a usage error, not a git crash ---
 write_constitution "true"
 assert_exit_code 64 "refuses a --since that is not a commit" "$GATE" --since "not-a-sha"
+
+# Every assertion above is a refusal. Without this one the guards could all
+# be correct and the success path still never run -- and Tasks 2-4 append
+# their work below it, where nothing would reach it.
+write_constitution "true"
+assert_exit_code 0 "a well-formed invocation passes every guard" "$GATE" --since "$base"
 
 finish
