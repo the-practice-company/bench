@@ -20,7 +20,15 @@ gate_field() {
     printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -1
 }
 
-# Write a ratified constitution carrying the given verify_cmd.
+# Write a ratified constitution carrying the given verify_cmd and, optionally,
+# placeholder_patterns. The dash form below (not colon-dash) is deliberate:
+# $2 unset (the caller didn't pass a second argument at all) and $2="" (the
+# caller explicitly passed an empty string, to test an empty pattern list)
+# are different callers asking different things, and colon-dash cannot tell
+# them apart -- it treats "set to empty" the same as "unset" and substitutes
+# the default either way, which would make write_constitution "true" ""
+# silently write "TODO|FIXME" instead of the empty patterns the caller
+# asked for.
 write_constitution() {
     mkdir -p docs/baton
     cat > docs/baton/constitution.md <<EOF
@@ -29,7 +37,7 @@ schema: baton/constitution/v1
 run_id: gate-fixture
 status: ratified
 verify_cmd: "$1"
-placeholder_patterns: "${2:-TODO|FIXME}"
+placeholder_patterns: "${2-TODO|FIXME}"
 ---
 
 # Gate fixture
@@ -176,5 +184,56 @@ rm -rf .baton
 touch .baton
 assert_exit_code 4 "refuses when .baton exists as a file, not a directory" "$GATE" --since "$base"
 rm -f .baton
+
+# --- the placeholder scan runs over what the wave touched ---
+write_constitution "true"
+git add docs/baton/constitution.md
+git commit -q -m "baton: constitution"
+
+# A marker that predates --since, in a file nothing has touched since,
+# is not this wave's business.
+printf 'const old = 1; // TODO: from before the wave\n' > old.js
+git add old.js
+git commit -q -m "old work with a marker"
+scan_base="$(git rev-parse HEAD)"
+
+out="$("$GATE" --since "$scan_base")"
+assert_contains "$out" "placeholder_hits=0" "a marker outside the wave's diff is not counted"
+
+printf 'export function renew() { /* TODO: finish */ }\n' > new.js
+git add new.js
+git commit -q -m "wave work with a marker"
+out="$("$GATE" --since "$scan_base")"
+assert_contains "$out" "placeholder_hits=1" "a marker in a file the wave touched is counted"
+assert_contains "$out" "placeholder_files=new.js" "the evidence names the file the marker is in"
+assert_contains "$out" "changed_files=1" "the evidence counts the files considered"
+
+# An uncommitted file is the most common shape of in-flight work and must
+# be seen -- baton-observe already reports it, this must not filter it out.
+printf 'const x = 1; // FIXME\n' > uncommitted.js
+out="$("$GATE" --since "$scan_base")"
+assert_contains "$out" "placeholder_hits=2" "an uncommitted file is scanned too"
+rm -f uncommitted.js
+
+# baton's own files are excluded: a journal entry describing a TODO, or a
+# gate verdict quoting one, is prose about the work, not a stub in it.
+mkdir -p docs/baton/journal
+printf 'A decision about the TODO markers we allow.\n' > docs/baton/journal/0001-note.md
+out="$("$GATE" --since "$scan_base")"
+assert_contains "$out" "placeholder_hits=1" "docs/baton/ is excluded from the scan"
+rm -f docs/baton/journal/0001-note.md
+
+# An empty pattern list means no scan, not a pattern that matches
+# everything: grep -E '' matches every line.
+write_constitution "true" ""
+out="$("$GATE" --since "$scan_base")"
+assert_contains "$out" "placeholder_hits=0" "an empty placeholder_patterns scans nothing rather than matching everything"
+
+# --- invoked from a subdirectory, same answer ---
+write_constitution "true"
+mkdir -p deep/nested
+out_root="$("$GATE" --since "$scan_base")"
+out_deep="$(cd deep/nested && "$GATE" --since "$scan_base")"
+assert_equals "$out_deep" "$out_root" "invoked from a subdirectory it reports the same evidence"
 
 finish

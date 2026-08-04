@@ -25,7 +25,30 @@
 #       script's own logic, and means the constitution could not be read
 #       or the repository could not be queried -- see baton-observe, which
 #       carries the same catch-all for the same reason.
+#
+# Known limitation, deliberate: the scan reads whole files that changed
+# since --since, not only the changed hunks. A marker that predates the
+# wave, sitting in a file the wave touched for an unrelated reason, is
+# counted. That is the reading that fails safe -- a file the wave edited is
+# a file the wave is answerable for -- and hunk-level attribution would
+# make the gate depend on diff context size, which is not a property of
+# the work.
 set -euo pipefail
+
+# Captured before anything below changes directory -- see the placeholder
+# scan's use of it, which shells out to the sibling baton-observe. $0 is
+# relative whenever the caller invokes this by a relative path (the
+# ordinary shape from a project's own scripts, or from a subdirectory:
+# `../../plugins/baton/scripts/baton-gate`), and `cd "$repo_root"` below
+# moves the process to a different directory before that scan runs. A
+# `dirname "$0"` computed after the cd would resolve the SAME relative
+# string against the NEW cwd, landing on whatever `../../plugins/...`
+# happens to mean from repo_root rather than from where the caller stood --
+# the same subdirectory-invocation bug baton-write, baton-lock,
+# baton-journal and baton-observe were each fixed for once already, just
+# one script over: it is $0 here, not a hardcoded docs/baton/ path, that
+# stops meaning what the caller meant once cwd moves.
+script_dir="$(cd "$(dirname "$0")" && pwd)"
 
 usage() { echo "usage: baton-gate --since <SHA>" >&2; exit 64; }
 
@@ -222,7 +245,56 @@ verify_exit=0
 # avoid -- it produces neither a closed wave nor a named stopping point.
 bash -c "$verify_cmd" < /dev/null > "$verify_log" 2>&1 || verify_exit=$?
 
+patterns="$(unquote "$(fm_field placeholder_patterns)")"
+
+changed="$("$script_dir/baton-observe" --changed-since "$since")"
+
+placeholder_hits=0
+placeholder_files=""
+changed_files=0
+while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    # Deleted paths still appear in the diff; there is nothing to scan.
+    [ -f "$f" ] || continue
+    # baton's own files describe the work rather than being it. A journal
+    # entry that says "we agreed to allow TODO here" is not a stub, and a
+    # gate verdict that quotes one is evidence about a scan, not a subject
+    # of it. This is the same exclusion baton-observe applies for work_sha.
+    #
+    # .baton/ is included too, and for a different reason: it is not the
+    # wave's work at all, it is this script's own output. .baton/gate-
+    # verify.log is written by the run just above, before this loop ever
+    # sees it, and baton-observe's --changed-since lists untracked files --
+    # so without this exclusion the gate would count its own log as
+    # evidence of work. /baton:init gitignores .baton/ in a real
+    # repository, which would hide this anyway, but the fixture repo this
+    # test suite builds has no .gitignore, so the miscount is real there --
+    # and the fix has to hold with or without a .gitignore: the log is an
+    # artefact of measuring, not a thing measured, and the evidence must
+    # not depend on whether the repository happened to gitignore it.
+    case "$f" in
+        docs/baton/*) continue ;;
+        .baton/*) continue ;;
+    esac
+    changed_files=$((changed_files + 1))
+    # An empty pattern list is a legitimate choice by the human who owns
+    # the constitution. It must mean "scan nothing" -- grep -E '' matches
+    # every line, so treating it as a pattern would fail every gate.
+    [ -n "$patterns" ] || continue
+    if grep -Eq -- "$patterns" "$f" 2>/dev/null; then
+        placeholder_hits=$((placeholder_hits + 1))
+        placeholder_files="${placeholder_files:+$placeholder_files,}$f"
+    fi
+done <<EOF
+$changed
+EOF
+
 printf 'verify_cmd=%s\n' "$verify_cmd"
 printf 'verify_exit=%s\n' "$verify_exit"
 printf 'verify_log=%s\n' "$verify_log"
+printf 'placeholder_hits=%s\n' "$placeholder_hits"
+printf 'placeholder_files=%s\n' "$placeholder_files"
+printf 'changed_files=%s\n' "$changed_files"
+printf 'since=%s\n' "$since"
+printf 'sha=%s\n' "$(git rev-parse HEAD)"
 exit 0
