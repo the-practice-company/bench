@@ -73,6 +73,34 @@ assert_contains "$resume" "128" "resume skill explains the merge-base exit-128 c
 assert_contains "$resume" "fatal:" "resume skill explains the merge-base fatal: message"
 assert_contains "$resume" "is an ancestor of \`HEAD\`. The claim holds." "resume skill explains merge-base exit 0"
 
+# The grant is useless if the session that wakes up after a compaction does
+# not know it exists. And it is dangerous if a session started to check one
+# thing acts on it.
+assert_contains "$resume" "autopilot" "resume reads the autopilot grant"
+
+# Both source rows are pinned to the row, not to the bare word. "compact"
+# occurs 19 times in this file already -- the description's "context
+# compaction", the dot graph's precompact-facts nodes, hooks/pre-compact,
+# step 3's prose -- so a bare-word assertion passes against the file as it
+# stood before this feature existed, and would go on passing after the whole
+# section had been deleted. "resume" is the same, for the obvious reason.
+assert_contains "$resume" '| `compact`, `resume` | Continue.' \
+    "resume names the compact source, where it continues silently"
+assert_contains "$resume" '| `startup`, `clear`, `fork` | Do not start work.' \
+    "resume names the startup source, where it waits"
+assert_contains "$resume" "/baton:continue" \
+    "resume tells the human the word that restarts it"
+# The row that decides what happens when the hook could not tell. It resolves
+# to the waiting side, and that asymmetry is the whole safety argument: one
+# command lost, against an hour of unattended work nobody authorised.
+assert_contains "$resume" 'Read it as `startup` and wait' \
+    "resume treats an undetermined session source as the waiting case"
+# A grant to work without a human is not a grant to work from an unverified
+# state, and a section arriving after the divergence checks is exactly where
+# that gets read as permission to skip them.
+assert_contains "$resume" "not a grant to work from an unverified state" \
+    "resume keeps the divergence checks in force under the autopilot"
+
 autopilot="$(cat "$SKILLS/baton-autopilot/SKILL.md")"
 
 # The asymmetry is the whole safety story. Stated once in prose, it is the

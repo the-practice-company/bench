@@ -73,7 +73,7 @@ Then read `docs/baton/constitution.md` first, `docs/baton/state.md` second.
 Three things from it, none optional: the goal, your operating mode, the
 non-negotiables. Without the constraints, a run correctly serves the current
 request while violating the original brief. The operating mode is who you are
-for the rest of the session, and step 7 means it literally: orchestrator means
+for the rest of the session, and step 8 means it literally: orchestrator means
 you delegate rather than implement here.
 
 Check `status` in its frontmatter before acting on any of it: anything other
@@ -327,8 +327,52 @@ manufacturing a journal entry for an overlap that never happened, noise in the
 one log that has to stay signal. On the clean path, keep the lease: you are
 about to work under it.
 
-**7. Execute `Next action`, in the operating mode you restored in step 1.**
-Reached only when step 6 found nothing that stops the run.
+**7. Pick up the autopilot grant.** Read `autopilot` from `state.md`'s
+frontmatter. If it is `off`, nothing here applies: this is an ordinary resume,
+a human is expected, and step 8 runs as written.
+
+If it is anything else, this run was handed over — the journal entry named by
+`autopilot_grant` is the handover, and it records what the human granted. What
+happens next depends on how this session started, which the `SessionStart` hook
+injects as a `Session source:` line in the context you woke up with:
+
+| Session source | What to do |
+|---|---|
+| `compact`, `resume` | Continue. Same session, same grant, and the human is still away. Say one line about where the run stands, then carry step 8 out under the `baton-autopilot` skill. |
+| `startup`, `clear`, `fork` | Do not start work. Report that the autopilot is on, name the scope and the granting entry, and wait. |
+| `unknown` | Read it as `startup` and wait. |
+
+The second row is not caution for its own sake. A session started to check one
+thing is not a session that agreed to an hour of unattended work, and the grant
+cannot tell the two apart — only the human can, by typing `/baton:continue`.
+
+The third row is that same rule under uncertainty, and the asymmetry is the
+point: waiting when you should have continued costs the human one command,
+while continuing when you should have waited is the failure the row above
+exists to prevent. The hook writes `unknown` when it could not determine the
+source, never as a guess, so `unknown` is a fact about the hook and not a hint
+about the session.
+
+Do not reconstruct the source from anything else. `.baton/precompact-facts` is
+the tempting one and it is wrong: a session that died after a compaction and
+before step 3 deleted the file leaves it genuinely un-spent, so a fresh session
+the next morning reads someone else's compaction as its own and starts work
+nobody asked for. That is the exact outcome this step exists to prevent,
+reached through the mechanism meant to enforce it.
+
+This step gates step 8; it does not sit beside it. `/baton:continue` says the
+same thing from the other side — it runs this skill and deliberately stops it
+before its last step, because resume executes `Next action` unconditionally
+once verification comes back clean, and carrying an unattended run onward is
+the human's decision to make.
+
+Everything above still runs. The divergence checks are not skipped because the
+run is on the autopilot: a grant to work without a human is simply
+not a grant to work from an unverified state.
+
+**8. Execute `Next action`, in the operating mode you restored in step 1.**
+Reached only when step 6 found nothing that stops the run, and step 7 did not
+park the run for a human.
 
 Exactly what it says — but that governs the work, not who does it. If step 1's
 operating mode is orchestrator, delegating `Next action` to a subagent or a
