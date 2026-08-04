@@ -37,4 +37,15 @@ assert_not_contains "$(cat "$MARKETPLACE")" 'obra/superpowers' \
 assert_contains "$(cat "$REPO_ROOT/README.md")" 'superpowers@claude-plugins-official' \
     "README points at the pinned official superpowers, not a re-export"
 
+# baton-gate is reached by path from the autopilot skill, not through any
+# manifest entry, so nothing else in this suite would notice if it stopped
+# shipping or lost its executable bit -- test-gate.sh runs it from the
+# working tree, where the bit is whatever the checkout happens to have.
+assert_file_exists "$REPO_ROOT/plugins/baton/scripts/baton-gate" "baton-gate ships with the plugin"
+if [ -x "$REPO_ROOT/plugins/baton/scripts/baton-gate" ]; then
+    pass "baton-gate is executable"
+else
+    fail "baton-gate is executable"
+fi
+
 finish

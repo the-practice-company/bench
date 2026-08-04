@@ -55,6 +55,17 @@ EOF
 }
 
 make_fixture_repo
+
+# .baton/ gitignored before anything else happens, as /baton:init writes it
+# into a real repository and as the cold-start fixtures build it. The gate
+# writes .baton/gate-verify.log on every run, so without this the tree is
+# dirty from the first invocation onwards and the tree_clean assertions at
+# the bottom of this file would be reporting on the gate's own scratch
+# output rather than on the wave's work. make_fixture_repo is shared with
+# every other test file and is deliberately not changed for this.
+printf '.baton/\n' > .gitignore
+git add .gitignore
+git commit -q -m "baton: gitignore .baton/"
 base="$(git rev-parse HEAD)"
 
 # --- usage ---
@@ -227,7 +238,7 @@ assert_contains "$out" "placeholder_files=new.js,uncommitted.js" \
 # sequence, not merely that each key is present somewhere in the output.
 key_order="$(printf '%s\n' "$out" | sed -n 's/^\([a-z_]*\)=.*/\1/p' | paste -sd, -)"
 assert_equals "$key_order" \
-    "verify_cmd,verify_exit,verify_log,placeholder_hits,placeholder_files,changed_files,since,sha,work_sha" \
+    "verify_cmd,verify_exit,verify_log,placeholder_hits,placeholder_files,changed_files,since,sha,work_sha,tree_clean" \
     "the verdict's keys appear in exactly this order"
 rm -f uncommitted.js
 
@@ -436,5 +447,38 @@ sha_out="$("$GATE" --since "$sha_check_base")"
 assert_contains "$sha_out" "sha=$head_after_checkpoint" "sha is HEAD, the tree verify_cmd actually ran against"
 assert_contains "$sha_out" "work_sha=$real_work_sha" "work_sha is the last commit outside docs/baton/, not HEAD -- they differ across a checkpoint commit"
 rm -f docs/baton/journal/sha-check.md sha-work.js
+
+# --- tree_clean travels with the evidence ---
+
+# A verdict filed against a dirty tree is a verdict about something that was
+# never committed, so the agent needs this fact in the same breath as the
+# rest, not from a second call.
+#
+# The tree is settled by naming the four paths this file left deleted, not
+# with `git add -A`. -A would also commit .baton/gate-verify.log -- the
+# gate's own output, written by every run above this line. Committed once,
+# it makes tree_clean=true below depend on the next run's verify_cmd
+# happening to write the same bytes: today's `true` writes an empty log and
+# the assertion passes by luck, and the first verify_cmd here that prints
+# anything would turn this into a failure about the fixture rather than
+# about the gate. .baton/ is gitignored at the top of this file instead,
+# which is what /baton:init writes into a real repository.
+git commit -q -m "settle the tree" -- \
+    crlf-marker.js docs/baton/journal/sha-check.md has-marker.js sha-work.js
+out="$("$GATE" --since "$scan_base")"
+assert_contains "$out" "tree_clean=true" "reports a clean tree"
+printf 'scratch\n' > scratch.txt
+out="$("$GATE" --since "$scan_base")"
+assert_contains "$out" "tree_clean=false" "reports a dirty tree"
+rm -f scratch.txt
+
+# --- not a git repository ---
+# The exit code the header table spends on this has never been asserted; a
+# subshell cd is used rather than `env -C`, which BSD env does not have.
+outside="$(mktemp -d)"
+rc=0
+( cd "$outside" && "$GATE" --since "$scan_base" ) >/dev/null 2>&1 || rc=$?
+assert_equals "$rc" "1" "refuses to run outside a git repository"
+rm -rf "$outside"
 
 finish

@@ -7,7 +7,7 @@ PLUGIN="$REPO_ROOT/plugins/baton"
 
 # Every mechanic must be reachable without any hook running. Hooks are
 # convenience; the files are authoritative.
-for s in baton-observe baton-write baton-lock baton-journal; do
+for s in baton-observe baton-write baton-lock baton-journal baton-gate; do
     if [ -x "$PLUGIN/scripts/$s" ]; then
         pass "$s is executable and callable directly"
     else
@@ -15,8 +15,14 @@ for s in baton-observe baton-write baton-lock baton-journal; do
     fi
 done
 
-# No script may depend on being launched by a hook.
-for s in baton-observe baton-write baton-lock baton-journal; do
+# No script may depend on being launched by a hook. baton-gate is in this
+# list too, though no hook has ever launched it: it resolves its siblings
+# from $0 rather than from CLAUDE_PLUGIN_ROOT, and this is what keeps that
+# from being quietly rewritten later into the one form that would make the
+# gate unrunnable outside a plugin install. Both loops read the file -- the
+# mode bit above, the source text here -- so neither is affected by the
+# gate's needing a constitution and a --since before it will do anything.
+for s in baton-observe baton-write baton-lock baton-journal baton-gate; do
     body="$(cat "$PLUGIN/scripts/$s")"
     assert_not_contains "$body" "CLAUDE_PLUGIN_ROOT" "$s does not require the plugin-root variable"
     assert_not_contains "$body" "precompact-facts" "$s does not require hook output"

@@ -51,7 +51,10 @@
 # gathered, the tree verify_cmd actually ran against; work_sha is the last
 # commit outside docs/baton/, the point the next wave's --since should
 # resolve from, since a checkpoint commit moves sha without moving the
-# work.
+# work. tree_clean rides along with them because it qualifies sha: a
+# verdict filed against a dirty tree is a verdict about a tree no sha
+# names, and asking for that fact in a second call would be asking about a
+# different moment than the one the rest of the block describes.
 set -euo pipefail
 
 # Captured before anything below changes directory -- see the placeholder
@@ -371,6 +374,14 @@ observed="$("$script_dir/baton-observe")" || {
 }
 sha="$(printf '%s\n' "$observed" | sed -n 's/^sha=//p')"
 work_sha="$(printf '%s\n' "$observed" | sed -n 's/^work_sha=//p')"
+# Taken from the call just made, not recomputed with a `git status` of this
+# script's own: baton-observe already passes -uall (defeating a repository
+# with status.showUntrackedFiles=no, where a whole directory of new work
+# reports as a clean tree) and core.quotePath=false, both of which have
+# hidden a dirty tree from this suite before. A third invocation would also
+# be a third moment in time, which is the thing the ordering above exists
+# to keep to a minimum.
+tree_clean="$(printf '%s\n' "$observed" | sed -n 's/^tree_clean=//p')"
 
 placeholder_hits=0
 placeholder_files=""
@@ -406,9 +417,11 @@ while IFS= read -r f; do
     # output, not the wave's work -- .baton/gate-verify.log is written by
     # the run just above, before this loop ever sees it, and without this
     # exclusion the gate would count its own log as evidence of work. This
-    # holds regardless of whether the repository gitignores .baton/ (a real
-    # /baton:init'd one does; this suite's fixture does not): the log is an
-    # artefact of measuring, not a thing measured.
+    # holds regardless of whether the repository gitignores .baton/, which
+    # a /baton:init'd one and every fixture here do: the log is an artefact
+    # of measuring, not a thing measured. The exclusion is kept even so --
+    # a repository that dropped the gitignore line would otherwise start
+    # counting the log, and tree_clean below would go false on it too.
     case "$f" in
         docs/baton/*) continue ;;
         .baton/*) continue ;;
@@ -453,4 +466,5 @@ printf 'changed_files=%s\n' "$changed_files"
 printf 'since=%s\n' "$since_sha"
 printf 'sha=%s\n' "$sha"
 printf 'work_sha=%s\n' "$work_sha"
+printf 'tree_clean=%s\n' "$tree_clean"
 exit 0
