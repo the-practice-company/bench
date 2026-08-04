@@ -131,4 +131,31 @@ if ! git rev-parse --verify -q "${since}^{commit}" >/dev/null 2>&1; then
     exit 64
 fi
 
+verify_cmd="$(unquote "$(fm_field verify_cmd)")"
+if [ -z "$verify_cmd" ]; then
+    echo "baton-gate: verify_cmd is empty in the constitution: there is nothing to run, so there is no evidence to gather" >&2
+    exit 4
+fi
+
+# The first word only. verify_cmd is a shell line, so this misses the case
+# where the missing binary is the second command in a pipeline -- that one
+# surfaces as a non-zero verify_exit instead, which is the correct reading
+# anyway: the suite ran and did not pass.
+verify_bin="${verify_cmd%% *}"
+if ! command -v "$verify_bin" >/dev/null 2>&1; then
+    echo "baton-gate: verify_cmd names '$verify_bin', which is not runnable here" >&2
+    exit 4
+fi
+
+# .baton/ is gitignored by every /baton:init'd repository, which is the
+# point: a gate run that left an untracked log behind would show up as a
+# dirty tree at the next checkpoint and read as work in flight.
+mkdir -p .baton
+verify_log=".baton/gate-verify.log"
+verify_exit=0
+sh -c "$verify_cmd" > "$verify_log" 2>&1 || verify_exit=$?
+
+printf 'verify_cmd=%s\n' "$verify_cmd"
+printf 'verify_exit=%s\n' "$verify_exit"
+printf 'verify_log=%s\n' "$verify_log"
 exit 0

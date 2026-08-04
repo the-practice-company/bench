@@ -73,4 +73,36 @@ assert_exit_code 64 "refuses a --since that is not a commit" "$GATE" --since "no
 write_constitution "true"
 assert_exit_code 0 "a well-formed invocation passes every guard" "$GATE" --since "$base"
 
+# --- verify_cmd: the evidence, and the exit code that is NOT the evidence ---
+write_constitution "true"
+out="$("$GATE" --since "$base")"
+assert_contains "$out" "verify_exit=0" "a green verify_cmd reports verify_exit=0"
+assert_contains "$out" "verify_cmd=true" "the evidence names the command that was run"
+assert_exit_code 0 "a green verify_cmd exits 0" "$GATE" --since "$base"
+
+write_constitution "false"
+out="$("$GATE" --since "$base")"
+assert_contains "$out" "verify_exit=1" "a red verify_cmd reports its exit code"
+assert_exit_code 0 "a RED verify_cmd still exits 0 -- the script reports, it does not judge" \
+    "$GATE" --since "$base"
+
+# The log is where the agent reads what actually broke, so it has to exist
+# and hold the command's own output.
+write_constitution "echo boom-from-the-verify-command; exit 3"
+out="$("$GATE" --since "$base")"
+assert_contains "$out" "verify_exit=3" "the exact non-zero exit code is passed through, not flattened to 1"
+assert_file_exists ".baton/gate-verify.log" "the command's output is captured to a log"
+assert_contains "$(cat .baton/gate-verify.log)" "boom-from-the-verify-command" \
+    "the log holds the command's own output"
+
+# .baton/ is gitignored in a real run, which is why the log goes there: a
+# gate that dirtied the tree would trip the next checkpoint's tree_clean.
+assert_contains "$out" "verify_log=.baton/gate-verify.log" "the evidence names where the log went"
+
+# A command that cannot be run at all is the script failing, not the gate.
+write_constitution ""
+assert_exit_code 4 "refuses an empty verify_cmd" "$GATE" --since "$base"
+write_constitution "definitely-not-a-real-command-9d3f"
+assert_exit_code 4 "refuses a verify_cmd whose command does not exist" "$GATE" --since "$base"
+
 finish
