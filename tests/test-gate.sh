@@ -105,6 +105,16 @@ write_constitution "[[ 1 == 1 ]]"
 out="$("$GATE" --since "$base")"
 assert_equals "$(gate_field "$out" verify_exit)" "0" "verify_cmd runs under bash, the shell whose command -v vouched for it"
 
+# Stdin is redirected from /dev/null, so a verify_cmd that reads it gets EOF
+# instead of whatever the caller happened to be holding. Feeding the gate a
+# pipe here is what makes this discriminating, with no background process
+# and no timing involved: without the redirect, cat swallows the line below
+# and it lands in the log.
+write_constitution "cat"
+printf 'SHOULD-NOT-REACH-THE-VERIFY-COMMAND\n' | "$GATE" --since "$base" > /dev/null
+assert_not_contains "$(cat .baton/gate-verify.log)" "SHOULD-NOT-REACH-THE-VERIFY-COMMAND" \
+    "verify_cmd reads from /dev/null, not from whatever stdin the caller had open"
+
 # The log is where the agent reads what actually broke, so it has to exist
 # and hold the command's own output.
 write_constitution "echo boom-from-the-verify-command; exit 3"
