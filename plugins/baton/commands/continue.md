@@ -28,10 +28,15 @@ taken, if `suspect` or `needs_human` was already set on disk. Nothing here is
 skipped because the run "was fine an hour ago" — that is precisely the belief
 `baton-resume` exists to check.
 
-Do not let it run its own last step. `baton-resume` executes `Next action`
-unconditionally once verification comes back clean; carrying the run on
-without a grant is exactly what this command exists to gate, so treat resume
-as finished once it has written what it found, and continue below instead.
+Do not let it run past that point. Resume now has its own gate right after —
+whether to carry the run onward — but it decides that by reading the session
+source this conversation started from: an automatic pickup, a compaction or a
+plain resume, continues; a fresh start, a `/clear`, or a fork waits for a
+human. It has no way to see that a human is sitting here having just typed
+`/baton:continue`, which is exactly the fact that should override a "wait" —
+so treat resume as finished once it has written what it found, and do the
+rest — reading the grant, deciding whether to carry on — here instead, where
+that fact is available.
 
 ## 2. Stop if resume already stopped
 
