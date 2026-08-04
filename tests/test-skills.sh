@@ -33,8 +33,27 @@ assert_contains "$checkpoint" "60 lines" "checkpoint skill states the state.md l
 # that list is not neutral: the row above the one being written already
 # carries a value, so an agent with nothing else to go on copies it, and
 # writes a verdict no gate produced.
-assert_contains "$checkpoint" 'The `gate` column stays' \
-    "checkpoint skill says what the gate column holds while no gate exists"
+assert_contains "$checkpoint" 'The `gate` column takes one of three values' \
+    "checkpoint skill says what the gate column holds and who fills it"
+# There are now two ways a wave closes, and the dangerous misreading is not
+# that an agent misses the second one -- it is that it applies the second one
+# whenever a human is slow to answer. So what is pinned is the clause that
+# gates it on the field, not the mention of the field.
+assert_contains "$checkpoint" "autopilot" "checkpoint's closing rule knows about the second path"
+assert_contains "$checkpoint" 'While `autopilot` reads `off`' \
+    "checkpoint gates the second path on the flag, not on whether a human happens to be replying"
+assert_contains "$checkpoint" '`auto`, not `pass`' \
+    "checkpoint says which value the autopilot path writes into the gate column"
+# Raised in task 6: the autopilot skill requires a blocked entry when a wave
+# cannot close, and step 5 is the only place any entry's shape is written down.
+assert_contains "$checkpoint" 'type: blocked' \
+    "checkpoint documents the blocked entry the autopilot path requires"
+# The gate column used to stay `—`, so closing was three edits and the column
+# was not one of them. Now both paths write it. A stale count here does not
+# fail loudly: it closes the wave and leaves the cell empty, which every
+# reader downstream is entitled to read as "nothing closed this".
+assert_contains "$checkpoint" "four edits to this checkpoint's draft" \
+    "checkpoint counts the gate column among the edits that close a wave"
 assert_contains "$checkpoint" "Read the current state, whole" "checkpoint skill instructs reading the current state file first"
 assert_contains "$checkpoint" "baton-lock" "checkpoint skill mentions the lock script"
 assert_contains "$checkpoint" "release" "checkpoint skill covers releasing the lease"
