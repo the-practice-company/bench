@@ -63,22 +63,38 @@ next="$(sed -n 's/^- \*\*Next action:\*\* *//p' "$state" | head -1)"
 # schema example) would be picked up too. Harmless in practice since
 # head -1 always prefers the frontmatter occurrence -- frontmatter is
 # always first in the file -- but there is no reason to rely on that.
-frontmatter="$(sed -n '/^---$/,/^---$/p' "$state")"
+#
+# tr -d '\r' first: state.md is agent-written, and a CRLF-authored file has
+# "---\r" for its delimiter lines, which "^---$" does not match -- the
+# entire frontmatter block, not just one field, would silently disappear.
+# That failure is silent in exactly the direction that looks like success:
+# a genuine "autopilot: off" file and a file whose block match is simply
+# broken both produce no Autopilot line, for entirely different reasons.
+frontmatter="$(tr -d '\r' < "$state" | sed -n '/^---$/,/^---$/p')"
 autopilot="$(printf '%s\n' "$frontmatter" | sed -n 's/^autopilot: *//p' | head -1)"
 autopilot_grant="$(printf '%s\n' "$frontmatter" | sed -n 's/^autopilot_grant: *//p' | head -1)"
 
 # state.md is written by an agent, not validated input, so the byte-level
-# shape of "off" drifts: a trailing space, a quoted scalar, a case variant,
-# a CRLF line ending. The dangerous direction is a false positive -- an
-# unrecognized value falls through to "announce it", and announcing a grant
-# that was never made tells a session it may act unattended when the human
-# set it to off. Trim, unquote, and fold case before deciding.
-autopilot_norm="${autopilot%$'\r'}"
-autopilot_norm="$(printf '%s' "$autopilot_norm" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-case "$autopilot_norm" in
-    \"*\") autopilot_norm="${autopilot_norm#\"}"; autopilot_norm="${autopilot_norm%\"}" ;;
-    \'*\') autopilot_norm="${autopilot_norm#\'}"; autopilot_norm="${autopilot_norm%\'}" ;;
-esac
+# shape of a scalar drifts: a trailing space, a quoted string. Shared by
+# autopilot (where the dangerous direction is a false positive -- an
+# unrecognized value falls through to "announce it", and announcing a
+# grant that was never made tells a session it may act unattended when the
+# human set it to off) and by autopilot_grant (displayed verbatim: the
+# line is what a compacted session reads to know which entry authorised
+# this, and a stray quote or trailing space would make the id it prints
+# not the id a human wrote).
+trim_unquote() {
+    local v
+    v="$(printf '%s' "$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    case "$v" in
+        \"*\") v="${v#\"}"; v="${v%\"}" ;;
+        \'*\') v="${v#\'}"; v="${v%\'}" ;;
+    esac
+    printf '%s' "$v"
+}
+
+autopilot_norm="$(trim_unquote "$autopilot")"
+autopilot_grant_norm="$(trim_unquote "$autopilot_grant")"
 
 # Only when it is on, and on its own line. An "Autopilot: off" line in
 # every injection is noise in the one block that has to stay short enough
@@ -89,7 +105,7 @@ if [ -n "$autopilot_norm" ]; then
         [Oo][Ff][Ff]) ;;
         *)
             autopilot_line="
-Autopilot: ${autopilot_norm} (granted ${autopilot_grant}) — this run continues without a human present. Check the Session source line above before acting on it: see baton-resume."
+Autopilot: ${autopilot_norm} (granted ${autopilot_grant_norm}) — this run continues without a human present. Check the Session source line above before acting on it: see baton-resume."
             ;;
     esac
 fi

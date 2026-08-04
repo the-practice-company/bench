@@ -325,6 +325,48 @@ assert_not_contains "$out" "Autopilot:" "session-start treats a CRLF-terminated 
 assert_valid_json "crlf-off-output.json" "a CRLF-terminated state.md still leaves valid JSON"
 rm -f crlf-off-output.json
 
+# The CRLF "off" case above staying silent is not, on its own, proof that
+# CRLF parses correctly -- a block match broken by "---\r" not matching
+# "^---$" would ALSO stay silent, for the wrong reason. Prove the block
+# match survives CRLF by checking the "on" case: a real grant in a fully
+# CRLF-terminated file must still show up.
+printf -- '---\r\nschema: baton/state/v1\r\nautopilot: all\r\nautopilot_grant: DEC-0007\r\n---\r\n\r\n# State\r\n\r\n**Goal:** g\r\n**Operating mode:** m\r\n**Non-negotiables:** n\r\n\r\n## Now\r\n- **Next action:** a\r\n' > docs/baton/state.md
+out="$("$HOOKS/session-start" < /dev/null)"
+assert_contains "$out" "Autopilot: all" \
+    "a CRLF-terminated file with a real grant still shows the autopilot line -- proves the frontmatter block match survives CRLF rather than happening to stay silent"
+assert_contains "$out" "granted DEC-0007)" \
+    "a CRLF-terminated file's grant id is displayed without a trailing CR"
+"$HOOKS/session-start" < /dev/null > crlf-on-output.json
+assert_valid_json "crlf-on-output.json" "a CRLF-terminated file with a real grant still leaves valid JSON"
+rm -f crlf-on-output.json
+
+# autopilot_grant needs the same normalization as autopilot: it is what a
+# compacted session reads to know which entry authorised the run, and a
+# trailing space or a quoted scalar would make the id printed not the id a
+# human wrote.
+printf -- '---\nschema: baton/state/v1\nautopilot: all\nautopilot_grant: DEC-0007 \n---\n\n# State\n\n**Goal:** g\n**Operating mode:** m\n**Non-negotiables:** n\n\n## Now\n- **Next action:** a\n' > docs/baton/state.md
+out="$("$HOOKS/session-start" < /dev/null)"
+assert_contains "$out" "granted DEC-0007)" "session-start trims a trailing space from the displayed grant id"
+
+cat > docs/baton/state.md <<'EOF'
+---
+schema: baton/state/v1
+autopilot: all
+autopilot_grant: "DEC-0007"
+---
+
+# State
+
+**Goal:** g
+**Operating mode:** m
+**Non-negotiables:** n
+
+## Now
+- **Next action:** a
+EOF
+out="$("$HOOKS/session-start" < /dev/null)"
+assert_contains "$out" "granted DEC-0007)" "session-start unquotes the displayed grant id"
+
 # A stray line starting with "autopilot: " in the body, after a real
 # frontmatter grant of "all", must not overwrite it: the frontmatter block
 # is always read first, and both fields are read with head -1.
