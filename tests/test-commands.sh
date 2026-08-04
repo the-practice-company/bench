@@ -42,4 +42,13 @@ assert_contains "$auto" "pbcopy" "auto puts the session goal on the clipboard"
 assert_contains "$auto" "does not exist" "auto covers the not-a-baton-run case"
 assert_contains "$auto" "ratified" "auto covers the not-yet-ratified case"
 
+continue_cmd="$(cat "$CMD/continue.md")"
+assert_contains "$continue_cmd" "disable-model-invocation: true" \
+    "continue is human-invocable only: resuming unattended work is the human's call"
+assert_contains "$continue_cmd" "baton-resume" "continue verifies state before resuming anything"
+assert_contains "$continue_cmd" "does not grant" \
+    "continue uses an existing grant and never creates one"
+assert_contains "$continue_cmd" "needs_human" \
+    "continue refuses to resume over an unresolved stop"
+
 finish
