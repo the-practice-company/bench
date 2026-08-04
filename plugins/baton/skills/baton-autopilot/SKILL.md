@@ -274,8 +274,17 @@ reason: a C-quoted non-ASCII path cannot be matched against any document, so it
 would land in the second branch for a reason that is about encoding rather than
 about the work.
 
-Then check each path against the **union** of three sets — inside *any* of them
-is accounted for:
+**Discount `.baton/` before anything else.** It is the gate's own working
+directory, never the wave's work: `.baton/gate-verify.log` is written by the
+very run whose evidence you are holding, so asking whether the wave accounts
+for it is the wrong question — it would put the tool you just ran on trial and
+stop the night over its output. `/baton:init` gitignores `.baton/`, so it
+should never surface here; a repository where it does is one whose `.gitignore`
+lost that line. Report that as the finding and carry on with the wave. It is a
+thing to fix, not a wave to block.
+
+Then check each remaining path against the **union** of three sets — inside
+*any* of them is accounted for:
 
 - the file list in the wave's plan;
 - the wave's spec, if the Waves table names one;

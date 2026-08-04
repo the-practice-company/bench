@@ -271,6 +271,13 @@ assert_contains "$autopilot" "status --porcelain -uall --ignore-submodules=none"
 # becomes the stop. The union is what keeps the night from ending on wave one.
 assert_contains "$autopilot" "union" \
     "autopilot accounts for a dirty path against a union of sets that actually exist"
+# The gate writes .baton/gate-verify.log on every run, and tree_clean goes
+# false on it in any repository whose .gitignore lost the .baton/ line.
+# Reproduced: changed_files=0 placeholder_hits=0 tree_clean=false, the only
+# dirty path being the gate's own log. Unstated, the rule above attributes it
+# to no wave and stops the night over the tool that just ran.
+assert_contains "$autopilot" "Discount \`.baton/\` before anything else" \
+    "autopilot does not put the gate's own log on trial as unattributable work"
 # A dirty tree splits into ordinary work and a stop, and only the second is
 # load-bearing: the first is what an agent does anyway.
 assert_contains "$autopilot" "cannot account for as this wave" \
