@@ -433,6 +433,28 @@ work_sha="$(printf '%s\n' "$observed" | sed -n 's/^work_sha=//p')"
 # to keep to a minimum.
 tree_clean="$(printf '%s\n' "$observed" | sed -n 's/^tree_clean=//p')"
 
+# The guard above catches a baton-observe that FAILS. This catches one that
+# succeeds without answering -- exit 0 and no output, which a truncated
+# pipe, a half-written install or a shim all produce, and which no `||`
+# guard can see because the status was zero. Unchecked, every fact above
+# parses to empty and the block still reads verify_exit=0,
+# placeholder_hits=0, exit 0: a gate that gathered nothing, wearing the face
+# of a gate that found nothing wrong. That is the one shape an unattended
+# agent must never be handed, since it closes a wave on no evidence at all.
+#
+# tree_clean is the field that carries the check, and it has to be this one.
+# baton-observe prints it as exactly true or false on every success --
+# including on an unborn HEAD, where sha and work_sha are legitimately
+# empty and this is still false. So sha cannot serve: empty is a real
+# answer there, and the suite pins it as one.
+case "$tree_clean" in
+    true|false) ;;
+    *)
+        echo "baton-gate: baton-observe returned no usable state (tree_clean='$tree_clean') -- verify_cmd already ran; its output is at $verify_log" >&2
+        exit 4
+        ;;
+esac
+
 # Second, after the facts above -- see the ordering note there. Guarded for
 # the same reason that call is, and reproduced once already: --since used
 # to reach baton-observe as whatever string the caller typed, and when that

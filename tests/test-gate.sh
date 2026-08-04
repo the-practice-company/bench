@@ -54,6 +54,24 @@ placeholder_patterns: "${2-TODO|FIXME}"
 EOF
 }
 
+# Build a copy of baton-gate beside a baton-observe shim whose body is $1,
+# under observe-shim/. baton-gate resolves its siblings from its own
+# directory, so this is the only way to make baton-observe misbehave
+# without touching the real one -- and both of the gate's calls to it are
+# guarded paths that nothing else here can reach. The shim gets $REAL so it
+# can delegate for the calls it does not want to break.
+make_observe_shim() {
+    rm -rf observe-shim
+    mkdir -p observe-shim
+    cp "$GATE" observe-shim/baton-gate
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'REAL="%s"\n' "$REPO_ROOT/plugins/baton/scripts/baton-observe"
+        printf '%s\n' "$1"
+    } > observe-shim/baton-observe
+    chmod +x observe-shim/baton-gate observe-shim/baton-observe
+}
+
 make_fixture_repo
 
 # .baton/ gitignored before anything else happens, as /baton:init writes it
@@ -290,6 +308,30 @@ assert_equals "$(gate_field "$disabled_out" placeholder_patterns)" "" \
     "and its value is empty, so placeholder_hits=0 can be read as 'nothing was asked'"
 assert_equals "$(gate_field "$clean_out" placeholder_patterns)" "NOTHING-IN-THIS-FIXTURE-MATCHES-THIS" \
     "a real scan reports the pattern it looked for, so the same zero can be read as 'asked, and found nothing'"
+
+# The two halves of the evidence are gathered independently, and nothing
+# here observed that: every placeholder assertion above runs under
+# verify_cmd: "true". A scan loop beginning `[ "$verify_exit" = 0 ] ||
+# continue` -- the plausible "why scan a wave that is already red"
+# optimisation -- passes the entire suite while reporting
+# placeholder_hits=0 over a tree holding a marker.
+#
+# A red gate still has to say everything else that is wrong with it. The
+# morning reads one verdict; a second defect discovered only after the
+# first is fixed costs another night, which is the whole cost this feature
+# exists to avoid. A pattern of its own is used rather than the fixture's
+# default, so this counts exactly the file below and not the markers
+# earlier assertions left in the diff.
+printf 'export function stub() { /* RED-SCAN-MARKER: not finished */ }\n' > red-stub.js
+write_constitution "false" "RED-SCAN-MARKER"
+red_out="$("$GATE" --since "$scan_base" 2>/dev/null || true)"
+assert_equals "$(gate_field "$red_out" verify_exit)" "1" \
+    "a red verify_cmd reports its exit code"
+assert_equals "$(gate_field "$red_out" placeholder_hits)" "1" \
+    "the placeholder scan runs even when verify_cmd is red -- the two halves of the evidence do not depend on each other"
+assert_equals "$(gate_field "$red_out" placeholder_files)" "red-stub.js" \
+    "and names the file, so one verdict carries both defects instead of hiding the second behind the first"
+rm -f red-stub.js
 
 # --- invoked from a subdirectory, same answer ---
 write_constitution "true"
@@ -655,6 +697,53 @@ assert_equals "$(gate_field "$order_out" sha)" "$order_base" \
 # would inflate every later scan. late.js stays -- it is committed, holds no
 # marker, and deleting it would only leave another deletion to settle.
 rm -rf shim
+
+# --- baton-observe failing is the gate unable to gather, not a green gate ---
+
+# Both calls to baton-observe are guarded, and replacing either guard with
+# `|| true` used to pass every assertion in this file. The
+# exit-4-on-observe-failure row is written into this script's header table
+# and into baton-autopilot's, so it was a contract with nothing standing
+# behind it -- and what it fails into is the worst shape available: sha,
+# work_sha and tree_clean all empty, beside verify_exit=0 and
+# placeholder_hits=0, at exit 0. An agent running unattended reads that as
+# the green gate it looks like and closes the wave.
+
+# The facts call is the first of the two, so a shim that always fails is
+# caught there and the message has to say so.
+make_observe_shim 'echo "observe: exploded" >&2; exit 9'
+observe_fail_stderr="$(observe-shim/baton-gate --since "$scan_base" 2>&1 >/dev/null || true)"
+assert_exit_code 4 "a baton-observe that fails on the facts call is exit 4, not a verdict" \
+    observe-shim/baton-gate --since "$scan_base"
+assert_contains "$observe_fail_stderr" "could not report the repository's current state" \
+    "the refusal names which of the two calls failed"
+
+# The changed-set call is reached only once the facts call has succeeded,
+# so its guard needs a shim that fails selectively or it is never exercised
+# at all -- an always-failing shim would exit at the first call and leave
+# this second guard exactly as untested as it was.
+make_observe_shim 'if [ "$1" = "--changed-since" ]; then echo "observe: exploded" >&2; exit 9; fi; exec "$REAL" "$@"'
+changed_fail_stderr="$(observe-shim/baton-gate --since "$scan_base" 2>&1 >/dev/null || true)"
+assert_exit_code 4 "a baton-observe that fails on the changed-set call is exit 4 too" \
+    observe-shim/baton-gate --since "$scan_base"
+assert_contains "$changed_fail_stderr" "could not report what changed since" \
+    "and that refusal names the other call, so the two are told apart in the message"
+
+# The nastier shape, which no `||` guard can catch: exit 0 with no output.
+# The status is zero, so both guards are satisfied, and every fact parses
+# to empty while the block still reads verify_exit=0, placeholder_hits=0
+# and exit 0. sha cannot carry this check -- an empty sha is pinned as
+# CORRECT for an unborn HEAD a few assertions below, so the one
+# distinguishing signal is already spoken for. tree_clean can: baton-observe
+# prints it as exactly true or false on every success, including on that
+# unborn HEAD, where sha and work_sha are legitimately empty and it is not.
+make_observe_shim 'exit 0'
+silent_stderr="$(observe-shim/baton-gate --since "$scan_base" 2>&1 >/dev/null || true)"
+assert_exit_code 4 "a baton-observe that exits 0 printing nothing is exit 4, not a green block assembled from empty facts" \
+    observe-shim/baton-gate --since "$scan_base"
+assert_contains "$silent_stderr" "returned no usable state" \
+    "the refusal says the facts were unusable, rather than reporting them as facts"
+rm -rf observe-shim
 
 # --- not a git repository ---
 # The exit code the header table spends on this has never been asserted; a
