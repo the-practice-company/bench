@@ -23,6 +23,32 @@ fi
 state="docs/baton/state.md"
 [ -f "$state" ] || exit 0
 
+# Claude Code passes hook input as JSON on stdin: session_id, transcript_path,
+# hook_event_name, and source -- the field hooks.json's own SessionStart
+# matcher (startup|resume|clear|compact|fork) already distinguishes. Until
+# this hook reads it, that distinction never reaches the agent: baton-resume
+# continues silently after a compact and waits on a fresh start, and it has
+# no way to tell those apart. `cat` returns immediately on an empty or
+# already-closed stdin, exactly how every test here (and every no-input
+# invocation) drives this hook -- it does not wait on a terminal that was
+# never attached.
+hook_input="$(cat 2>/dev/null || true)"
+
+# source is a five-value enum, so a targeted extraction is honest here; a
+# general JSON parser hand-rolled in sed would not be. Same idiom as the
+# escaper this hook already uses for its own output, further down. An
+# absent field, malformed JSON, and a value outside the enum all collapse
+# to the same "unknown" -- and because the value is validated against a
+# fixed set of literals before it is ever interpolated below, a hostile
+# string on stdin (an embedded quote, an attempted break-out) can only ever
+# become one of these six fixed words, never reach the JSON escaper as
+# untrusted data.
+session_source="$(printf '%s' "$hook_input" | sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+case "$session_source" in
+    startup|resume|clear|compact|fork) ;;
+    *) session_source="unknown" ;;
+esac
+
 field() {
     sed -n "s/^\*\*$1:\*\* *//p" "$state" | head -1
 }
@@ -63,7 +89,7 @@ if [ -n "$autopilot_norm" ]; then
         [Oo][Ff][Ff]) ;;
         *)
             autopilot_line="
-Autopilot: ${autopilot_norm} (granted ${autopilot_grant}) — this run continues without a human present. Check the session source before acting on it: see baton-resume."
+Autopilot: ${autopilot_norm} (granted ${autopilot_grant}) — this run continues without a human present. Check the Session source line above before acting on it: see baton-resume."
             ;;
     esac
 fi
@@ -73,9 +99,10 @@ context="This repository runs under baton. Before anything else, use the baton-r
 Goal: ${goal}
 Operating mode: ${mode}
 Non-negotiables: ${rules}
-Next action: ${next}${autopilot_line}
+Next action: ${next}
+Session source: ${session_source} (unknown counts as startup, never as compact)${autopilot_line}
 
-These four lines are a summary for orientation, not a substitute for reading the files."
+These five lines are a summary for orientation, not a substitute for reading the files."
 
 # state.md is prose for a human and an agent to read, not an opaque blob,
 # and a control byte below 0x20 other than \n, \r, \t has no business in

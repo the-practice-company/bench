@@ -32,7 +32,13 @@ export CLAUDE_PROJECT_DIR="$FIXTURE"
 # globally, most repositories are not baton runs.
 out="$("$HOOKS/session-start" < /dev/null)"
 assert_equals "$out" "" "session-start says nothing in a repository without docs/baton"
-assert_exit_code 0 "session-start exits 0 without docs/baton" "$HOOKS/session-start"
+# < /dev/null here, not just on the direct invocations below: this hook now
+# reads its own stdin (for the session source), and assert_exit_code's
+# "$@" would otherwise inherit this file's own stdin -- fine under this
+# test runner, but not guaranteed empty in every context that might run
+# this file, and the one thing this line and the source-reading change
+# both must never do is hang on it.
+assert_exit_code 0 "session-start exits 0 without docs/baton" "$HOOKS/session-start" < /dev/null
 
 out="$("$HOOKS/pre-compact" < /dev/null 2>/dev/null)"
 assert_equals "$out" "" "pre-compact says nothing in a repository without docs/baton"
@@ -351,5 +357,104 @@ printf -- '---\nschema: baton/state/v1\n---\n**Goal:** bell\x07here esc\x1bhere\
 "$HOOKS/session-start" < /dev/null > ctrl-char-output.json
 assert_valid_json "ctrl-char-output.json" \
     "session-start's output still parses as JSON when state.md contains a raw control character"
+
+# --- the session source, passed through from Claude Code's hook stdin ---
+# hooks.json's SessionStart matcher already tells the harness apart on
+# startup|resume|clear|compact|fork; until this hook reads its own stdin,
+# that distinction never reaches the agent, and baton-resume's entire
+# safety property -- continue silently after a compact, wait on a fresh
+# start -- has no way to be checked. This line has to be present on every
+# run, not just when the autopilot is on: even with autopilot off, "clear"
+# versus "compact" changes what the agent should assume about its own
+# memory.
+mkdir -p docs/baton
+cat > docs/baton/state.md <<'EOF'
+---
+schema: baton/state/v1
+autopilot: off
+autopilot_grant: —
+---
+
+# State
+
+**Goal:** g
+**Operating mode:** m
+**Non-negotiables:** n
+
+## Now
+- **Next action:** a
+EOF
+
+for src in startup resume clear compact fork; do
+    out="$(printf '{"session_id":"abc","transcript_path":"/tmp/t","hook_event_name":"SessionStart","source":"%s"}' "$src" | "$HOOKS/session-start")"
+    assert_contains "$out" "Session source: ${src}" "session-start passes through the $src source"
+    printf '{"session_id":"abc","transcript_path":"/tmp/t","hook_event_name":"SessionStart","source":"%s"}' "$src" | "$HOOKS/session-start" > source-output.json
+    assert_valid_json "source-output.json" "session-start's output is still valid JSON with source=$src on stdin"
+    rm -f source-output.json
+done
+
+# Empty stdin, malformed JSON, and a source outside the enum must not be
+# guessed into one of the five real values, and must not be silently
+# omitted either -- an agent that sees no line at all concludes whatever it
+# likes, which is the exact failure mode this line exists to close off.
+out="$("$HOOKS/session-start" < /dev/null)"
+assert_contains "$out" "Session source: unknown" "an empty stdin reads as an explicit unknown source, not a guess"
+
+out="$(printf 'not json at all {{{' | "$HOOKS/session-start")"
+assert_contains "$out" "Session source: unknown" "malformed JSON on stdin reads as unknown, not a crash and not a guess"
+
+out="$(printf '{"source":"teleport"}' | "$HOOKS/session-start")"
+assert_contains "$out" "Session source: unknown" "a source value outside the five-value enum reads as unknown"
+
+# The fail-safe reading has to be stated in the injected text itself, not
+# just decided in the hook's own logic -- the agent reading the block is
+# the one that has to apply it. Waiting when the run should have continued
+# costs a human one command; continuing when it should have waited is the
+# failure this whole property exists to prevent.
+out="$("$HOOKS/session-start" < /dev/null)"
+assert_contains "$out" "unknown counts as startup, never as compact" \
+    "session-start states the unknown-is-startup fail-safe reading in the injected text"
+
+# A hostile source value (attempted JSON injection) is normalized against
+# the five-value enum before it is ever interpolated, so it can only ever
+# become one of six fixed literal strings -- but prove it, the same way
+# autopilot_grant's hostile cases are proven rather than assumed.
+out="$(printf '{"source": "evil\\"}, \\"pwned\\": \\"1"}' | "$HOOKS/session-start")"
+assert_contains "$out" "Session source: unknown" "a source value crafted to break out of the JSON string still reads as unknown"
+printf '{"source": "evil\\"}, \\"pwned\\": \\"1"}' | "$HOOKS/session-start" > hostile-source-output.json
+assert_valid_json "hostile-source-output.json" "a hostile source value on stdin still leaves valid JSON"
+python3 -c "import json,sys; d=json.load(open('hostile-source-output.json')); sys.exit(0 if list(d.keys())==['hookSpecificOutput'] else 1)" \
+    && pass "the hostile source value injects no extra top-level JSON key" \
+    || fail "the hostile source value injects no extra top-level JSON key"
+rm -f hostile-source-output.json
+
+# A repository without docs/baton must still say nothing at all, source or
+# no source -- the no-op case this hook has always had.
+rm -f docs/baton/state.md
+out="$(printf '{"source":"compact"}' | "$HOOKS/session-start")"
+assert_equals "$out" "" "session-start says nothing in a repository without docs/baton, even with a real source on stdin"
+
+# --- line 66's "check the session source" is only a real instruction once
+# something is there to check it against ---
+mkdir -p docs/baton
+cat > docs/baton/state.md <<'EOF'
+---
+schema: baton/state/v1
+autopilot: all
+autopilot_grant: DEC-0007
+---
+
+# State
+
+**Goal:** g
+**Operating mode:** m
+**Non-negotiables:** n
+
+## Now
+- **Next action:** a
+EOF
+out="$(printf '{"source":"compact"}' | "$HOOKS/session-start")"
+assert_contains "$out" "Session source line above" \
+    "the autopilot line points at the Session source line now that one exists, not just at a skill"
 
 finish
