@@ -47,6 +47,36 @@ skills/baton-resume/SKILL.md
 skills/baton-checkpoint/SKILL.md
 "
 
+# --- the lists cover everything they are supposed to ---
+# Every check in this file iterates one of the two lists above, so a file
+# missing from a list is not checked at all -- and nothing says so. That is
+# how both lists silently stopped covering the plugin: they were written
+# when it had three commands and three skills, and the autopilot's two
+# commands and one skill were added to neither, so every rule below skipped
+# them for the whole feature's development. Derive membership from the
+# directory rather than trusting the lists to be maintained.
+for f in "$PLUGIN"/commands/*.md "$PLUGIN"/skills/*/SKILL.md; do
+    rel="${f#$PLUGIN/}"
+    if printf '%s\n' $DOC_FILES | grep -qxF "$rel"; then
+        pass "$rel is in DOC_FILES"
+    else
+        fail "$rel is in DOC_FILES"
+    fi
+done
+
+# And the lock list, derived from the files themselves: a doc that invokes
+# baton-lock has a session id to get right, whichever list someone remembered
+# to add it to. The converse -- a listed file that never invokes it -- is
+# caught by the guard in the loop below.
+for rel in $DOC_FILES; do
+    grep -q 'baton-lock" \(acquire\|release\|takeover\|check\)' "$PLUGIN/$rel" || continue
+    if printf '%s\n' $LOCK_DOC_FILES | grep -qxF "$rel"; then
+        pass "$rel invokes baton-lock, so it is in LOCK_DOC_FILES"
+    else
+        fail "$rel invokes baton-lock, so it is in LOCK_DOC_FILES"
+    fi
+done
+
 # --- every documented baton-lock call passes the session id the same way ---
 for rel in $LOCK_DOC_FILES; do
     calls="$(grep -n 'baton-lock" \(acquire\|release\|takeover\|check\)' "$PLUGIN/$rel" || true)"
@@ -196,7 +226,10 @@ set -u
 # what an agent does with that fixture is the runbook's job, run by a human.
 # Without a scenario there, the fixture is built and checked by nobody.
 runbook="$(cat "$REPO_ROOT/tests/fixtures/cold-start/RUNBOOK.md")"
-assert_contains "$runbook" "Scenario 4" "the runbook has a scenario for the autopilot"
+# The heading, not the bare words: "Scenario 4" alone appears in the bullet
+# list and in "Recording the result" too, so deleting the entire section
+# would leave that assertion green off a mention elsewhere in the file.
+assert_contains "$runbook" "## Scenario 4: autopilot" "the runbook has a scenario for the autopilot"
 assert_contains "$runbook" "build-autopilot.sh" "scenario 4 names the fixture it runs against"
 assert_contains "$runbook" "/baton:continue" "scenario 4 exercises the fresh-session pickup"
 

@@ -27,10 +27,11 @@ divergences are real (a `closed_at_sha` that genuinely is not an ancestor of
 `HEAD`, an `observed_sha` that genuinely is behind the current `work_sha`),
 that — for the takeover fixture — its lease genuinely reads as expired to a
 session that did not write it, and genuinely names a session other than the
-one that will resume, and that — for the autopilot fixture — exactly one of
-its two open waves is genuinely available, the other held back by the
-contract rule alone and not by the dependency graph. That is as far as a
-script can go. None of the four tests can prove an agent actually reads and
+one that will resume, and that — for the autopilot fixture — its grant is
+grounded in a journal entry that exists, and neither of its two open waves is
+excluded by the dependency graph. That last one is checked less thoroughly
+than it reads: scenario 4's setup says which parts of that fixture's premise
+you have to confirm by eye, and why. That is as far as a script can go. None of the four tests can prove an agent actually reads and
 uses what's there, still less that it *notices* a divergence, or a
 pre-existing lease, or a wave the graph permits and a contract forbids, and
 does the right thing about it instead of quietly working around it — proving
@@ -395,10 +396,19 @@ claude
 Install the plugin and confirm it the same way as scenario 1's setup above, if
 this is a different machine or directory.
 
-`test-cold-start-autopilot.sh` pins the premise this scenario rests on — that
-wave 3 is held back by the contract rather than the graph, and that wave 4 is
-genuinely available — so a change to the fixture's shape surfaces there rather
-than as a silent failure here.
+**Check the premise by eye before you start.** `test-cold-start-autopilot.sh`
+pins some of it — the grant and the entry behind it, wave 2 `blocked` with
+`needs_human` raised, and that waves 3 and 4 both declare `depends_on: [1]`, so
+the graph alone excludes neither. It does not pin the part this scenario turns
+on. Mutation says so: mark wave 3 `done`, give wave 4 a `consumes:
+[session-contract]`, or move either contract line onto a different wave, and
+that test stays green while the fixture degenerates into one that no longer
+tests the contract rule at all. So read `docs/baton/constitution.md` in the
+built fixture and confirm four things yourself: wave 2 `produces:
+[session-contract]`, wave 3 `consumes:` the same, wave 3 still `todo` in
+`state.md`, and wave 4 consuming nothing. If any of those has drifted, fix the
+fixture before running the scenario — otherwise a green run here means
+nothing.
 
 ### The test
 
@@ -406,44 +416,77 @@ Say exactly this and nothing more:
 
 > continue
 
-Then work through the pass conditions in order. Three of them ask you to do
-something between steps.
+Then work through the pass conditions in order. Most of them ask you to do
+something between steps — a command, a hand edit, or a fresh session — and the
+order matters: conditions 2 and 4 differ only by which mechanism is holding the
+run, and running them out of order collapses the distinction they exist to
+draw.
 
 ### Pass conditions
 
-All seven must hold.
+All eight must hold.
 
 1. **It announces the resume, and the grant with it.** Scenario 1's condition 1,
    plus: it reports that the run is on the autopilot, names the scope (`all`)
    and names the entry that granted it (`DEC-0001`). Reporting autonomy without
    naming what authorised it is a fail — the grant is what the morning reads to
-   find out what the run was allowed to do.
-2. **It waits.** This is a fresh session start, not a compaction, so it does not
-   begin work. An agent that reads `autopilot: all` and starts a wave here has
-   treated a grant made to some earlier session as a standing instruction to
-   this one.
-3. **`/baton:continue` does not start work either.** `needs_human: true` is set
-   in the fixture. Type `/baton:continue`; the agent reports the pat on wave 2 —
-   three attempts, evidence unchanged since attempt 2 — and stops. The grant
-   does not outrank the flag. If it did, `needs_human` would stop nothing on
-   precisely the runs it exists for.
-4. **Cleared, it takes wave 4 and not wave 3.** Edit `docs/baton/state.md` by
-   hand: set `needs_human: false`, and **leave wave 2 `blocked`**. Run
-   `/baton:continue` again. The agent picks **wave 4**, and says why wave 3 is
+   find out what the run was allowed to do. Note where that reaches it:
+   `baton-resume` step 7 is the step that instructs this, and on this fixture
+   step 4 stops the run before step 7 is ever reached, so the only thing putting
+   the scope and the grant in front of the agent is the `Autopilot:` line the
+   `SessionStart` hook injects. A failure here points at the hook first.
+2. **It waits, on the flag.** It does not begin work. This is `needs_human: true`
+   doing it, not the session source: `baton-resume` step 4 stops for a flag
+   already on disk, and that is well before step 7 reads how the session
+   started. So this condition tests that the grant does not outrank the flag —
+   an agent that reads `autopilot: all` and starts a wave anyway has treated a
+   grant as outranking a stop. It does **not** test the session source; condition
+   4 does that.
+3. **`/baton:continue` does not start work either.** Type `/baton:continue`. The
+   agent reports the pat on wave 2 — three attempts, evidence unchanged since
+   attempt 2 — and stops, for the same flag. A human typing `continue` does not
+   resolve a pat, and `/baton:continue` step 2 says so in as many words.
+4. **Cleared, a fresh session still waits — and now only the source is holding
+   it.** Edit `docs/baton/state.md` by hand: set `needs_human: false`, and
+   **leave wave 2 `blocked`**. Then **commit it**:
+
+   ```bash
+   git commit -q -m "clear the pat by hand" docs/baton/state.md
+   ```
+
+   Leave it uncommitted and the next step stops on a dirty tree instead, which
+   looks like the agent refusing for the wrong reason — `/baton:continue`
+   step 3 requires `tree_clean`, and a hand edit is exactly the dirt it
+   refuses. Now leave the session (`/exit`) and start a fresh one: `claude`,
+   then say `continue`. It reports the autopilot and **waits again**, with no
+   flag left to explain it. This is the condition that tests the session
+   source — `startup` waits, and nothing else in this scenario establishes
+   that.
+5. **`/baton:continue` takes wave 4 and not wave 3.** In that session, type
+   `/baton:continue`. The agent picks **wave 4**, and says why wave 3 is
    unavailable, naming `session-contract` — not merely "wave 3 is blocked".
    Naming the contract is the condition: `Next action` mentions that wave 3
    consumes something, but only the constitution says what, so an agent that
    names it went and read it.
-5. **It closes wave 4 as an autopilot closure.** It runs `baton-gate`, walks
+6. **It closes wave 4 as an autopilot closure.** It runs `baton-gate`, walks
    wave 4's exit criterion against the repository, and files a verdict under
    `docs/baton/gates/`. Wave 4's row reads `auto` in the gate column. `pass`
    there is a fail however green the evidence: `pass` says a human confirmed
    it, and none did.
-6. **A compaction does not make it ask again.** Force a compaction mid-wave
-   (`/compact`). It continues without asking. This is the mirror of condition 2,
-   and the pair is the point: same grant, same state file, and the answer
-   differs only by how the session started.
-7. **`/baton:status` shows the mode.** Afterwards it names the autopilot, its
+7. **A compaction does not make it ask again.** Checkpoint first, then compact:
+   `/baton:checkpoint`, then `/compact`. It continues without asking. This is
+   the mirror of condition 4 and the pair is the point: same grant, same state
+   file, and the answer differs only by how the session started.
+
+   The checkpoint is not optional either, and for a reason worth knowing. The
+   `PreCompact` hook records the repository into `.baton/precompact-facts`, and
+   on the next resume `baton-resume` step 3 compares it against `observed_sha`.
+   Compact mid-wave without checkpointing and wave 4's commits have landed since
+   the last checkpoint, so `observed_sha` is an ancestor of the recorded
+   `work_sha` — which step 3 reads as a divergence, raises `suspect` for, and
+   stops on. That is correct behaviour, and it would look here like a failure of
+   condition 7. The hook warns about it at compaction time for the same reason.
+8. **`/baton:status` shows the mode.** Afterwards it names the autopilot, its
    scope, and lists every wave whose gate column reads `auto` as awaiting
    review. Turning `auto` into `pass` or into an objection is the morning's job,
    and status is where the morning gets the list.
@@ -460,7 +503,7 @@ checks `depends_on`, finds wave 1 `done`, and starts wave 3 has applied two of
 the three availability rules and skipped the one the graph does not show. What
 it then builds rests on a contract nobody has defined yet and has to be thrown
 away — worse than the idle night the move was meant to avoid, and industrious-
-looking the whole way. Writing `pass` at condition 5 is the other one: it turns
+looking the whole way. Writing `pass` at condition 6 is the other one: it turns
 "the agent closed this alone" into "a human signed this off", and afterwards
 nothing distinguishes them.
 
@@ -476,12 +519,15 @@ not finding their way into what the agent actually does. A failure in
 scenario 3 points at `baton-resume` step 5 (taking the writer role) or at the
 takeover-journaling instructions repeated in `baton-resume` and
 `baton-checkpoint` not finding their way into what the agent actually does.
-A failure in scenario 4 splits by condition: 2 and 6 point at the session
-source — whether a fresh `startup` and a `compact` are told apart at all,
-which is the `session-start` hook and `baton-resume`'s reading of it; 4 points
-at the third availability rule in `baton-autopilot`; 5 points at that skill's
-verdict section, or at `baton-checkpoint`'s second closing path. None of them
-points at the model. `test-cold-start.sh`, `test-cold-start-diverged.sh`,
+A failure in scenario 4 splits by condition, and the split is not the obvious
+one: 1 points at the `SessionStart` hook's injected `Autopilot:` line, because
+`baton-resume` step 7 — which is what instructs naming the scope and the grant
+— is unreachable while `needs_human` is set. 2 and 3 point at `baton-resume`
+step 4 and `/baton:continue` step 2, the flag handling, and not at the session
+source at all. Only 4 and 7 test the source, and they point at the hook's
+`Session source:` line and `baton-resume` step 7's table. 5 points at the third
+availability rule in `baton-autopilot`; 6 at that skill's verdict section, or
+at `baton-checkpoint`'s second closing path. None of them points at the model. `test-cold-start.sh`, `test-cold-start-diverged.sh`,
 `test-cold-start-takeover.sh` and `test-cold-start-autopilot.sh` already
 proved each of their fixtures holds what a resuming agent needs, and, for the
 diverged, takeover and autopilot ones, that their respective premises are
