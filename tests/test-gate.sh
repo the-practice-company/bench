@@ -278,7 +278,15 @@ cp "$REPO_ROOT/plugins/baton/scripts/baton-observe" vendor/baton/scripts/baton-o
 chmod +x vendor/baton/scripts/baton-gate vendor/baton/scripts/baton-observe
 relative_base="$(git rev-parse HEAD)"
 out_absolute="$("$GATE" --since "$relative_base")"
-out_relative="$(cd deep/nested && ../../vendor/baton/scripts/baton-gate --since "$relative_base")"
+# `|| true`, because the way this breaks is not a wrong answer but no
+# answer: with dirname "$0" computed after the cd, the relative path is
+# resolved against repo_root, baton-gate dies on its own `cd` with
+# "No such file or directory", and under set -e the non-zero status of the
+# command substitution takes this whole file down at this line -- the
+# mutant is killed, but by a bare shell error, with the fifteen assertions
+# below it never reaching the report. Swallowing the status turns that into
+# one [FAIL] naming the property that was lost, against an empty actual.
+out_relative="$(cd deep/nested && ../../vendor/baton/scripts/baton-gate --since "$relative_base" 2>/dev/null || true)"
 assert_equals "$out_relative" "$out_absolute" \
     "invoked by a relative path from a subdirectory (a vendored copy of the scripts) it reports the same evidence too"
 # Removed immediately: left in place, these untracked files (baton-gate's
@@ -368,6 +376,30 @@ assert_exit_code 3 "an absent placeholder_patterns is refused, distinct from a d
 assert_contains "$absent_stderr" "placeholder_patterns is not set" \
     "the refusal says what to write if scanning nothing is what is meant"
 
+# An absent verify_cmd is exit 4, not the 3 its neighbour above gets, and
+# the header's exit table has to say which. fm_field hands back an empty
+# string whether the field was written empty or never written at all, so
+# this script genuinely cannot tell those two apart and does not pretend
+# to -- it reports the one thing that is true of both, that there is
+# nothing to run. The asymmetry with placeholder_patterns is deliberate:
+# scanning nothing is a real choice a human might mean by writing that
+# field empty, so absence is worth distinguishing there. There is no
+# reading of an absent verify_cmd under which the gate has something to run.
+cat > docs/baton/constitution.md <<'EOF'
+---
+schema: baton/constitution/v1
+run_id: gate-fixture
+status: ratified
+placeholder_patterns: "TODO|FIXME"
+---
+# Gate fixture
+EOF
+git add docs/baton/constitution.md
+git commit -q -m "verify_cmd removed entirely"
+absent_verify_base="$(git rev-parse HEAD)"
+assert_exit_code 4 "an absent verify_cmd is exit 4, the gate unable to gather -- not the exit 3 the constitution-syntax refusals use" \
+    "$GATE" --since "$absent_verify_base"
+
 # A CRLF line ending left a carriage return attached to the end of the
 # extracted value, which defeated unquote's exact match on the trailing
 # quote and made a well-formed pattern read as unusable.
@@ -381,6 +413,80 @@ git commit -q -m "wave work under the CRLF constitution"
 crlf_out="$("$GATE" --since "$crlf_base")"
 assert_contains "$crlf_out" "placeholder_hits=1" "a CRLF line ending on placeholder_patterns does not defeat the scan"
 rm -f crlf-marker.js
+
+# The same defect one step earlier, and the shape an editor actually
+# produces. A file written by a Windows editor has CRLF on EVERY line,
+# including the opening ---, and the frontmatter extractor compares $0
+# against "---" exactly -- "---\r" is not that, so infm is never set, no
+# frontmatter is ever emitted, and the strip in fm_field is handed an empty
+# buffer to strip a carriage return from. The constitution then reads as
+# status 'unset' and the whole run is refused as unratified.
+#
+# Both shapes are pinned, but not because each kills a mutant the other
+# misses -- that was checked, and it is not true. Narrow the extractor's
+# strip to line 1, or remove it outright, and only THIS assertion goes red:
+# a lone \r on a single value is caught downstream by fm_field's
+# trailing-whitespace strip as well, so the partial shape above now has two
+# fixes standing behind it and cannot discriminate between them. It is kept
+# as a value-level regression pin, and because it is the shape a hand-edit
+# or a bad merge leaves behind.
+#
+# This one is the shape an editor produces, and it is the only one that
+# fails structurally rather than at the value: no frontmatter is found at
+# all, so the constitution reads as unratified rather than as carrying a
+# damaged pattern. Nothing above would have caught it.
+#
+# Written to disk and deliberately not committed, unlike every other
+# constitution in this file. The gate reads the working file, so a commit
+# would add nothing -- and it cannot be relied on to add nothing either:
+# under core.autocrlf=input (a machine-local git setting, on by default
+# nowhere and set globally on plenty of developer machines) `git add`
+# normalises CRLF to LF, so this file and the partial-CRLF one above stage
+# to byte-identical blobs and the commit fails with "no changes added".
+# Whether that happens is a property of whoever is running the suite, which
+# is not something this assertion should depend on.
+printf -- '---\r\nschema: baton/constitution/v1\r\nrun_id: gate-fixture\r\nstatus: ratified\r\nverify_cmd: "true"\r\nplaceholder_patterns: "TODO|FIXME"\r\n---\r\n# Gate fixture\r\n' > docs/baton/constitution.md
+all_crlf_base="$(git rev-parse HEAD)"
+printf 'TODO here\n' > all-crlf-marker.js
+git add all-crlf-marker.js
+git commit -q -m "wave work under the all-CRLF constitution"
+# `|| true` so a regression here reports as one [FAIL] naming the behaviour
+# that broke. Without it the refusal this pins is a non-zero exit inside a
+# command substitution, which under `set -e` takes the whole file down at
+# this line -- every assertion below would stop running, and the diagnostic
+# would be baton-gate's own stderr rather than anything saying which
+# property was lost.
+all_crlf_out="$("$GATE" --since "$all_crlf_base" 2>/dev/null || true)"
+assert_contains "$all_crlf_out" "placeholder_hits=1" \
+    "CRLF on every line, the --- delimiters included, is read rather than refused as an unratified constitution"
+rm -f all-crlf-marker.js
+
+# Trailing whitespace after a closing quote is not an unclosed quote. One
+# trailing space -- invisible in every editor, surviving every copy-paste --
+# used to be refused with "opens a quote it never closes", sending the
+# reader hunting for a defect the file does not have. The quote is closed;
+# what `s/^field: *//` does not strip is whitespace at the END of the value,
+# which then defeated unquote's exact match on the trailing quote.
+#
+# Whitespace INSIDE the quotes is part of the value and has to survive,
+# which is what the pattern here is chosen to prove rather than assert by
+# assumption: "TODO $" matches a line ending in "TODO " and not one ending
+# in "TODO", so a strip that reached past the closing quote would move the
+# hit from one of the two files below to the other.
+printf -- '---\nschema: baton/constitution/v1\nrun_id: gate-fixture\nstatus: ratified\nverify_cmd: "true" \nplaceholder_patterns: "TODO $" \n---\n# Gate fixture\n' > docs/baton/constitution.md
+git add docs/baton/constitution.md
+git commit -q -m "trailing whitespace after both closing quotes"
+ws_base="$(git rev-parse HEAD)"
+printf 'const a = 1; // TODO\n' > ws-no-space.js
+printf 'const b = 2; // TODO \n' > ws-space.js
+git add ws-no-space.js ws-space.js
+git commit -q -m "wave work under the trailing-whitespace constitution"
+ws_out="$("$GATE" --since "$ws_base" 2>/dev/null || true)"
+assert_equals "$(gate_field "$ws_out" verify_exit)" "0" \
+    "a trailing space after verify_cmd's closing quote is stripped, not read as a quote that was never closed"
+assert_equals "$(gate_field "$ws_out" placeholder_files)" "ws-space.js" \
+    "the space INSIDE placeholder_patterns' quotes survives the strip: the pattern matches only the line that ends in one"
+rm -f ws-no-space.js ws-space.js
 
 # --- baton-observe failing must not throw away a completed verify_cmd run ---
 
@@ -464,13 +570,56 @@ rm -f docs/baton/journal/sha-check.md sha-work.js
 # about the gate. .baton/ is gitignored at the top of this file instead,
 # which is what /baton:init writes into a real repository.
 git commit -q -m "settle the tree" -- \
-    crlf-marker.js docs/baton/journal/sha-check.md has-marker.js sha-work.js
+    all-crlf-marker.js crlf-marker.js docs/baton/journal/sha-check.md \
+    has-marker.js sha-work.js ws-no-space.js ws-space.js
 out="$("$GATE" --since "$scan_base")"
 assert_contains "$out" "tree_clean=true" "reports a clean tree"
 printf 'scratch\n' > scratch.txt
 out="$("$GATE" --since "$scan_base")"
 assert_contains "$out" "tree_clean=false" "reports a dirty tree"
 rm -f scratch.txt
+
+# --- the facts are read before the changed set, not after ---
+
+# Both come from baton-observe, in two calls, and anything landing between
+# them lands between the sha the verdict names and the tree the scan looked
+# at. With the facts read second, a commit arriving in that window puts a
+# sha in the verdict that the scan never saw -- a verdict about two
+# different trees, presented as one. With the facts read first, the same
+# commit only makes the scan cover MORE than sha claims, which is the
+# direction that fails safe.
+#
+# Made deterministic rather than raced against a ~50ms window: baton-gate
+# resolves baton-observe from its own directory, so a vendored copy of the
+# gate sitting next to a shim that lands a commit immediately after
+# answering --changed-since reproduces that window exactly, every run, with
+# no sleep and nothing to flake.
+mkdir -p shim/scripts
+cp "$GATE" shim/scripts/baton-gate
+cat > shim/scripts/baton-observe <<EOF
+#!/usr/bin/env bash
+# Answers --changed-since truthfully, then lands a commit before returning,
+# so whatever baton-gate asks for next sees a HEAD the scan never looked at.
+if [ "\$1" = "--changed-since" ]; then
+    out="\$("$REPO_ROOT/plugins/baton/scripts/baton-observe" "\$@")"
+    printf 'export const late = 1;\n' > late.js
+    git add late.js
+    git commit -q -m "landed between the two baton-observe calls"
+    printf '%s\n' "\$out"
+    exit 0
+fi
+exec "$REPO_ROOT/plugins/baton/scripts/baton-observe" "\$@"
+EOF
+chmod +x shim/scripts/baton-gate shim/scripts/baton-observe
+order_base="$(git rev-parse HEAD)"
+order_out="$(shim/scripts/baton-gate --since "$order_base")"
+assert_equals "$(gate_field "$order_out" sha)" "$order_base" \
+    "the facts are read before the changed set, so a commit landing between the two baton-observe calls cannot put a sha in the verdict that the scan never looked at"
+# Removed for the same reason the vendored copy above was: baton-gate's own
+# source carries the literal word TODO in a comment, and left in place these
+# would inflate every later scan. late.js stays -- it is committed, holds no
+# marker, and deleting it would only leave another deletion to settle.
+rm -rf shim
 
 # --- not a git repository ---
 # The exit code the header table spends on this has never been asserted; a
@@ -480,5 +629,24 @@ rc=0
 ( cd "$outside" && "$GATE" --since "$scan_base" ) >/dev/null 2>&1 || rc=$?
 assert_equals "$rc" "1" "refuses to run outside a git repository"
 rm -rf "$outside"
+
+# --- an unborn HEAD reports empty, not the literal string "HEAD" ---
+
+# `git rev-parse HEAD` prints its own argument straight back when it cannot
+# resolve it, so before sha was taken from baton-observe (which guards with
+# `rev-parse --verify -q`) an orphan branch wrote sha=HEAD into the verdict
+# as though that were a commit. The fix landed with nothing pinning it,
+# which is how it would come back. The orphan branch is checked out after
+# real commits exist, since that is the only way a repository with history
+# reaches an unborn HEAD -- and --since still resolves through it, the
+# commit it names being an object in the repository whether or not anything
+# currently points at it. This goes last: every assertion above it needs a
+# HEAD.
+git checkout -q --orphan unborn
+orphan_out="$("$GATE" --since "$scan_base")"
+assert_equals "$(gate_field "$orphan_out" sha)" "" \
+    "an unborn HEAD reports sha= empty, not the literal string HEAD dressed as a commit"
+assert_equals "$(gate_field "$orphan_out" work_sha)" "" \
+    "an unborn HEAD reports work_sha= empty too"
 
 finish
