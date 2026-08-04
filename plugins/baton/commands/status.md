@@ -22,10 +22,16 @@ deviations matter more than progress:
    line are all the same value, and the dangerous direction is a false
    positive here — reporting "unattended" for a run the human turned off
    tells them the opposite of the truth, which is worse than saying nothing.
-   If, once normalized, it is not `off`, say so on its own line, with the
-   scope and the granting journal entry: `Autopilot: all (DEC-0007)`. If it
-   is `off`, say nothing here — an `Autopilot: off` line in every report is
-   noise in the one place that has to stay short enough to be read in full.
+
+   If, once normalized, it is not `off`, check `autopilot_grant` before
+   reporting anything: `—`, or any value that names no journal entry, means
+   the claim of a grant has nothing behind it, and that disagreement between
+   the two fields is itself what the human needs to see — say so plainly,
+   rather than printing `Autopilot: all` as though the grant were sound.
+   Otherwise say so on its own line, with the scope and the granting journal
+   entry: `Autopilot: all (DEC-0007)`. If `autopilot` is `off`, say nothing
+   here — an `Autopilot: off` line in every report is noise in the one place
+   that has to stay short enough to be read in full.
 3. **Decisions awaiting review.** Entries live in `docs/baton/journal/`, named
    `NNNN-<slug>.md`; `baton-journal` allocates `NNNN` strictly increasing, so
    the numeric prefix is the order — sort on it, highest first. Not the
