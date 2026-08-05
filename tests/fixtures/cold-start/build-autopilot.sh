@@ -157,7 +157,10 @@ EOF
 # claim a resuming agent, or /baton:status, can do anything with. since is
 # the repository's root commit (base: named none, so the fallback applies);
 # sha and work_sha both equal wave 1's own commit, since the gate ran with
-# nothing on top of it. Ten evidence keys, baton-gate's own order.
+# nothing on top of it. Eleven evidence keys, baton-gate's own order --
+# count them against the block below rather than against this sentence,
+# which is the third time on this branch a count and its enumeration have
+# come apart.
 cat > "docs/baton/gates/wave-1-attempt-1-${wave1_sha}.md" <<EOF
 ---
 schema: baton/gate/v1
