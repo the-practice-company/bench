@@ -148,7 +148,11 @@ at a checkpoint instead of only at the resume after the next compaction.
   memory of this one executes it without asking. "Continue the API work" is a
   failure. "Run `npm test -- auth.spec.ts` and fix the two failing assertions
   in `src/auth/session.ts`" is not.
-- `In flight` — what was interrupted mid-way, or `nothing`.
+- `In flight` — what was interrupted mid-way, or `nothing`. One exception: an
+  autopilot attempt counter (`wave 2: attempt 2 of 3`) stays, even when nothing
+  is mid-edit and `nothing` is otherwise the honest answer. It is not a note
+  about interrupted work but the only copy of a ceiling, and writing `nothing`
+  over it hands the next session a fresh count — see `baton-autopilot`.
 - `Open questions` — or `none`.
 
 Write these from the repository, not from your recollection of the last hour —
@@ -167,6 +171,12 @@ be something a session with no memory of this one can take in whole, and one
 that outgrows that stops getting read closely. Detail that does not fit — a long
 "In flight", a Suspect writeup worth keeping — goes to a journal entry, and
 `state.md` keeps only a pointer to it (e.g. "see DEC-0008").
+
+An autopilot attempt counter is the one thing that never moves out. It is nine
+characters and it is a ceiling; a pointer to it in a journal entry is a ceiling
+the next session has to go and look for, which is a ceiling it will sometimes
+miss. Send the surrounding narrative to the entry and keep
+`wave 2: attempt 2 of 3` on the line.
 
 **5. Journal anything that crossed the threshold.** Write an entry only if at
 least one holds:
@@ -211,7 +221,7 @@ needs_review: false
 ## Invalidated if
 ```
 
-Two other entry types are required elsewhere in these skills — same envelope,
+Four other entry types are required elsewhere in these skills — same envelope,
 same `baton-journal` allocation, different `type` and sections:
 
 - **`takeover`** — whenever a `baton-lock` call prints
@@ -221,6 +231,34 @@ same `baton-journal` allocation, different `type` and sections:
 - **`incoming`** — when new input arrives mid-run (see the `baton` skill's "New
   input mid-run"). `type: incoming`, `needs_review: true`; sections
   `## What arrived`, `## From whom`, `## What it affects`.
+- **`autopilot`** — written by `/baton:auto` when a human grants the run, and
+  named by `state.md`'s `autopilot_grant`. `type: autopilot`, plus
+  **`base:` in the frontmatter** — the resolved sha of `--since <ref>`, or `—`
+  when none was given. Sections `## Scope`, `## The readiness review`,
+  `## The human's corrections`. You do not write this one — a human's does — but the
+  morning reads it to find out what was authorised, so an `autopilot_grant`
+  pointing at nothing is a grant with no record of its terms.
+
+  `base:` belongs in the frontmatter and nowhere else. `baton-autopilot` reads
+  it from there to set the first wave's `--since`, and it reads only there: a
+  base described in the body is a base nothing finds, so the run falls back to
+  the repository's root commit and silently disagrees with the human who took
+  the trouble to name one.
+- **`blocked`** — when a wave cannot close and moves to `blocked` (see
+  `baton-autopilot`'s "The pat"). `type: blocked`; sections
+  `## What stopped`, `## The evidence`, `## What was tried`,
+  `## Why each attempt did not move it`. The last section is the one that
+  earns the entry: a human reading it at breakfast needs to know which
+  explanations have already been ruled out, and an entry that lists three
+  attempts without saying why each failed sends them back through all three.
+
+  This entry carries no `needs_human`. That is a granted field in `state.md`,
+  not part of any entry's envelope — unlike `incoming`'s `needs_review: true`
+  above, which really is one — and under the autopilot a parked wave
+  deliberately does **not** raise it: `baton-resume` and `/baton:continue` both
+  halt on finding it set, so raising it while the run carries on stops the run
+  at its next compaction. `baton-autopilot`'s "The pat" says when it is raised,
+  which is when there is no wave left to move to.
 
 Pipe it through `baton-write` so it lands atomically and gets committed:
 
@@ -297,29 +335,56 @@ log that has to stay signal.
 
 ## Closing a wave
 
-`baton-verify` and `baton-gate` — the scripted gate that would set `done` for
-you — are not built yet; that is separate, later work. Until they exist you are
-the only mechanism, so use it deliberately rather than inventing a substitute or
-stalling: a wave moves to `done` only when every exit criterion the constitution
-lists for it has been checked, one by one, against the repository — not against
-your impression of the work — with the check recorded, and the human has
-confirmed it. Either half missing means it stays where it is.
+There are two ways a wave closes, and which one applies is decided by the
+`autopilot` field in `state.md`, not by whether a human happens to be
+answering right now.
 
-Closing the wave is then three edits to this checkpoint's draft, and it is not
-closed until all three are in:
+**While `autopilot` reads `off`** — the default, and the case this section is
+mostly about — you are the only mechanism. A wave moves to `done` only when
+every exit criterion the constitution lists for it has been checked, one by
+one, against the repository, not against your impression of the work, with the
+check recorded, **and** the human has confirmed it. Either half missing means
+it stays where it is. Green tests are not a confirmation; they are the
+condition under which asking for one is worth the human's time.
+
+**While `autopilot` names a scope**, a human handed the run over and is not
+here to confirm anything. The confirmation is replaced — not waived — by
+`baton-gate`'s evidence plus a verdict file under `docs/baton/gates/` that
+records your walk through the criteria. The `baton-autopilot` skill has the
+procedure.
+
+Do not read the second path as "close it yourself when nobody answers". It
+applies while the flag is set and at no other time, and the flag is set by a
+human typing `/baton:auto`.
+
+Closing the wave is then four edits to this checkpoint's draft, and it is not
+closed until all four are in:
 
 - `status` → `done` in the Waves table;
 - `closed_at_sha` → this run's `work_sha` from `baton-observe`, not its `sha`,
   for the reason step 3 gives;
-- **Current wave** → whatever is now in progress.
+- **Current wave** → whatever is now in progress;
+- the `gate` column → `pass` or `auto`, per the table below. It was three edits
+  before either gate existed, when the column had nothing to record and stayed
+  `—`; a wave closed today and left at `—` claims that nothing closed it.
 
-The `gate` column stays `—`. It records a verdict `baton-verify` produced and
-filed under `docs/baton/gates/`, and until those exist nothing has produced
-one: the human's confirmation above stands in for the gate, it is not a gate
-result, and writing `pass` turns it into a claim with no record behind it —
-one a later resume, or a human deciding whether to trust this row, has nothing
-to check against. The row above the one you are filling in may already carry a
-value; that is the previous run's table, not an instruction.
+The `gate` column takes one of three values, and which one is not a matter of
+taste:
+
+| Value | What it says |
+|---|---|
+| `—` | Nothing produced a verdict. |
+| `auto` | Closed under the autopilot: `baton-gate`'s evidence was green and you walked the criteria. The verdict is filed in `docs/baton/gates/`. |
+| `pass` | A human confirmed it, or a future `baton-verify` did. |
+
+Closing under the autopilot writes `auto`, not `pass`. `pass` claims a human
+saw this, and if none did, that is a claim with no record behind it — one a
+later resume, or a human deciding whether to trust this row, has nothing to
+check against. Turning `auto` into `pass` is the morning's work, and it cannot
+be done if the two were conflated overnight.
+
+The row above the one you are filling in may already carry a value; that is
+the previous run's table, not an instruction.
 
 `closed_at_sha` is the only claim in this file anything checks mechanically:
 `baton-resume` and step 3 above both run `git merge-base --is-ancestor` against
@@ -350,7 +415,7 @@ Exit 3's causes, told apart by the message:
 | empty-or-whitespace-only content over existing committed state | Your draft was empty or nothing but whitespace — a single newline counts, and that is what a failed command substitution or an empty heredoc usually produces. Rebuild it from the file you read in step 1. |
 | does not resolve to a path inside the repository | Should never fire from this skill's own calls: `docs/baton/state.md` and the journal paths `baton-journal` hands back are always repo-root-relative. Something upstream built the wrong path. |
 | refusing to write `docs/baton/constitution.md` | This skill only ever writes `state.md` and journal entries, so you targeted the wrong path. The constitution is never a checkpoint target. |
-| over the 60-line cap | Move the excess detail into a journal entry (`baton-journal`), leave `state.md` holding only a pointer to it, and write again. |
+| over the 60-line cap | Move the excess detail into a journal entry (`baton-journal`), leave `state.md` holding only a pointer to it, and write again — except an autopilot attempt counter, which stays on the `In flight` line whatever else moves out (see step 4). |
 
 Exit 0 with no commit is not a failure — see step 7.
 
@@ -384,7 +449,8 @@ success.
 |---|---|
 | "Next action is obvious, I'll keep it short" | Obvious to you, with context. Write it for someone with none. |
 | "I'll checkpoint after this one last thing" | The compaction does not wait for you. |
-| "The wave is basically done, I'll mark it done" | The gate isn't built yet. Until it is, `done` needs every exit criterion checked against the repository, one by one, plus the human's confirmation — see Closing a wave. |
+| "The wave is basically done, I'll mark it done" | `done` needs every exit criterion checked against the repository, one by one, plus the human's confirmation — or, while the autopilot is on, a filed verdict in its place. See Closing a wave. |
+| "The human hasn't replied in an hour, that's the same as autonomy" | It is not. The second closing path is gated on the `autopilot` field, which only a human sets. Silence is not a grant. |
 | "State didn't change, something is broken" | An idle checkpoint writing nothing is the designed behaviour. |
 | "I'll note the divergence in my reply instead of the file" | Your reply dies with the context. The file does not. |
 | "I'll write the fields that changed" | `baton-write` replaces the whole file. Anything not carried over is deleted, the commit lands, and the tree still looks clean — step 6's diff is the only thing that catches it. |

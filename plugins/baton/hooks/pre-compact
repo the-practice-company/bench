@@ -135,9 +135,27 @@ tree_clean="$(printf '%s\n' "$facts" | sed -n 's/^tree_clean=//p')"
 state="docs/baton/state.md"
 observed_sha=""
 if [ -f "$state" ]; then
-    # Restrict the search to the frontmatter block so a stray mention of
-    # "observed_sha" in prose further down can't be mistaken for the field.
-    observed_sha="$(sed -n '/^---$/,/^---$/p' "$state" | sed -n 's/^observed_sha: *//p' | head -1)"
+    # Restricted to the FIRST frontmatter block, and only if it closes --
+    # not the unanchored, repeating sed range this used to be
+    # (/^---$/,/^---$/p), which matches every "---"..."---" pair in the
+    # file and concatenates them. A stray mention of "observed_sha" in
+    # prose further down was the danger this comment already named; a
+    # schema example shown as its own "---"-delimited block -- the natural
+    # way to illustrate the YAML shape in prose -- is the sharper form of
+    # the same danger the old range did not actually close off: with no
+    # real observed_sha to win a head -1 tie, the body's example would win
+    # outright. Same construction as baton-gate's constitution read (see
+    # its comment, which this now matches): NR==1 anchors the block to the
+    # file's first line, closed is only set on a genuine terminator, END
+    # only prints if closed was reached, and the per-line \r strip means a
+    # CRLF-authored state.md's "---\r" delimiter is still recognized.
+    observed_sha="$(awk '
+        { sub(/\r$/, "") }
+        NR==1 && $0=="---" { infm=1; next }
+        infm && $0=="---"  { closed=1; exit }
+        infm               { buf = buf $0 "\n" }
+        END                { if (closed) printf "%s", buf }
+    ' "$state" | sed -n 's/^observed_sha: *//p' | head -1)"
 fi
 
 if [ -z "$observed_sha" ]; then

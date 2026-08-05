@@ -1,0 +1,599 @@
+#!/usr/bin/env bash
+# Gather the mechanical half of a wave gate: run the constitution's
+# verify_cmd, and scan the files a wave touched for placeholder markers.
+#
+# This script decides nothing. It does not know what a wave is, does not
+# read state.md, and never sets a status. Exit criteria are EARS prose and
+# only the agent can check them; what a machine can establish is what this
+# collects, so that the agent's verdict has something under it besides
+# recollection.
+#
+# Exit codes:
+#   0   evidence gathered -- read verify_exit, and placeholder_hits beside
+#       placeholder_patterns (the count alone cannot distinguish a clean
+#       scan from one the constitution switched off; see the note on that
+#       key below). A red gate is exit 0 with verify_exit non-zero, NOT a
+#       non-zero exit of this script. A script that exited non-zero both
+#       when the tests failed and when it could not run them would make
+#       those two indistinguishable to its only caller, and they call for
+#       opposite responses: fix the code, versus stop and report the
+#       tooling. An empty placeholder_patterns is also exit 0: scanning
+#       nothing is a configuration, not a failure.
+#   1   not a git repository
+#   3   docs/baton/constitution.md is missing, is not ratified, still
+#       carries an unfilled placeholder marker, or a frontmatter value
+#       (placeholder_patterns) is absent where required or opens a quote it
+#       never closes -- the constitution's own syntax is not fit to gate
+#       against, independent of anything this script tried to do with it.
+#       Only placeholder_patterns is named for absence, and the omission of
+#       verify_cmd from that list is not an oversight: see 4.
+#   4   verify_cmd is empty or unusable (a command that cannot be run),
+#       placeholder_patterns is unusable (a pattern that does not compile),
+#       .baton/ could not be prepared to receive the log, a changed path
+#       could not be scanned, or baton-observe itself failed -- the
+#       constitution reads fine, but the gate could not gather evidence
+#       from it. "Empty" attaches to verify_cmd only, and the asymmetry is
+#       the point: an empty placeholder_patterns is a human saying scan
+#       nothing, which is exit 0, while an empty verify_cmd leaves nothing
+#       to run at all. An ABSENT
+#       verify_cmd lands here too, not on 3: fm_field returns an empty
+#       string whether the field was written empty or never written at
+#       all, so this script cannot tell those apart and does not try --
+#       both mean there is nothing to run. placeholder_patterns is checked
+#       for presence separately, and so does get a 3, because writing it
+#       empty is a real instruction (scan nothing) that absence does not
+#       carry; verify_cmd has no such reading.
+#   64  usage error, including a --since that is not a commit
+#   *   any other non-zero code comes from awk or git, not from this
+#       script's own logic, and means the constitution could not be read
+#       or the repository could not be queried -- see baton-observe, which
+#       carries the same catch-all for the same reason.
+#
+# Known limitation, deliberate: the scan reads whole files that changed
+# since --since, not only the changed hunks. A marker that predates the
+# wave, sitting in a file the wave touched for an unrelated reason, is
+# counted. That is the reading that fails safe -- a file the wave edited is
+# a file the wave is answerable for -- and hunk-level attribution would
+# make the gate depend on diff context size, which is not a property of
+# the work. placeholder_hits counts files that matched, not markers within
+# them -- three markers on three lines of the same file is one hit, not
+# three. changed_files counts files this scan considered, which is not the
+# same as files the wave touched: a wave whose only change was deleting
+# files reports changed_files=0, since there is nothing left on disk to
+# scan, not because nothing happened.
+#
+# placeholder_files is comma-joined and nothing escapes the separator, so a
+# path containing a comma is ambiguous in the output: a,b.js and c.js join
+# to "a,b.js,c.js", which reads as three files. Unlike a C-quoted path,
+# which the scan refuses outright, this one is reported and simply cannot
+# be split back apart with certainty. The count in placeholder_hits is
+# unaffected and remains authoritative -- read that, not the length of the
+# list. The format is left as it is deliberately: it is the format the
+# verdict file and baton-autopilot both already quote, and a comma in a
+# source path is rarer than the churn changing it would cause.
+#
+# .baton/gate-verify.log is this script's own output, not the wave's work.
+# It is excluded from the scan unconditionally, so it never reaches
+# placeholder_hits -- but it is a real untracked file, so in a repository
+# whose .gitignore has lost the .baton/ line it will turn tree_clean false.
+# That is the gate reporting its own artefact as work in flight, and the
+# fix is the gitignore line, not this script.
+#
+# sha and work_sha answer different questions, for the same reason
+# baton-observe reports both: sha is HEAD at the moment evidence was
+# gathered, the tree verify_cmd actually ran against; work_sha is the last
+# commit outside docs/baton/, the point the next wave's --since should
+# resolve from, since a checkpoint commit moves sha without moving the
+# work. tree_clean rides along with them because it qualifies sha: a
+# verdict filed against a dirty tree is a verdict about a tree no sha
+# names, and asking for that fact in a second call would be asking about a
+# different moment than the one the rest of the block describes.
+set -euo pipefail
+
+# Captured before anything below changes directory -- see the placeholder
+# scan's use of it, which shells out to the sibling baton-observe. $0 is
+# relative whenever the caller invokes this by a relative path (a
+# subdirectory invocation, `../../plugins/baton/scripts/baton-gate`), and
+# `cd "$repo_root"` below moves the process to a different directory before
+# that scan runs. A `dirname "$0"` computed after the cd would resolve the
+# SAME relative string against the NEW cwd, landing on whatever
+# `../../plugins/...` means from repo_root rather than from where the
+# caller stood -- the same subdirectory-invocation bug the comment on
+# repo_root below describes, just applied to $0 instead of a hardcoded
+# docs/baton/ path.
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+
+usage() { echo "usage: baton-gate --since <SHA>" >&2; exit 64; }
+
+since=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --since)
+            [ $# -ge 2 ] || usage
+            since="$2"
+            shift 2
+            ;;
+        -h|--help) usage ;;
+        *) usage ;;
+    esac
+done
+[ -n "$since" ] || usage
+
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    echo "baton-gate: not a git repository" >&2
+    exit 1
+fi
+
+# baton-write, baton-lock, baton-journal and baton-observe were each fixed
+# for this once already: invoked from a subdirectory, every relative path
+# below names something that is not there. The assignment is kept separate
+# from the cd rather than inlined as `cd "$(...)"`: under bash 3.2, `cd ""`
+# (what a failed command substitution leaves behind) returns 0 and leaves
+# cwd untouched, so an inlined form would swallow a bare repository's
+# `fatal: this operation must be run in a work tree` and carry on from
+# whatever directory this happened to start in -- reaching the constitution
+# check below and reporting the wrong reason (constitution not found)
+# instead of the real one. Assigning first means a failure here aborts
+# under set -e, with git's own message intact.
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+# The constitution guards run before --since is validated, not after: repo
+# state is checked before argument syntax. A caller with both an
+# unratified constitution and a garbage --since costs two round trips
+# instead of one -- fix the constitution, then get told about --since --
+# but the constitution's state does not depend on anything the caller
+# typed, so it is the more useful failure to see first.
+constitution="docs/baton/constitution.md"
+if [ ! -f "$constitution" ]; then
+    echo "baton-gate: $constitution not found: there is no run here to gate" >&2
+    exit 3
+fi
+
+# Lines between the opening and closing --- only. A "status:" further down
+# in the prose is not the frontmatter's -- and neither is one in a file
+# whose frontmatter was never closed: buffering and emitting only on the
+# terminator is what keeps an unterminated block from quietly redefining
+# "frontmatter" as "everything after line 1", which is the one malformed
+# shape that would otherwise be read as ratified.
+#
+# The carriage return comes off every line before any of it is compared,
+# which is the only place it can come off in time. A file a Windows editor
+# actually writes has CRLF on EVERY line, the opening --- included, and the
+# NR==1 test below is an exact string comparison: "---\r" is not "---", so
+# infm is never set, nothing is ever buffered, and the whole frontmatter
+# comes back empty. The constitution then reads as status 'unset' and the
+# run is refused as unratified -- a file that is correct in every respect,
+# turned away for its line endings. Stripping in fm_field cannot reach
+# this: by then there is no frontmatter left to strip anything from.
+frontmatter="$(awk '
+    { sub(/\r$/, "") }
+    NR==1 && $0=="---" { infm=1; next }
+    infm && $0=="---"  { closed=1; exit }
+    infm               { buf = buf $0 "\n" }
+    END                { if (closed) printf "%s", buf }
+' "$constitution")"
+
+# Prints the value of field $1 from the constitution's frontmatter, or
+# nothing. Never aborts: if this is ever asked for a field with more than
+# one matching line, sed keeps writing after head -1 has already taken its
+# line and exited, sed receives SIGPIPE, and its exit code (141) would
+# propagate through pipefail and take the whole script down with it under
+# set -e -- baton-lock's read_field carries the same `|| true` guard for
+# the same reason.
+#
+# The trailing strip is whitespace, not just the carriage return it started
+# as. `s/^$1: *//` eats leading spaces and nothing at the other end, so a
+# single trailing space -- invisible in every editor, and what a
+# copy-pasted line routinely carries -- stayed glued to the value and
+# defeated unquote's exact match on the closing quote. The value then still
+# began with a quote and did not end with one, which is precisely the shape
+# check_balanced_quotes refuses, so `placeholder_patterns: "TODO|FIXME" `
+# was turned away with "opens a quote it never closes" while pointing at a
+# quote that is closed, sending the reader hunting for a defect the file
+# does not have. [[:space:]] covers \r as well, so this subsumes the CRLF
+# strip that used to be here -- and which the awk above now handles for the
+# whole file anyway, this being the remaining case of a lone \r inside an
+# otherwise LF file.
+#
+# Whitespace INSIDE the quotes is untouched, which matters for a pattern
+# like "TODO $": the closing quote is the last character of the value, so
+# there is nothing at the end for this to strip. Only an unquoted value can
+# lose anything here, and a trailing space on an unquoted verify_cmd or
+# placeholder_patterns changes nothing about what either means.
+fm_field() {
+    printf '%s\n' "$frontmatter" | sed -n "s/^$1: *//p" | head -1 | sed 's/[[:space:]]*$//' || true
+}
+
+# One layer of surrounding quotes, since verify_cmd is conventionally
+# written quoted and placeholder_patterns always is.
+unquote() {
+    local s="$1"
+    case "$s" in
+        \"*\") s="${s#\"}"; s="${s%\"}" ;;
+        \'*\') s="${s#\'}"; s="${s%\'}" ;;
+    esac
+    printf '%s' "$s"
+}
+
+# A value that opens with a quote and does not close with the same quote is
+# malformed frontmatter -- the realistic shapes this catches are a trailing
+# comment left after the closing quote ("true" # notes) and a value that
+# spilled onto a second line and was never closed. Both leave a string that
+# still starts with the quote character but does not end with it, and
+# unquote only strips a leading quote when the matching trailing one is
+# there too -- so a mismatched value sails through unquote unchanged, quote
+# characters and all, and lands in the command or pattern as literal text
+# nothing in the file was meant to contain. This is one rule, not a YAML
+# parser: it catches an opened-but-never-closed quote and nothing subtler.
+check_balanced_quotes() {
+    local field="$1" raw="$2"
+    case "$raw" in
+        \"*\"|\'*\'|"") return 0 ;;
+        \"*|\'*)
+            echo "baton-gate: the value of $field in the constitution opens with a quote it never closes: $raw" >&2
+            exit 3
+            ;;
+    esac
+}
+
+status="$(fm_field status)"
+if [ "$status" != "ratified" ]; then
+    echo "baton-gate: constitution status is '${status:-unset}', not ratified: gating a run that was never handed over judges work against rules nobody signed" >&2
+    exit 3
+fi
+
+# Whole-file substring match, deliberately narrower than baton-resume's:
+# baton-resume matches only a frontmatter field whose value begins with
+# REPLACE-WITH, because a resume that halts permanently over the literal
+# string surviving in a comment is worse than the alternative. A gate is
+# different -- it only ever refuses once, not permanently -- so it fails
+# closed instead: a constitution that quotes REPLACE-WITH anywhere in its
+# prose, even as documentation, is refused until it is reworded.
+if grep -q 'REPLACE-WITH' "$constitution"; then
+    echo "baton-gate: the constitution still carries an unfilled placeholder marker; it has not been ratified whatever its status field says" >&2
+    exit 3
+fi
+
+# Presence, here with the other exit-3 checks, and deliberately not down
+# beside the pattern's own quote and compile checks where it used to sit.
+# Those are exit 4 -- the gate unable to gather -- and this is exit 3, the
+# constitution not being fit to gate against, which is the group this file
+# already argues should be reported first. Left where it was, a constitution
+# missing this field AND naming an unrunnable verify_cmd reported only the
+# verify_cmd problem: the human fixes that, reruns, and only then learns
+# about the missing field, having paid two round trips for one reading of
+# one file.
+#
+# Absence is checked separately from an empty value, because they are
+# different callers asking different things -- /baton:init's template
+# always writes this field, so an absent one means someone removed it,
+# which does not carry the same "scan nothing, on purpose" meaning as
+# writing it empty does (see the empty-pattern comment in the scan loop).
+if ! printf '%s\n' "$frontmatter" | grep -q '^placeholder_patterns:'; then
+    echo "baton-gate: placeholder_patterns is not set in the constitution -- write placeholder_patterns: \"\" if scanning nothing is what is meant" >&2
+    exit 3
+fi
+
+# --since sits here, between the two groups of constitution checks above and
+# below it, deliberately -- not because "repo state" ends and "the rest"
+# begins. verify_cmd's own checks below are repo state too, and they run
+# after --since, not before it. Everything above this point is a handful of
+# file reads; everything below it can run a whole test suite. A typo'd
+# --since must not cost a real test run, so it is the last cheap thing
+# checked before the expensive one, not the last thing checked, full stop.
+#
+# Resolved to the SHA it names here, not carried around as whatever the
+# caller typed. baton-observe's --changed-since does a bare
+# `git diff --name-only`, which is ambiguous whenever the same string also
+# names a tracked path (a branch called wave1 with a wave1/ directory in
+# the tree, say) -- `--verify -q REF^{commit}` is unambiguous, so resolving
+# once here means baton-observe is never asked the ambiguous question.
+# Using the resolved SHA for the since= output fixes a second problem the
+# raw string had: --since wavebase used to print since=wavebase into a
+# verdict meant to be permanent evidence, holding a moving reference
+# instead of the fixed point the gate was actually run against.
+since_sha="$(git rev-parse --verify -q "${since}^{commit}" 2>/dev/null)" || {
+    echo "baton-gate: --since '$since' is not a commit in this repository" >&2
+    exit 64
+}
+
+verify_cmd_raw="$(fm_field verify_cmd)"
+check_balanced_quotes verify_cmd "$verify_cmd_raw"
+verify_cmd="$(unquote "$verify_cmd_raw")"
+if [ -z "$verify_cmd" ]; then
+    echo "baton-gate: verify_cmd is empty in the constitution: there is nothing to run, so there is no evidence to gather" >&2
+    exit 4
+fi
+
+# "CI=1 npm test", "NODE_ENV=test npx jest", "RAILS_ENV=test bundle exec
+# rspec" are the ordinary shape of a test command, not an exotic one --
+# CI=1 names npm, not CI=1. Refusing them would stop the run over nothing,
+# and exit 4 means stop: verify_cmd lives in the constitution, which no tool
+# here can edit to unblock it, so this guard errs toward letting a command
+# word through rather than refusing one it merely failed to parse. What it
+# strips is a leading run of plain NAME=VALUE words; a builtin, a keyword,
+# or a first word carrying shell syntax (`[[`, a subshell, a redirect) is
+# left alone and falls through to command -v below, which will correctly
+# say no -- none of those is a runnable binary either.
+verify_head="$verify_cmd"
+while :; do
+    case "$verify_head" in
+        [[:space:]]*) verify_head="${verify_head#[[:space:]]}"; continue ;;
+    esac
+    verify_word="${verify_head%%[[:space:]]*}"
+    case "$verify_word" in
+        [A-Za-z_][A-Za-z0-9_]*=*) verify_head="${verify_head#"$verify_word"}" ;;
+        *) break ;;
+    esac
+done
+verify_bin="${verify_head%%[[:space:]]*}"
+
+# command -v is asked about bash's own idea of "$verify_bin" -- which is why
+# the run below uses bash too, not sh. A guard that consults one shell's
+# builtins and keywords while the run uses another would pass words the run
+# cannot execute: on the Debian family /bin/sh is dash, and bash's
+# command -v vouches for `[[`, `source`, `let`, `declare` and `function`,
+# none of which dash has. A verify_cmd of "[[ 1 == 1 ]]" run there under
+# `sh -c` reports verify_exit=127 -- a command that was never found,
+# arriving dressed as a suite that failed. This check is the first word
+# only, so a binary missing later in the line (a pipeline's second stage, an
+# `&&`'d command) is not caught here either -- that also surfaces as
+# verify_exit=127, and the script deliberately does not remap it to a code
+# of its own: a real test runner can legitimately propagate a 127 from
+# something it invoked, and guessing which case this is would be worse than
+# reporting the number as given. 127 means "did not run", not "did not
+# pass" -- that reading belongs to the caller, and the baton-autopilot skill
+# states it.
+if ! command -v "$verify_bin" >/dev/null 2>&1; then
+    echo "baton-gate: verify_cmd names '$verify_bin', which is not runnable here" >&2
+    exit 4
+fi
+
+# The pattern's own syntax is checked here, still before verify_cmd runs,
+# for the same reason --since is validated before it: a defect in the
+# constitution is not something a test run can fix, so finding out only
+# after paying for one would repeat the mistake this file's header already
+# argues against making for the exit code. Presence is checked much earlier,
+# with the other exit-3 constitution checks -- see the note there.
+patterns_raw="$(fm_field placeholder_patterns)"
+check_balanced_quotes placeholder_patterns "$patterns_raw"
+patterns="$(unquote "$patterns_raw")"
+
+# A non-empty pattern that does not compile is not a choice anyone made on
+# purpose, unlike an empty one (see below). `grep -Eq -- "$patterns"
+# /dev/null` compiles the pattern against empty input, where the only
+# possible outcomes are exit 1 (compiled, no match -- there is nothing to
+# match) or exit 2 (did not compile); checked once here rather than once
+# per file in the loop, since compiling is a property of the pattern, not
+# of any particular file. A pattern that cannot compile is the gate unable
+# to look, same family as verify_cmd naming a binary that does not exist --
+# exit 4, not 3.
+if [ -n "$patterns" ]; then
+    patterns_rc=0
+    grep -Eq -- "$patterns" /dev/null || patterns_rc=$?
+    if [ "$patterns_rc" -eq 2 ]; then
+        echo "baton-gate: placeholder_patterns '$patterns' in the constitution is not a valid extended regular expression" >&2
+        exit 4
+    fi
+fi
+
+# .baton/ is gitignored by every /baton:init'd repository, which is the
+# point: a gate run that left an untracked log behind would show up as a
+# dirty tree at the next checkpoint and read as work in flight.
+#
+# Both steps below are guarded, and both exit 4 rather than letting a
+# failure fall through into verify_exit: without this, a read-only .baton/
+# (stale permissions, a full disk, a leftover root-owned log) makes the run
+# below fail before the command is ever reached, and the $? from THAT looks
+# exactly like a suite with a failing test -- the gate being unable to
+# gather evidence, presenting as evidence that the code is broken. The mkdir
+# guard also covers the case where .baton already exists as a plain file
+# rather than a directory: unguarded, `mkdir -p` fails there and set -e
+# would abort with no baton-gate: prefix and exit 1 -- a code the header
+# table above already spends on "not a git repository".
+mkdir -p .baton || {
+    echo "baton-gate: cannot create .baton/ -- check whether something at that path is not a directory, or the parent is not writable" >&2
+    exit 4
+}
+verify_log=".baton/gate-verify.log"
+: > "$verify_log" || {
+    echo "baton-gate: cannot write $verify_log -- check .baton/'s permissions and the filesystem's free space" >&2
+    exit 4
+}
+
+verify_exit=0
+# bash, the same shell command -v consulted above -- see the comment on the
+# guard. Stdin is /dev/null regardless of what this script inherited: a
+# verify_cmd that reads stdin (a bare `cat`, a runner left waiting on a
+# prompt it was never given) would otherwise hang forever with no one left
+# to answer it, which is the one outcome this whole feature exists to
+# avoid -- it produces neither a closed wave nor a named stopping point.
+bash -c "$verify_cmd" < /dev/null > "$verify_log" 2>&1 || verify_exit=$?
+
+# The facts are read BEFORE the changed set, and the order is load-bearing
+# rather than arbitrary. These are two separate calls to baton-observe, so
+# they are two separate moments, and anything that lands in the gap between
+# them lands between the sha the verdict names and the tree the scan
+# looked at. The gap is small -- tens of milliseconds -- but a wave that
+# ends by committing its work is exactly the caller most likely to be
+# landing something right about now, and "small" is not "closed".
+#
+# Read the other way round, the drift is silent and unsafe: a commit
+# arriving in the window puts a sha in the verdict that the scan never
+# examined, so the block reads as one coherent statement about one tree
+# while describing two. Reproduced by landing a commit between the calls
+# and getting back a verdict naming the new sha with changed_files still
+# reflecting the older tree. Read in this order, the same commit can only
+# make the scan cover MORE than sha claims -- the gate looking at work it
+# is not taking credit for, which fails toward refusing rather than toward
+# passing. Neither order closes the window; only one makes what leaks
+# through harmless.
+#
+# sha and work_sha come from baton-observe rather than a git call here for
+# two reasons: it is the one place that distinction is already implemented
+# (see the header note), and baton-observe's own guard against an unborn
+# HEAD -- `git rev-parse --verify -q HEAD`, which reports empty rather than
+# failing -- means this call cannot hand back git's raw error text the way
+# a bare `git rev-parse HEAD` used to. That used to reach the printf block
+# unassigned and unchecked, and `git rev-parse` prints its own argument
+# back to stdout when it cannot resolve it, so an unborn HEAD used to write
+# the literal string "HEAD" into sha= as if it were a real commit, with
+# printf succeeding regardless of what the substitution inside it did.
+#
+# Guarded, not a bare command substitution: a raw failure here would die
+# under set -e with a bare git message and no baton-gate: prefix, no
+# key=value block at all -- discarding a verify_cmd run that had already
+# finished, possibly minutes of test time, and leaving the caller with a
+# stack trace instead of the evidence gathered so far.
+observed="$("$script_dir/baton-observe")" || {
+    echo "baton-gate: baton-observe could not report the repository's current state -- verify_cmd already ran; its output is at $verify_log" >&2
+    exit 4
+}
+sha="$(printf '%s\n' "$observed" | sed -n 's/^sha=//p')"
+work_sha="$(printf '%s\n' "$observed" | sed -n 's/^work_sha=//p')"
+# Taken from the call just made, not recomputed with a `git status` of this
+# script's own: baton-observe already passes -uall (defeating a repository
+# with status.showUntrackedFiles=no, where a whole directory of new work
+# reports as a clean tree) and core.quotePath=false, both of which have
+# hidden a dirty tree from this suite before. A third invocation would also
+# be a third moment in time, which is the thing the ordering above exists
+# to keep to a minimum.
+tree_clean="$(printf '%s\n' "$observed" | sed -n 's/^tree_clean=//p')"
+
+# The guard above catches a baton-observe that FAILS. This catches one that
+# succeeds without answering -- exit 0 and no output, which a truncated
+# pipe, a half-written install or a shim all produce, and which no `||`
+# guard can see because the status was zero. Unchecked, every fact above
+# parses to empty and the block still reads verify_exit=0,
+# placeholder_hits=0, exit 0: a gate that gathered nothing, wearing the face
+# of a gate that found nothing wrong. That is the one shape an unattended
+# agent must never be handed, since it closes a wave on no evidence at all.
+#
+# tree_clean is the field that carries the check, and it has to be this one.
+# baton-observe prints it as exactly true or false on every success --
+# including on an unborn HEAD, where sha and work_sha are legitimately
+# empty and this is still false. So sha cannot serve: empty is a real
+# answer there, and the suite pins it as one.
+case "$tree_clean" in
+    true|false) ;;
+    *)
+        echo "baton-gate: baton-observe returned no usable state (tree_clean='$tree_clean') -- verify_cmd already ran; its output is at $verify_log" >&2
+        exit 4
+        ;;
+esac
+
+# Second, after the facts above -- see the ordering note there. Guarded for
+# the same reason that call is, and reproduced once already: --since used
+# to reach baton-observe as whatever string the caller typed, and when that
+# string also named a tracked path `git diff --name-only` read it as
+# ambiguous and died with exit 128. Resolving --since to since_sha above
+# removed that particular ambiguity; this guard is what stands between
+# whatever ambiguity remains in baton-observe's own git calls and a
+# caller-facing crash that would throw away a finished verify_cmd run.
+changed="$("$script_dir/baton-observe" --changed-since "$since_sha")" || {
+    echo "baton-gate: baton-observe could not report what changed since $since_sha -- verify_cmd already ran; its output is at $verify_log" >&2
+    exit 4
+}
+
+placeholder_hits=0
+placeholder_files=""
+changed_files=0
+while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    # A path git C-quotes (wrapped in "..." with backslash escapes) names a
+    # byte sequence this loop cannot resolve to a real file: quoting means
+    # the path holds a backslash, a literal double-quote, or a control
+    # character such as a newline, none of which core.quotePath=false
+    # unquotes -- that setting covers non-ASCII bytes only (see
+    # baton-observe). Refusing loudly here, rather than letting the `-f`
+    # check below silently decide the (wrong, literal) quoted string is not
+    # a file, is the point of this whole review round: a gate that cannot
+    # look at a changed file must say so, not report it as though it looked
+    # and found nothing.
+    case "$f" in
+        \"*)
+            echo "baton-gate: cannot scan $f -- git quoted this path because it contains a backslash, a literal quote, or a control character this scan cannot resolve to a real file" >&2
+            exit 4
+            ;;
+    esac
+    # Deleted paths still appear in the diff, and have nothing left to
+    # scan; a quoted path never reaches here at all, having been refused
+    # above. Nothing else currently falls through this check silently.
+    [ -f "$f" ] || continue
+    # baton's own files describe the work rather than being it. A journal
+    # entry that says "we agreed to allow TODO here" is not a stub, and a
+    # gate verdict that quotes one is evidence about a scan, not a subject
+    # of it. This is the same exclusion baton-observe applies for work_sha.
+    #
+    # .baton/ is excluded for a different reason: it is this script's own
+    # output, not the wave's work -- .baton/gate-verify.log is written by
+    # the run just above, before this loop ever sees it, and without this
+    # exclusion the gate would count its own log as evidence of work. This
+    # holds regardless of whether the repository gitignores .baton/, which
+    # a /baton:init'd one and every fixture here do: the log is an artefact
+    # of measuring, not a thing measured. The exclusion is kept even so --
+    # a repository that dropped the gitignore line would otherwise start
+    # counting the log, and tree_clean below would go false on it too.
+    case "$f" in
+        docs/baton/*) continue ;;
+        .baton/*) continue ;;
+    esac
+    changed_files=$((changed_files + 1))
+    # An empty pattern list is a legitimate choice by the human who owns
+    # the constitution. It must mean "scan nothing" -- grep -E '' matches
+    # every line, so treating it as a pattern would fail every gate.
+    [ -n "$patterns" ] || continue
+    # grep's own exit status is read, not discarded behind 2>/dev/null: 0
+    # is a hit, 1 is clean, and anything else (2, typically) means grep
+    # could not read THIS file -- a permission this process does not have,
+    # or a race where the path was removed between the -f check above and
+    # here. The pattern itself was already proven to compile before this
+    # loop started, so a non-0/1 status in here is the file's problem, not
+    # the pattern's, and it is the gate unable to look: exit 4, with grep's
+    # own diagnosis left on stderr (no 2>/dev/null) alongside this
+    # message, not silently read as "no match".
+    file_rc=0
+    grep -Eq -- "$patterns" "$f" || file_rc=$?
+    case "$file_rc" in
+        0)
+            placeholder_hits=$((placeholder_hits + 1))
+            placeholder_files="${placeholder_files:+$placeholder_files,}$f"
+            ;;
+        1) : ;;
+        *)
+            echo "baton-gate: could not scan $f for placeholder markers" >&2
+            exit 4
+            ;;
+    esac
+done <<EOF
+$changed
+EOF
+
+printf 'verify_cmd=%s\n' "$verify_cmd"
+printf 'verify_exit=%s\n' "$verify_exit"
+printf 'verify_log=%s\n' "$verify_log"
+# Immediately above placeholder_hits, because the two are one statement and
+# the count alone is ambiguous in the direction that closes waves. A human
+# who writes placeholder_patterns: "" gets placeholder_hits=0, and so does a
+# wave whose every changed file was read and found clean -- the same three
+# characters for "nothing was asked" and "asked, and found nothing".
+# changed_files does not separate them either: the loop counts a file before
+# it consults the pattern, so a switched-off scan still reports files
+# considered. An agent running unattended reads that zero as the placeholder
+# half of a green gate and closes the wave, which is exactly the reading
+# that must not be available without the evidence for it.
+#
+# The unquoted value is printed, the same form the scan actually used and
+# the same treatment verify_cmd gets above -- what the gate looked for
+# belongs in the verdict beside what it found, for the same reason the
+# command that was run belongs there beside its exit code.
+printf 'placeholder_patterns=%s\n' "$patterns"
+printf 'placeholder_hits=%s\n' "$placeholder_hits"
+printf 'placeholder_files=%s\n' "$placeholder_files"
+printf 'changed_files=%s\n' "$changed_files"
+printf 'since=%s\n' "$since_sha"
+printf 'sha=%s\n' "$sha"
+printf 'work_sha=%s\n' "$work_sha"
+printf 'tree_clean=%s\n' "$tree_clean"
+exit 0

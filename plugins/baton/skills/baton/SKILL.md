@@ -76,19 +76,32 @@ diverged.
   `writer`, `updated_at`. Fix them silently. Each describes something you can
   check at this moment — the repository, the lease file, the clock — so the
   file's copy of it is never the authority.
-- **Claimed fields** — a wave marked `done`, a gate marked `pass`, the
-  `closed_at_sha` recorded against a closed wave, which is the one claim
+- **Claimed fields** — a wave marked `done`, a gate marked `auto` or `pass`,
+  the `closed_at_sha` recorded against a closed wave, which is the one claim
   `baton-resume` checks mechanically. Never fix these. Set `suspect: true`,
   describe the divergence in the `Suspect` line of `state.md`'s `Now` section,
   and surface it. Silently correcting a claim destroys the evidence that
   something went wrong.
+- **Granted fields** — `suspect`, `needs_human`, `autopilot`,
+  `autopilot_grant`. Neither observed nor claimed: they say how much of a
+  human this run currently needs. You may only move them
+  **toward more human involvement**. Raising `suspect` or `needs_human` is
+  always yours; clearing either is the human's. `autopilot` runs the same rule
+  in the other direction — writing `off` is always yours, writing anything
+  else is the human's, through `/baton:auto`, a command you cannot invoke.
 
 A field on neither list is claimed. These lists are what the schema carries
 today, and the default has to be the reading that preserves evidence.
 
-`suspect` and `needs_human` are neither kind. You raise them and a human
-clears them. Clearing your own `suspect` is the same act as silently fixing
-the claim that raised it.
+Clearing your own `suspect` is the same act as silently fixing the claim that
+raised it. Granting yourself the autopilot is that act one level up: it
+removes the human from every decision at once.
+
+The `gate` column reads `—` when nothing produced a verdict, `auto` (closed
+under the autopilot, with a verdict filed in `docs/baton/gates/`), or `pass`
+(a human confirmed it). They are not interchangeable: `auto` is a record that
+the tests were green and the criteria were walked, by the same agent that did
+the work. `pass` is a second party saying so.
 
 ## The threshold
 
@@ -130,6 +143,8 @@ These thoughts mean stop — you are rationalising.
 | "I'll update the constitution to match what we learned" | You do not write the constitution. Record an `incoming` entry. |
 | "The exit criterion is unrealistic, I'll read it loosely" | A criterion read loosely is a gate not run. Escalate instead. |
 | "The constitution still says draft, but the intent is clear" | An unratified constitution is a guess about what the human wants. Stop and ask for ratification. |
+| "The human is away, so the autopilot is implied" | It is set by a command or it is not set. An implied grant is one you gave yourself. |
+| "I'll write `pass`, the tests were green" | Green tests are `auto`. `pass` says someone else looked. |
 
 ## Related skills
 

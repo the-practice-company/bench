@@ -14,7 +14,25 @@ deviations matter more than progress:
 1. **Stopped or suspect.** If `needs_human: true`, say what stopped the run and
    what the human has to decide. If `suspect: true`, show the `Suspect` line.
    If neither is set, say nothing here rather than reporting "all good".
-2. **Decisions awaiting review.** Entries live in `docs/baton/journal/`, named
+2. **Whether this run is unattended.** Read `autopilot` from the frontmatter,
+   normalized the way the session-start hook already does before comparing
+   it, not compared literally: trim whitespace, strip a trailing `\r`, strip
+   one layer of matching quotes, fold case. `state.md` is written by an
+   agent, not validated input, so `off`, `"OFF"`, `off ` and a CRLF-terminated
+   line are all the same value, and the dangerous direction is a false
+   positive here — reporting "unattended" for a run the human turned off
+   tells them the opposite of the truth, which is worse than saying nothing.
+
+   If, once normalized, it is not `off`, check `autopilot_grant` before
+   reporting anything: `—`, or any value that names no journal entry, means
+   the claim of a grant has nothing behind it, and that disagreement between
+   the two fields is itself what the human needs to see — say so plainly,
+   rather than printing `Autopilot: all` as though the grant were sound.
+   Otherwise say so on its own line, with the scope and the granting journal
+   entry: `Autopilot: all (DEC-0007)`. If `autopilot` is `off`, say nothing
+   here — an `Autopilot: off` line in every report is noise in the one place
+   that has to stay short enough to be read in full.
+3. **Decisions awaiting review.** Entries live in `docs/baton/journal/`, named
    `NNNN-<slug>.md`; `baton-journal` allocates `NNNN` strictly increasing, so
    the numeric prefix is the order — sort on it, highest first. Not the
    frontmatter `timestamp`: the prefix is allocated by one script and cannot
@@ -23,8 +41,16 @@ deviations matter more than progress:
    each: id, what was decided, why it needs them. Include `incoming` entries:
    those are inputs that arrived mid-run and may need an amendment to the
    constitution.
-3. **Now.** Current wave, `Next action`, `In flight`.
-4. **Waves.** The table, one line per wave, statuses only.
+4. **Waves closed without a human.** Any row in the Waves table whose `gate`
+   reads `auto` is waiting on review — a wave the autopilot closed and no
+   human has confirmed yet. Name the verdict file under `docs/baton/gates/`
+   for each one, so the review has somewhere to start. `pass` means a human
+   already confirmed it; `—` means nothing has produced a verdict at all. A
+   run that has never closed a wave under the autopilot has no
+   `docs/baton/gates/` directory yet — that is the ordinary case, not a
+   fault to report; say nothing here rather than reporting an error.
+5. **Now.** Current wave, `Next action`, `In flight`.
+6. **Waves.** The table, one line per wave, statuses only.
 
 Then verify and report:
 

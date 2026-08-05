@@ -9,6 +9,10 @@ observed_branch: REPLACE-WITH-BRANCH
 tree_clean: true
 suspect: false
 needs_human: false
+# Granted, not observed and not claimed: only a human turns this on, with
+# /baton:auto, and any party may turn it off. off | all | <wave number>.
+autopilot: off
+autopilot_grant: —
 ---
 
 # State
@@ -25,6 +29,9 @@ needs_human: false
 
 **Status:** `todo | doing | done | blocked`.
 `blocked` waits on a dependency; `needs_human: true` (frontmatter) stops the whole run.
+
+**Gate:** `—` nothing produced a verdict; `auto` closed under the autopilot,
+verdict in `docs/baton/gates/`; `pass` a human confirmed it.
 
 **Current wave:** 1 — REPLACE-WITH-WAVE-NAME
 
