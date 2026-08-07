@@ -90,12 +90,13 @@ absolute path to the root of this checkout — the directory that contains
 
 ```
 /plugin marketplace add <repo-root>
-/plugin install baton@baton
+/plugin install baton@bench
 ```
 
-(`baton@baton` is not a typo — the marketplace declared in
-`.claude-plugin/marketplace.json` is itself named `baton`, and it lists a
-plugin also named `baton`; the syntax is `<plugin-name>@<marketplace-name>`.)
+(The syntax is `<plugin-name>@<marketplace-name>`: `baton` is the plugin,
+`bench` is the marketplace declared in `.claude-plugin/marketplace.json`.
+Install from the checkout rather than from `the-practice-company/bench`, so
+the run exercises the working tree you are testing.)
 
 When prompted for a scope, pick "user" — that enables it for every future
 `claude` session on this machine, not just this one, so you will not repeat
@@ -217,7 +218,7 @@ claude
 ```
 
 Install the plugin and confirm it the same way as scenario 1's setup above
-(`/plugin marketplace add <repo-root>`, `/plugin install baton@baton`, a
+(`/plugin marketplace add <repo-root>`, `/plugin install baton@bench`, a
 fresh session, `/plugin list --enabled`) if this is a different machine or
 directory than the one scenario 1 already set up.
 

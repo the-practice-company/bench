@@ -1,6 +1,17 @@
-# baton
+# bench
 
-Keeps goal and state coherent across multi-day autonomous agent runs.
+A Claude Code plugin marketplace for long-running agent work.
+
+It ships one plugin today:
+
+- **[baton](plugins/baton)** — keeps goal and state coherent across
+  multi-day autonomous agent runs.
+
+The rest of this file is about baton, since it is currently the only thing
+here. When a second plugin arrives, this page becomes an index and baton's
+own detail moves to `plugins/baton/README.md`.
+
+## baton
 
 An agent working one task for days will have its context compacted many
 times over. Each time, it loses the thread: what it already finished, what
@@ -23,18 +34,22 @@ along the way.
 
 ## Install
 
-baton is not published yet — there is no remote to fetch it from, so point
-Claude Code at a local checkout:
-
 ```
-/plugin marketplace add /path/to/this/checkout
-/plugin install baton@baton
+/plugin marketplace add the-practice-company/bench
+/plugin install baton@bench
 /plugin install superpowers@claude-plugins-official
 ```
 
-`baton@baton` is not a typo: the marketplace this repository ships
-(`.claude-plugin/marketplace.json`) is itself named `baton`, and it lists a
-plugin also named `baton` — the syntax is `<plugin-name>@<marketplace-name>`.
+The syntax is `<plugin-name>@<marketplace-name>`: `baton` is the plugin,
+`bench` is the marketplace this repository ships in
+`.claude-plugin/marketplace.json`.
+
+To work against a local checkout instead, point the first command at the
+directory rather than the repository:
+
+```
+/plugin marketplace add /path/to/this/checkout
+```
 
 superpowers comes from `claude-plugins-official`, the marketplace Claude Code
 already knows about, rather than from a copy re-exported here. Anthropic's

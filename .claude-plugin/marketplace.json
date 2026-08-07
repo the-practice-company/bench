@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "baton",
-  "description": "Keeps goal and state coherent across multi-day autonomous agent runs",
+  "name": "bench",
+  "description": "Claude Code plugins for long-running agent work",
   "owner": {
     "name": "Artem Kononov",
     "email": "artemkononov2000@gmail.com"
