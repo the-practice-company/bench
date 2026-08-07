@@ -1,8 +1,40 @@
 # baton
 
-Installed. Start a fresh session if you have not already — hooks, skills and
-commands only take effect in a session that begins after the install, not the
-one you installed from.
+Keeps goal and state coherent across multi-day autonomous agent runs.
+
+An agent working one task for days will have its context compacted many
+times over. Each time, it loses the thread: what it already finished, what
+it was doing next, and what it was told never to do. baton makes that
+recoverable in one step — and makes the recovery verifiable against the
+repository, not trusted from a summary the model wrote about itself.
+
+State lives in `docs/baton/`, committed to git. Git history is the event
+log. A decision journal records why choices were made, not just what they
+were. Checkpointing persists state before context is lost; resuming reads it
+back and checks it against the repository rather than taking the file's word
+for it.
+
+It is a thin process layer on top of
+[superpowers](https://github.com/obra/superpowers), not a replacement for
+it. superpowers covers one unit of work end to end — spec, plan, TDD,
+review. baton covers what sits above and between those units across days:
+which unit is next, what has already closed, and what must not be broken
+along the way.
+
+## Install
+
+```
+/plugin marketplace add the-practice-company/bench
+/plugin install baton@bench
+/plugin install superpowers@claude-plugins-official
+```
+
+baton works without superpowers; you will just be writing the per-wave
+specs, plans and tests by hand.
+
+Start a fresh session afterwards — hooks, skills and commands only take
+effect in a session that begins after the install, not the one you installed
+from.
 
 ## First run
 
@@ -20,51 +52,101 @@ change `status: draft` to `status: ratified` and fill `ratified_by`,
 That ratification is not paperwork. From that moment the constitution is
 read-only to the agent: `baton-write`, the tool every checkpoint and resume
 uses, refuses that one path unconditionally, so the thresholds the run is
-judged against sit outside the reach of the thing being judged. `/baton:init`
-is the single exception, which is why it is the one command the model cannot
-invoke on itself — only you can type it.
+judged against sit outside the reach of the thing being judged.
 
 ## Day to day
 
-```
-/baton:checkpoint    # before compacting context by hand
-/baton:status        # where the run stands, deviations first
-```
+| Command | What it does |
+|---|---|
+| `/baton:init` | Once: decompose the umbrella spec, write the constitution. Human-typed only. |
+| `/baton:checkpoint` | Persist run state now — before compacting context by hand. |
+| `/baton:status` | Show where the run stands, deviations first. |
+| `/baton:auto [wave] [--since <ref>]` | Hand the run over: readiness review, then work with no human present. Human-typed only. |
+| `/baton:continue` | Pick an unattended run back up on a fresh session. Human-typed only. |
 
-Between those, leave it alone. Two hooks do the work you would otherwise have
-to remember: one saves repository facts just before context is compacted, and
-one re-injects goal, operating mode, non-negotiables and next action at the
-start of every session — whether it began by startup, resume, clear,
-compaction or fork.
+Between those, the agent works on its own. Skills fire on their own
+triggers, and two hooks — one just before compaction, one at the start of
+every session, whether it began by startup, resume, clear, compaction or
+fork — make recovery automatic rather than something the agent has to
+remember to do. The second is deliberately not limited to sessions that
+follow a compaction: day two of a multi-day run begins by `startup` or
+`resume`, with the least surviving context and the most need for state to be
+put back deterministically.
+
+Three of the five are human-typed only. `/baton:init` is the single way
+around `baton-write`'s refusal to touch the constitution, and a refusal
+reachable through a command the agent can invoke on itself would not be a
+refusal at all. `/baton:auto` and `/baton:continue` grant unattended work and
+resume it — the human's calls, not the agent's to make for itself.
+`/baton:checkpoint` and `/baton:status` stay open to the model, because
+neither writes anything the run is judged against.
+
+## Working unattended
+
+`/baton:auto` runs a readiness review — which waves in what order, what
+closing each one means quoted from the constitution, and where the agent is
+unsure — and then the agent carries waves to closure with nobody watching.
+
+Each wave is gated before it closes: `baton-gate` runs the constitution's
+`verify_cmd` and scans what the wave touched for placeholder markers, and the
+agent walks the exit criteria one at a time against the repository. Both
+halves are filed as a verdict under `docs/baton/gates/`. A wave closed this
+way reads `auto` in the gate column, never `pass` — `pass` says a human
+confirmed it, and turning `auto` into `pass` is the morning's work.
+
+`/baton:continue` is the one word that restarts an unattended run on a fresh
+session, deliberately not automatic: a session started to check one thing has
+not agreed to an hour of unattended work, and only a human typing the command
+can say otherwise.
 
 ## What appears in your repository
 
 ```
 docs/baton/
-  constitution.md    yours, ratified by you, never written by the agent
-  state.md           where the run is now; capped at 60 lines
+  constitution.md    ratified by you; baton-write refuses this path outright
+  state.md           where the run is now; capped at 60 lines, and
+                      baton-write refuses to write anything longer
   journal/           decisions, append-only, never edited
+  gates/             verdicts filed when a wave closes under the autopilot --
+                      baton-gate's mechanical evidence, plus the agent's own
+                      walk through the exit criteria, one file per attempt
 ```
 
 All committed markdown — `git log -p docs/baton/state.md` is the whole
-history, readable without any tool. A separate `.baton/` describes the current
-session rather than the run; `/baton:init` adds it to `.gitignore`.
+history, readable without any tool. A separate `.baton/` holds the writer
+lease and a snapshot taken just before compaction; it describes the current
+session rather than the run, and `/baton:init` adds it to `.gitignore`.
+
+## How it stays honest
+
+- **The repository is the source of truth about facts.** Observed fields —
+  the commit, the branch, whether the tree is clean — are re-derived every
+  time, never remembered. A claim that disagrees with the repository (a wave
+  marked done that the repository doesn't back up) is flagged, never quietly
+  corrected.
+- **One writer.** The writer role is held under a lock for the whole
+  session, not re-acquired per write.
+- **No state outside the log.** Every checkpoint is a commit, so
+  `git log -p docs/baton/state.md` is the full history. A checkpoint with
+  nothing to say writes nothing.
 
 ## Worth knowing before you rely on it
 
-There is no gate yet. Nothing mechanically stops an agent from declaring a
-wave done that isn't — closing a wave runs on prose the agent is asked to
-follow (every exit criterion checked against the repository, then a human
-confirms) rather than on enforcement. The constitution's `verify_cmd` is
-reserved for the gate that will eventually read it; until then nothing runs
-it automatically.
+**There is no second party yet.** `baton-gate` gathers the mechanical
+evidence and the agent walks the exit criteria, but the verdict is written by
+the same agent that did the work. That is exactly why an unattended close
+reads `auto` and not `pass`. An independent `baton-verify` is not built.
 
-baton assumes [superpowers](https://github.com/obra/superpowers) is installed
-alongside it for per-wave specs, plans and TDD —
-`/plugin install superpowers@claude-plugins-official`. It works without it;
-you will just be writing those by hand.
+A wave can still close the way it always could, with no autopilot involved:
+every exit criterion checked one by one against the repository, and a human
+confirms it before the wave moves to `done`.
 
-Needs `git`, `bash` and the usual Unix text tools. No runtime, no package
-manager, no server.
+## Requirements
+
+`git`, `bash`, and the standard Unix text tools that ship with any Linux or
+macOS install — `grep`, `sed`, `head`, `tr`, `sort`, `dirname`, `basename`,
+`date`, `wc`. No language runtime, no package manager, no server.
+
+## Licence
 
 MIT — see [LICENSE](LICENSE).
