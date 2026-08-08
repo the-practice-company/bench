@@ -45,20 +45,18 @@ def normalise(target, base=""):
 def escapes_root(target, base=""):
     """Выводит ли ссылка за корень репозитория.
 
-    Абсолютный путь и `~` — выход всегда. Для `..` граница — вершина
-    `base` (первый сегмент, обычно имя зоны): если после нормализации
-    результат уходит из-под этого сегмента, ссылка покинула тот раздел
-    репозитория, в котором лежит ссылающийся файл — даже если формально
-    осталась где-то внутри репозитория целиком. Без `base` (файл сам в
-    корне) граница — сам корень: любой уцелевший `..` и есть выход.
-    URL не путь и потому не выходит никуда.
+    Абсолютный путь и `~` — выход всегда. Для `..` граница — сам корень
+    репозитория, а не зона: `base` — путь ссылающегося файла, поэтому
+    нормализация идёт от его каталога (`dirname(base)`), и уцелевший
+    после неё `..` — это и есть сигнал выхода за корень (см. docstring
+    `normalise`). Переход в соседнюю зону внутри репозитория выходом не
+    считается — это отдельный класс находки (`link-to-transient` и
+    т.п.), не `escapes-root`. URL не путь и потому не выходит никуда.
     """
     target = target.strip()
     if is_url(target) or target.startswith("#"):
         return False
     if target.startswith("/") or target.startswith("~"):
         return True
-    normalised = normalise(target, base)
-    if not base:
-        return normalised == ".." or normalised.startswith("../")
-    return normalised.split("/", 1)[0] != base.split("/", 1)[0]
+    normalised = normalise(target, posixpath.dirname(base) if base else base)
+    return normalised == ".." or normalised.startswith("../")
