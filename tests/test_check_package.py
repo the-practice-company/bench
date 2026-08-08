@@ -40,6 +40,24 @@ class TestPackageCheck(unittest.TestCase):
                 encoding="utf-8")
             self.assertIn("unknown-hook-event", check(root).counts())
 
+    def test_unknown_hook_type_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "hooks" / "hooks.json").write_text(
+                json.dumps({"hooks": {"SessionStart": [
+                    {"matcher": "*", "hooks": [{"type": "script"}]}
+                ]}}), encoding="utf-8")
+            self.assertIn("unknown-hook-type", check(root).counts())
+
+    def test_unknown_matcher_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "hooks" / "hooks.json").write_text(
+                json.dumps({"hooks": {"SessionStart": [
+                    {"matcher": "Bash(rm)", "hooks": []}
+                ]}}), encoding="utf-8")
+            self.assertIn("unknown-matcher", check(root).counts())
+
     def test_absolute_path_anywhere_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = _minimal_package(Path(tmp))
