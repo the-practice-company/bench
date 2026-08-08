@@ -78,3 +78,29 @@ class TestPerimeter(unittest.TestCase):
             (root / "archive").mkdir()
             (root / "archive" / "old.md").write_text("[[в никуда]]\n", encoding="utf-8")
             self.assertEqual(scan(root).counts(), {})
+
+
+class TestAmbiguous(unittest.TestCase):
+    def test_two_candidates_make_a_warning_not_an_error(self):
+        report = scan(BROKEN)
+        self.assertEqual(report.counts().get("ambiguous"), 1)
+        self.assertEqual(report.exit_code(), 2)  # из-за ошибок, не из-за ambiguous
+
+    def test_matching_names_alone_are_not_a_finding(self):
+        """Класс — про ссылку, которая резолвится в двух, а не про совпадение имён."""
+        from scripts.check_links import scan
+        report = scan(GREEN)
+        self.assertNotIn("ambiguous", report.counts())
+
+
+class TestAllowlist(unittest.TestCase):
+    def test_line_without_reason_fails_the_gate(self):
+        report = scan(BROKEN)
+        self.assertGreaterEqual(report.counts().get("dead-allow", 0), 1)
+
+    def test_dead_entry_fails_the_gate(self):
+        from scripts.check_links import parse_allowlist
+        entries = parse_allowlist("будущая\nстарая # причина\n")
+        self.assertEqual([e.pattern for e in entries], ["будущая", "старая"])
+        self.assertIsNone(entries[0].reason)
+        self.assertEqual(entries[1].reason, "причина")

@@ -24,6 +24,32 @@ _MDLINK = re.compile(r"\[[^\]\n]*\]\(([^)\n]+)\)")
 
 SCANNED_FOR_TOKENS = ("CLAUDE.md", "README.md", "SKILL.md")
 
+ALLOWLIST_NAME = ".link-allow"
+
+
+class AllowEntry:
+    __slots__ = ("pattern", "reason", "line", "used")
+
+    def __init__(self, pattern, reason, line):
+        self.pattern = pattern
+        self.reason = reason
+        self.line = line
+        self.used = False
+
+
+def parse_allowlist(text):
+    entries = []
+    for lineno, raw in enumerate(text.split("\n"), start=1):
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if "#" in stripped:
+            pattern, reason = stripped.split("#", 1)
+            entries.append(AllowEntry(pattern.strip(), reason.strip() or None, lineno))
+        else:
+            entries.append(AllowEntry(stripped, None, lineno))
+    return entries
+
 
 class Link:
     __slots__ = ("target", "line", "raw", "kind")
@@ -122,6 +148,16 @@ def scan(root, today=None):
     findings = []
     ignored = _ignored(root)
 
+    allow_path = root / ALLOWLIST_NAME
+    allow = parse_allowlist(allow_path.read_text(encoding="utf-8")) if allow_path.exists() else []
+
+    def allowed(target):
+        for entry in allow:
+            if entry.pattern and entry.pattern in target:
+                entry.used = True
+                return True
+        return False
+
     for path in sorted(root.rglob("*.md")):
         rel = path.relative_to(root).as_posix()
         if not _in_perimeter(rel, ignored):
@@ -145,8 +181,19 @@ def scan(root, today=None):
                 continue
 
             candidates = index.get(target, [])
-            if not candidates:
+            if len(candidates) > 1:
+                findings.append(Finding("ambiguous", rel, link.line,
+                                        "%s → %s" % (link.raw, ", ".join(sorted(candidates)))))
+            elif not candidates and not allowed(target):
                 findings.append(Finding("unresolved", rel, link.line, link.raw))
+
+    for entry in allow:
+        if entry.reason is None:
+            findings.append(Finding("dead-allow", ALLOWLIST_NAME, entry.line,
+                                    "строка без причины: %s" % entry.pattern))
+        elif not entry.used:
+            findings.append(Finding("dead-allow", ALLOWLIST_NAME, entry.line,
+                                    "правило ничего не исключает, удалите: %s" % entry.pattern))
 
     # Backtick-токены: пути и команды вперемешку, признак — is_path_token.
     # escapes-root проверяется в любом md-файле периметра — абсолютный или
