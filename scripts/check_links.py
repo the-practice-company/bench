@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from scripts import paths as pathlib_rules
 from scripts import zones
 from scripts.findings import Finding, Report
+from scripts.frontmatter import FrontmatterError, parse as parse_frontmatter
 
 _FENCE = re.compile(r"```.*?```", re.S)
 _INLINE = re.compile(r"`[^`\n]*`")
@@ -25,6 +26,8 @@ _MDLINK = re.compile(r"\[[^\]\n]*\]\(([^)\n]+)\)")
 SCANNED_FOR_TOKENS = ("CLAUDE.md", "README.md", "SKILL.md")
 
 ALLOWLIST_NAME = ".link-allow"
+
+REGISTRY_ARCHETYPE = "реестр"
 
 
 class AllowEntry:
@@ -91,6 +94,26 @@ def _index(root):
     return index
 
 
+def _orphan_perimeter(root):
+    """Пути, где отсутствие входящей ссылки означает что-то определённое."""
+    perimeter = set()
+    for path in root.rglob("*.md"):
+        rel = path.relative_to(root).as_posix()
+        if zones.zone_of(rel) == "sources" and "/items/" in rel:
+            perimeter.add(rel)
+    for readme in root.rglob("README.md"):
+        try:
+            fields = parse_frontmatter(readme.read_text(encoding="utf-8"))
+        except FrontmatterError:
+            continue
+        if fields.get("archetype") != REGISTRY_ARCHETYPE:
+            continue
+        items = readme.parent / "items"
+        for path in items.rglob("*.md") if items.exists() else []:
+            perimeter.add(path.relative_to(root).as_posix())
+    return perimeter
+
+
 def classify_mdlink(target):
     """None, если markdown-ссылка допустима; иначе класс находки."""
     target = target.strip()
@@ -146,6 +169,7 @@ def scan(root, today=None):
     root = Path(root)
     index = _index(root)
     findings = []
+    referenced = set()
     ignored = _ignored(root)
 
     allow_path = root / ALLOWLIST_NAME
@@ -181,6 +205,9 @@ def scan(root, today=None):
                 continue
 
             candidates = index.get(target, [])
+            for candidate in candidates:
+                referenced.add(candidate)          # относительный путь цели
+                referenced.add(Path(candidate).stem)
             if len(candidates) > 1:
                 findings.append(Finding("ambiguous", rel, link.line,
                                         "%s → %s" % (link.raw, ", ".join(sorted(candidates)))))
@@ -220,6 +247,12 @@ def scan(root, today=None):
                     findings.append(Finding("unresolved", rel, lineno, "`%s`" % token))
 
     findings.extend(_settings_paths(root, ignored))
+
+    for rel in sorted(_orphan_perimeter(root)):
+        stem = rel[:-3]
+        if stem in referenced or Path(rel).stem in referenced:
+            continue
+        findings.append(Finding("orphan", rel, 1, "на файл никто не сослался"))
 
     return Report(findings)
 

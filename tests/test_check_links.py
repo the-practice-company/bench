@@ -104,3 +104,17 @@ class TestAllowlist(unittest.TestCase):
         self.assertEqual([e.pattern for e in entries], ["будущая", "старая"])
         self.assertIsNone(entries[0].reason)
         self.assertEqual(entries[1].reason, "причина")
+
+
+class TestOrphan(unittest.TestCase):
+    def test_unreferenced_source_is_a_report_not_an_error(self):
+        report = scan(BROKEN)
+        self.assertEqual(report.counts().get("orphan"), 1)
+
+    def test_orphan_does_not_change_the_exit_code_on_its_own(self):
+        from scripts.findings import Finding, Report
+        self.assertEqual(Report([Finding("orphan", "sources/a.md", 1, "x")]).exit_code(), 0)
+
+    def test_records_outside_sources_and_registries_are_not_counted(self):
+        report = scan(GREEN)
+        self.assertNotIn("orphan", report.counts())
