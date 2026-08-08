@@ -13,6 +13,16 @@ PATH_EXTENSIONS = (".md", ".py", ".sh", ".json", ".base", ".yml", ".yaml", ".txt
 
 URL_SCHEMES = ("https:", "http:", "mailto:", "tel:")
 
+# Голый маркер без содержимого: не путь, а сокращение в прозе.
+_BARE_MARKERS = ("/", "~", "../")
+
+# `:` и `?` — слэш-команды (`/baton:auto 1`) и API-роуты с параметрами
+# (`/backlinks/:path`, `/bases/:name?view=`), не файловые пути.
+_NON_PATH_CHARS = (":", "?")
+
+# Метасимволы, по которым узнаётся `/regex/`, а не абсолютный путь.
+_REGEX_META = set("^$*+()[]{}|\\")
+
 
 def is_url(token):
     return token.startswith(URL_SCHEMES)
@@ -22,6 +32,15 @@ def is_path_token(token):
     token = token.strip()
     if not token or is_url(token):
         return False
+    if any(ch.isspace() for ch in token):
+        return False  # у путей в этом репозитории нет пробелов — а у команд есть
+    if any(ch in token for ch in _NON_PATH_CHARS):
+        return False
+    if token in _BARE_MARKERS:
+        return False
+    if (token.startswith("/") and token.endswith("/") and len(token) > 1
+            and any(ch in _REGEX_META for ch in token)):
+        return False  # `/^[a-z]+$/` — регулярка, а не путь
     if token.startswith("/") or token.startswith("~"):
         return True
     if "/" in token:

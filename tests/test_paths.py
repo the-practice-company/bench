@@ -26,6 +26,24 @@ class TestPathToken(unittest.TestCase):
         for token in ("0.05", "v1.2", "3.14", "0.05 с"):
             self.assertFalse(is_path_token(token), token)
 
+    def test_bare_slash_tilde_or_dotdot_are_not_paths(self):
+        """Голый маркер без содержимого путём не является."""
+        for token in ("/", "~", "../"):
+            self.assertFalse(is_path_token(token), token)
+
+    def test_slash_command_with_arguments_is_not_a_path(self):
+        self.assertFalse(is_path_token("/baton:auto 1"))
+
+    def test_api_route_with_param_is_not_a_path(self):
+        self.assertFalse(is_path_token("/backlinks/:path"))
+
+    def test_delimited_regex_is_not_a_path(self):
+        self.assertFalse(is_path_token("/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/"))
+
+    def test_shell_command_with_a_slash_is_not_a_path(self):
+        for token in ('grep -rn "x" areas/', "sed 's/a/b/'"):
+            self.assertFalse(is_path_token(token), token)
+
 
 class TestRootBoundary(unittest.TestCase):
     def test_absolute_path_escapes(self):

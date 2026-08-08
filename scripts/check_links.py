@@ -84,13 +84,22 @@ def extract_links(text):
 
 
 def _index(root):
-    """basename без расширения -> список относительных путей."""
+    """basename без расширения -> список относительных путей.
+
+    Для файла в корне репозитория basename и относительный путь без
+    расширения — одна и та же строка (`README` == `README`): нельзя
+    регистрировать её дважды под одним ключом, иначе один файл выглядит
+    как два кандидата и bare-ссылка на него ложно помечается ambiguous.
+    """
     index = {}
     for path in root.rglob("*.md"):
         rel = path.relative_to(root).as_posix()
         stem = unicodedata.normalize("NFC", path.stem)
-        index.setdefault(stem, []).append(rel)
-        index.setdefault(unicodedata.normalize("NFC", rel[:-3]), []).append(rel)
+        rel_stem = unicodedata.normalize("NFC", rel[:-3])
+        for key in {stem, rel_stem}:
+            bucket = index.setdefault(key, [])
+            if rel not in bucket:
+                bucket.append(rel)
     return index
 
 

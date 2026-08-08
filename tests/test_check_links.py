@@ -106,6 +106,35 @@ class TestAllowlist(unittest.TestCase):
         self.assertEqual(entries[1].reason, "причина")
 
 
+class TestIndexDedup(unittest.TestCase):
+    def test_root_level_wikilink_target_is_not_falsely_ambiguous(self):
+        """README.md — и basename, и относительный путь без расширения совпадают,
+        а корень регистрирует один и тот же файл под этим ключом дважды."""
+        import tempfile
+        from pathlib import Path as P
+        with tempfile.TemporaryDirectory() as tmp:
+            root = P(tmp)
+            (root / "README.md").write_text("корень\n", encoding="utf-8")
+            (root / "core").mkdir()
+            (root / "core" / "note.md").write_text("[[README]]\n", encoding="utf-8")
+            report = scan(root)
+            self.assertNotIn("ambiguous", report.counts())
+
+
+class TestBacktickTokenNoise(unittest.TestCase):
+    def test_shell_commands_with_slashes_are_not_unresolved_in_canonical_files(self):
+        import tempfile
+        from pathlib import Path as P
+        with tempfile.TemporaryDirectory() as tmp:
+            root = P(tmp)
+            (root / "CLAUDE.md").write_text(
+                "# Карта\n\n"
+                "Агент ходит `grep -rn \"x\" areas/` и правит через `sed 's/a/b/'`.\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(scan(root).counts(), {})
+
+
 class TestOrphan(unittest.TestCase):
     def test_unreferenced_source_is_a_report_not_an_error(self):
         report = scan(BROKEN)
