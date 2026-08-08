@@ -26,6 +26,20 @@ FRONTMATTER_CLASSES = (
     "unparseable",
 )
 
+PACKAGE_CLASSES = (
+    "unknown-hook-event",
+    "unknown-hook-type",
+    "unknown-matcher",
+    "absolute-path",
+    "relative-path-in-skill",
+    "destructive-example",
+    "gate-not-read-only",
+    "tests-touched-product",
+    "skill-without-description",
+    "skill-without-eval",
+    "skill-name-mismatch",
+)
+
 _SEVERITY = {
     "unresolved": "error",
     "md-link-to-file": "error",
@@ -37,6 +51,17 @@ _SEVERITY = {
     "missing-required": "error",
     "value-outside-vocabulary": "error",
     "unparseable": "error",
+    "unknown-hook-event": "error",
+    "unknown-hook-type": "error",
+    "unknown-matcher": "error",
+    "absolute-path": "error",
+    "relative-path-in-skill": "error",
+    "destructive-example": "error",
+    "gate-not-read-only": "error",
+    "tests-touched-product": "error",
+    "skill-without-description": "error",
+    "skill-without-eval": "error",
+    "skill-name-mismatch": "error",
 }
 
 
