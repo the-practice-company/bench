@@ -1,14 +1,14 @@
 ---
 schema: baton/state/v1
 writer: f4ebcdf4-3884-4cc2-b31d-77161c8355a5
-updated_at: 2026-08-08T10:52:00Z
-observed_sha: 160d9e4761b25be1fcdf4d2f04b5594dc2304a39
+updated_at: 2026-08-08T11:07:18Z
+observed_sha: e87b4b5ea6e9146e409882049a728d0245fd1b8d
 observed_branch: main
 tree_clean: true
 suspect: false
 needs_human: false
-autopilot: off
-autopilot_grant: —
+autopilot: all
+autopilot_grant: DEC-0001
 ---
 
 # State
@@ -31,7 +31,7 @@ autopilot_grant: —
 
 | # | name | status | branch/worktree | spec | plan | closed_at_sha | gate |
 |---|------|--------|-----------------|------|------|---------------|------|
-| 1 | Гейты и проверка пакета | doing | main | umbrella §13,14,16 | `docs/superpowers/plans/2026-08-08-wave-1-gates-and-package-check.md` | — | — |
+| 1 | Гейты и проверка пакета | todo | — | umbrella §13,14,16 | `docs/superpowers/plans/2026-08-08-wave-1-gates-and-package-check.md` | — | — |
 | 2 | Хуки | todo | — | — | — | — | — |
 | 3 | Каркас и CREATE | todo | — | — | — | — | — |
 | 4 | ADOPT | todo | — | — | — | — | — |
@@ -47,13 +47,14 @@ verdict in `docs/baton/gates/`; `pass` a human confirmed it.
 
 ## Now
 
-- **Next action:** Исполнять план волны 1 с Task 1. Отдельной спеки волны нет намеренно: umbrella-спека покрывает секции 13, 14, 16 и 1 подробнее, чем её пересказ, а незыблемое №7 запрещает заводить второй источник истины.
+- **Next action:** Выполнить Task 1 плана волны 1 («Скелет пакета и `./check`»): написать `tests/test_smoke.py`, убедиться что падает, создать `.claude-plugin/plugin.json`, `scripts/__init__.py`, `tests/__init__.py` и исполняемый `check`, прогнать `python3 -m unittest tests.test_smoke -v` до зелёного, коммит.
 - **In flight:** ничего
-- **Suspect:** Конституция ратифицирована устно: автор поручил агенту заполнить поля ратификации за себя (поправка от 2026-08-08 в конституции). Отказ `baton-write` на этот путь цел, но обычным редактором он не связан — «конституцию агент не пишет» здесь соглашение, не механика.
-- **Open questions:** Три решения спеки оспорены аудитом, но намеренно не тронуты и остаются на усмотрение автора: скелет CLAUDE.md против того, что живёт в реальных файлах (§9, девять источников); отсутствие способа фальсифицировать рецепт — golden-набор, проверка удалением, независимый судья (§27, семь источников); отказ от сигналов протухания (§24 и §27, пять источников). Каждое опровергнуто корректно — спека отвергла механизм явно и с причиной, — но опровержение опирается на принцип линии ответственности, а не на данные.
+- **Suspect:** Конституция ратифицирована устно, поля заполнил агент по поручению автора — см. поправку в конституции и DEC-0001. Отказ `baton-write` на её путь цел, но обычным редактором не связан: «конституцию агент не пишет» здесь соглашение, не механика.
+- **Open questions:** Пять мест неуверенности по волнам предъявлены автору до гранта, см. DEC-0001. Плюс три решения спеки, оспоренные аудитом и намеренно не тронутые: скелет CLAUDE.md (§9), нечем фальсифицировать рецепт (§27), отказ от сигналов протухания (§24, §27).
 
 ## Pointers
 
 - Constitution: docs/baton/constitution.md
 - Umbrella spec: docs/superpowers/specs/2026-08-08-context-repo-plugin-design.md
+- Autopilot grant: docs/baton/journal/0001-autopilot-grant.md
 - Recent decisions: docs/baton/journal/
