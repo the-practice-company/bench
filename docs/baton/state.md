@@ -1,10 +1,10 @@
 ---
 schema: baton/state/v1
 writer: f4ebcdf4-3884-4cc2-b31d-77161c8355a5
-updated_at: 2026-08-08T11:07:18Z
-observed_sha: e87b4b5ea6e9146e409882049a728d0245fd1b8d
+updated_at: 2026-08-08T11:39:06Z
+observed_sha: f13e9e0554912b38194120192636db9b0912bf3e
 observed_branch: main
-tree_clean: true
+tree_clean: false
 suspect: false
 needs_human: false
 autopilot: all
@@ -31,7 +31,7 @@ autopilot_grant: DEC-0001
 
 | # | name | status | branch/worktree | spec | plan | closed_at_sha | gate |
 |---|------|--------|-----------------|------|------|---------------|------|
-| 1 | Гейты и проверка пакета | todo | — | umbrella §13,14,16 | `docs/superpowers/plans/2026-08-08-wave-1-gates-and-package-check.md` | — | — |
+| 1 | Гейты и проверка пакета | doing | — | umbrella §13,14,16 | `docs/superpowers/plans/2026-08-08-wave-1-gates-and-package-check.md` | — | — |
 | 2 | Хуки | todo | — | — | — | — | — |
 | 3 | Каркас и CREATE | todo | — | — | — | — | — |
 | 4 | ADOPT | todo | — | — | — | — | — |
@@ -47,8 +47,8 @@ verdict in `docs/baton/gates/`; `pass` a human confirmed it.
 
 ## Now
 
-- **Next action:** Выполнить Task 1 плана волны 1 («Скелет пакета и `./check`»): написать `tests/test_smoke.py`, убедиться что падает, создать `.claude-plugin/plugin.json`, `scripts/__init__.py`, `tests/__init__.py` и исполняемый `check`, прогнать `python3 -m unittest tests.test_smoke -v` до зелёного, коммит.
-- **In flight:** ничего
+- **Next action:** Волна 1 исполняется по плану, задача закрывается коммитом. Если прогон прерван — сверить `git log --oneline` с планом (Task 1 = строки 38-113, 2 = 114-238, 3 = 239-420, 4 = 421-632, 5 = 633-776, 6 = 777-967, 7 = 968-1187, 8 = 1188-1370, 9 = 1371-1562, 10 = 1563-1685, 11 = 1686-1779, 12 = 1780-1948, 13 = 1949-2061, 14 = 2062-2390, 15 = 2391-2487), найти первую незакрытую и продолжить с неё через workflow с явной моделью на каждом `agent()`. После Task 15 — `baton-gate --since 160d9e4`, база из DEC-0001 = `—`, поэтому корневой коммит.
+- **In flight:** волна 1, задачи 1-6 отданы workflow `wf_f12c7f3a-dcb` (маршрут проверен: 18 вызовов sonnet). Task 1 закрыт коммитом f13e9e0.
 - **Suspect:** Конституция ратифицирована устно, поля заполнил агент по поручению автора — см. поправку в конституции и DEC-0001. Отказ `baton-write` на её путь цел, но обычным редактором не связан: «конституцию агент не пишет» здесь соглашение, не механика.
 - **Open questions:** Пять мест неуверенности по волнам предъявлены автору до гранта, см. DEC-0001. Плюс три решения спеки, оспоренные аудитом и намеренно не тронутые: скелет CLAUDE.md (§9), нечем фальсифицировать рецепт (§27), отказ от сигналов протухания (§24, §27).
 
