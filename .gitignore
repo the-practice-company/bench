@@ -1,3 +1,4 @@
 .DS_Store
 .baton/
 .claude/settings.local.json
+__pycache__/

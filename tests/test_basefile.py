@@ -56,3 +56,57 @@ class TestBaseFile(unittest.TestCase):
         base = parse_base("")
         self.assertEqual(base.folders, [])
         self.assertEqual(base.required, set())
+
+    def test_hasproperty_argument_is_a_property_not_the_function_name(self):
+        """Review defect 1, bullet 1: file.hasProperty("X") -> X is a
+        property, and "hasProperty" itself must never leak in as one."""
+        text = (
+            "filters:\n"
+            "  and:\n"
+            '    - file.inFolder("decisions/items")\n'
+            '    - file.hasProperty("reviewed")\n'
+            '    - status != "closed"\n'
+        )
+        base = parse_base(text)
+        self.assertEqual(base.required, {"reviewed", "status"})
+        self.assertNotIn("hasProperty", base.required)
+        self.assertNotIn("closed", base.required)
+
+    def test_bracket_access_names_a_property(self):
+        """Review defect 1, bullet 2: note["X"] / file["X"] -> X is a
+        property; "note" and "file" themselves are not."""
+        text = (
+            "filters:\n"
+            "  and:\n"
+            '    - note["priority"] == "high"\n'
+            '    - file["status"] != "done"\n'
+        )
+        base = parse_base(text)
+        self.assertEqual(base.required, {"priority", "status"})
+        self.assertNotIn("note", base.required)
+        self.assertNotIn("high", base.required)
+        self.assertNotIn("done", base.required)
+
+    def test_infolder_argument_never_becomes_a_property(self):
+        """Review defect 1, bullet 3 (already true, kept honest by a test):
+        the folder path is a folder, never a property."""
+        text = (
+            "filters:\n"
+            "  and:\n"
+            '    - file.inFolder("decisions/items")\n'
+        )
+        base = parse_base(text)
+        self.assertEqual(base.folders, ["decisions/items"])
+        self.assertEqual(base.required, set())
+
+    def test_single_quoted_comparison_value_is_a_literal_not_a_property(self):
+        """Review defect 1, bullet 4: quoted comparison operands are
+        literal values, whichever quote character delimits them."""
+        text = (
+            "filters:\n"
+            "  and:\n"
+            "    - stage != 'done'\n"
+        )
+        base = parse_base(text)
+        self.assertEqual(base.required, {"stage"})
+        self.assertNotIn("done", base.required)

@@ -7,15 +7,26 @@
 import re
 
 _INFOLDER = re.compile(r'file\.inFolder\(\s*["\']([^"\']+)["\']\s*\)')
+# file.hasProperty("X") называет свойство X явно — это не литеральное
+# значение и не поле "hasProperty", а обращение к полю по имени.
+_HASPROPERTY = re.compile(r'\.hasProperty\(\s*["\']([^"\']+)["\']\s*\)')
+# note["X"] / file["X"] — доступ к свойству по индексу, тоже явное имя.
+_BRACKET = re.compile(r'(?:note|file)\[\s*["\']([^"\']+)["\']\s*\]')
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _DQUOTED = re.compile(r'"[^"]*"')
+# Одинарные кавычки в DQL — то же самое литеральное значение сравнения,
+# но только рядом с оператором: одинарными кавычками в этом файле также
+# оборачивают YAML-значение целиком (см. SAMPLE в тестах), и слепая
+# вырезка испортила бы такие строки.
+_SQUOTED_LITERAL = re.compile(r"(?:!=|==)\s*'[^']*'")
 
 # Где упомянуто поле — таково требование к нему (секция 14).
 _REQUIRED_KEYS = ("filters", "sort", "groupBy")
 _KNOWN_KEYS = ("order", "columnSize")
 
 _STOPWORDS = {
-    "and", "or", "not", "file", "inFolder", "table", "cards", "list",
+    "and", "or", "not", "file", "note", "inFolder", "hasProperty",
+    "table", "cards", "list",
     "name", "true", "false", "null", "now", "date", "if", "then", "else",
 }
 
@@ -29,12 +40,29 @@ class Base:
 
 
 def _identifiers(chunk):
-    # Пути папок (inFolder) и содержимое двойных кавычек — литеральные
-    # значения фильтров, а не имена свойств. Уже собраны отдельно (folders)
-    # или несущественны для сканера.
+    # Путь папки (inFolder) — литеральное значение, уже собрано отдельно
+    # (folders) и несущественно для сканера полей.
     chunk = _INFOLDER.sub(" ", chunk)
+
+    # hasProperty(...) и обращение по индексу называют свойство явно —
+    # имя нужно забрать до того, как остальные кавычки будут вырезаны
+    # как литералы.
+    props = set()
+
+    def _take(match):
+        props.add(match.group(1))
+        return " "
+
+    chunk = _HASPROPERTY.sub(_take, chunk)
+    chunk = _BRACKET.sub(_take, chunk)
+
+    # Всё, что осталось в кавычках, — литеральные значения фильтров
+    # (например, `status != "closed"`), а не имена свойств.
     chunk = _DQUOTED.sub(" ", chunk)
-    return {m.group(0) for m in _IDENT.finditer(chunk)} - _STOPWORDS
+    chunk = _SQUOTED_LITERAL.sub(" ", chunk)
+
+    idents = {m.group(0) for m in _IDENT.finditer(chunk)} - _STOPWORDS
+    return idents | props
 
 
 def _section(text, key):
