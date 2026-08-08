@@ -1,10 +1,10 @@
 ---
 schema: baton/constitution/v1
 run_id: twinkle-repo-builder-v1
-status: draft
-ratified_by: REPLACE-WITH-NAME
-ratified_at: REPLACE-WITH-ISO8601
-git_anchor: REPLACE-WITH-SHA
+status: ratified
+ratified_by: Артём
+ratified_at: 2026-08-08T10:31:39Z
+git_anchor: 160d9e4761b25be1fcdf4d2f04b5594dc2304a39
 umbrella_spec: docs/superpowers/specs/2026-08-08-context-repo-plugin-design.md
 verify_cmd: "./check"
 placeholder_patterns: "TODO|FIXME|NotImplemented|unimplemented|raise NotImplementedError"
@@ -149,3 +149,11 @@ CREATE — от пустого каталога до живого дерева, 
 ## Amendments
 
 Append only. Каждая поправка: дата, что изменилось, кто ратифицировал.
+
+- **2026-08-08.** Ратификация. Артём ратифицировал прогон устно, в диалоге, и
+  поручил агенту заполнить `status`, `ratified_by`, `ratified_at` и `git_anchor`
+  за себя. Записано ради точности происхождения: подпись авторская, нажатие
+  клавиш агентское. Следствие — «конституцию агент не пишет» в этом репозитории
+  держится соглашением, а не механикой: отказ живёт в `baton-write`, обычный
+  редактор им не связан. Изменены только четыре поля ратификации; `verify_cmd`
+  и `placeholder_patterns` остались нетронутыми, что проверяемо диффом коммита.
