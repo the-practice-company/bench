@@ -33,16 +33,29 @@ class TestSingleDefinition(unittest.TestCase):
     строковыми литералами, почти наверняка держит свою копию таблицы.
     Спека измерила цену обратного: три разошедшиеся таблицы зон в одном
     репозитории.
+
+    Скан идёт по всему репозиторию, не только по `scripts/`: критерий 5 —
+    «второе определение появилось в пакете», а `hooks/` (волна 2) и
+    `scaffold/`+`skills/` (волна 3) — такие же потребители модуля зон, как
+    и `scripts/`. Из скана исключены каталоги, не входящие в пакет
+    (dev-инструменты и фикстуры из секции 21 спеки: `tests/`, `fixtures/`,
+    `docs/`, `.baton/`) — иначе этот же файл и `zones.py` ловили бы сами
+    себя как офендеров.
     """
+
+    _NOT_PACKAGE = {".git", "__pycache__", "tests", "fixtures", "docs", ".baton"}
 
     def test_no_second_zone_table_in_package(self):
         names = set(zones.ZONES)
         offenders = []
-        for path in sorted(ROOT.glob("scripts/*.py")):
+        for path in sorted(ROOT.rglob("*.py")):
             if path.name == "zones.py":
+                continue
+            rel_parts = path.relative_to(ROOT).parts
+            if any(part in self._NOT_PACKAGE for part in rel_parts):
                 continue
             text = path.read_text(encoding="utf-8")
             hits = {n for n in names if f'"{n}"' in text or f"'{n}'" in text}
             if len(hits) >= 6:
-                offenders.append(f"{path.name}: {sorted(hits)}")
+                offenders.append(f"{path.relative_to(ROOT)}: {sorted(hits)}")
         self.assertEqual(offenders, [], "второе определение зон — импортируй scripts.zones")

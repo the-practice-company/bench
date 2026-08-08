@@ -64,7 +64,13 @@ def _iter_package_files(root):
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
-        if any(part in SKIP_DIRS for part in path.relative_to(root).parts):
+        # Только первый сегмент, как zones.zone_of(): зоны этого репозитория
+        # (inbox/, sources/ — материалы собственной разработки) живут в корне
+        # и нигде больше. Проверка по любому сегменту на любой глубине снимала
+        # с прохода целые поддеревья пакета — skills/inbox/ (скилл, чьё имя
+        # совпало с зоной) и весь scaffold/ (буквально восемь папок-зон) —
+        # ровно то, что должно быть просканировано.
+        if path.relative_to(root).parts[0] in SKIP_DIRS:
             continue
         if path.resolve() == _SELF:
             continue
