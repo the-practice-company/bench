@@ -7,6 +7,22 @@ ROOT = Path(__file__).resolve().parent.parent
 COVERAGE = ROOT / "docs" / "gate-coverage.md"
 
 
+def _cells(line):
+    return [c.strip() for c in line.strip("|").split("|")]
+
+
+def _row_is_complete(line):
+    """Строка таблицы обязана нести ровно два столбца — класс и причину.
+
+    Не «все присутствующие клетки непустые» (`all(cells)` пропускает строку,
+    у которой пропал целый столбец: `strip("|").split("|")` на такой строке
+    даёт список из одной, непустой, клетки, и `all` её принимает), а именно
+    два столбца, и оба непустые.
+    """
+    cells = _cells(line)
+    return len(cells) == 2 and all(cells)
+
+
 class TestEveryClassIsProven(unittest.TestCase):
     """У каждого класса либо фикстура, либо записанная причина её отсутствия.
 
@@ -23,5 +39,16 @@ class TestEveryClassIsProven(unittest.TestCase):
         for line in COVERAGE.read_text(encoding="utf-8").split("\n"):
             if not line.startswith("| `"):
                 continue
-            cells = [c.strip() for c in line.strip("|").split("|")]
-            self.assertTrue(all(cells), "пустая клетка в строке: %s" % line)
+            self.assertTrue(_row_is_complete(line), "неполная или пустая клетка в строке: %s" % line)
+
+    def test_omitted_trailing_cell_is_caught(self):
+        r"""Регрессия на дефект 3.
+
+        `| \`orphan\` |  |` (клетка пустая, но присутствует) и раньше падал
+        на `all(cells)`. `| \`orphan\` |` (столбец-причина пропал целиком)
+        схлопывался в одну непустую клетку и проходил зелёным — естественный
+        способ забыть причину. Обе формы обязаны быть невалидны.
+        """
+        self.assertFalse(_row_is_complete("| `orphan` |"))
+        self.assertFalse(_row_is_complete("| `orphan` |  |"))
+        self.assertTrue(_row_is_complete("| `orphan` | битая фикстура, 1 находка |"))

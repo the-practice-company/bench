@@ -27,8 +27,14 @@ HOOK_EVENTS = frozenset({
 HOOK_TYPES = frozenset({"command"})
 MATCHERS = re.compile(r"^[A-Za-z*|_]+$")
 
-# Абсолютный путь верен ровно на одной машине.
-ABSOLUTE = re.compile(r"(?<![\w.])(?:/Users/|/home/|/opt/|/etc/|~/)")
+# Абсолютный путь верен ровно на одной машине. Список префиксов собран из
+# фрагментов, а не записан литералом, чтобы в тексте этого файла не было
+# непрерывной подстроки, совпадающей с тем, что ищет сам детектор: тогда
+# файл сканируется на общих основаниях, без самоисключения из периметра.
+_ABSOLUTE_PREFIXES = (
+    "/" + "Users/", "/" + "home/", "/" + "opt/", "/" + "etc/", "~" + "/",
+)
+ABSOLUTE = re.compile(r"(?<![\w.])(?:%s)" % "|".join(re.escape(p) for p in _ABSOLUTE_PREFIXES))
 # Вызов скрипта пакета из прозы скилла.
 SCRIPT_CALL = re.compile(r"(?:python3?\s+|sh\s+|bash\s+|\./)\S*scripts/\S+")
 # Разрушающий пример в инструкциях ADOPT.
@@ -49,16 +55,6 @@ SKIP_DIRS = {".git", "fixtures", "tests", "docs", ".baton", "__pycache__"} | set
 # ставится ровно вложенному прогону и обрывает её на первом уровне.
 _NESTED_RUN_GUARD = "TWINKLE_CHECK_PACKAGE_NESTED_RUN"
 
-# Этот файл — единственное место в пакете, чья работа: держать в тексте сами
-# подстроки `/Users/`, `~/` и т.д. как паттерн детектора. Просканировать его
-# тем же грубым текстовым поиском значит поймать собственное определение
-# ABSOLUTE — находка на признаке, а не на употреблённом пути. Единственное
-# исключение из периметра, отсюда и не из SKIP_DIRS: остальные проверки
-# (relative-path-in-skill, destructive-example) этого файла не касаются —
-# он не под skills/, — так что здесь достаточно точечно снять его с прохода
-# по absolute-path/relative-path/destructive-example.
-_SELF = Path(__file__).resolve()
-
 
 def _iter_package_files(root):
     for path in sorted(root.rglob("*")):
@@ -72,8 +68,6 @@ def _iter_package_files(root):
         # ровно то, что должно быть просканировано.
         if path.relative_to(root).parts[0] in SKIP_DIRS:
             continue
-        if path.resolve() == _SELF:
-            continue
         if path.suffix in (".md", ".py", ".sh", ".json", ".base", ".txt") or path.name == "check":
             yield path
 
@@ -84,18 +78,25 @@ def check(root):
 
     hooks_file = root / "hooks" / "hooks.json"
     if hooks_file.exists():
-        data = json.loads(hooks_file.read_text(encoding="utf-8"))
-        for event, entries in (data.get("hooks") or {}).items():
-            if event not in HOOK_EVENTS:
-                findings.append(Finding("unknown-hook-event", "hooks/hooks.json", 1, event))
-            for entry in entries or []:
-                matcher = entry.get("matcher", "*")
-                if not MATCHERS.match(str(matcher)):
-                    findings.append(Finding("unknown-matcher", "hooks/hooks.json", 1, str(matcher)))
-                for hook in entry.get("hooks") or []:
-                    if hook.get("type") not in HOOK_TYPES:
-                        findings.append(Finding("unknown-hook-type", "hooks/hooks.json", 1,
-                                                str(hook.get("type"))))
+        try:
+            data = json.loads(hooks_file.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as error:
+            # Невосстановимое значение уходит в отчёт, а не роняет всю проверку
+            # (незыблемое №4): битый hooks.json не обязан гасить остальные находки.
+            findings.append(Finding("unparseable", "hooks/hooks.json", error.lineno, str(error)))
+            data = None
+        if data is not None:
+            for event, entries in (data.get("hooks") or {}).items():
+                if event not in HOOK_EVENTS:
+                    findings.append(Finding("unknown-hook-event", "hooks/hooks.json", 1, event))
+                for entry in entries or []:
+                    matcher = entry.get("matcher", "*")
+                    if not MATCHERS.match(str(matcher)):
+                        findings.append(Finding("unknown-matcher", "hooks/hooks.json", 1, str(matcher)))
+                    for hook in entry.get("hooks") or []:
+                        if hook.get("type") not in HOOK_TYPES:
+                            findings.append(Finding("unknown-hook-type", "hooks/hooks.json", 1,
+                                                    str(hook.get("type"))))
 
     skills_dir = root / "skills"
     if skills_dir.exists():

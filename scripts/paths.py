@@ -9,7 +9,7 @@ import posixpath
 import unicodedata
 
 # Закрытый список, а не «есть точка»: 0.05 с и v1.2 файлами не являются.
-PATH_EXTENSIONS = (".md", ".py", ".sh", ".json", ".base", ".yml", ".yaml", ".txt")
+PATH_EXTENSIONS = (".md", ".py", ".sh", ".json", ".base")
 
 URL_SCHEMES = ("https:", "http:", "mailto:", "tel:")
 

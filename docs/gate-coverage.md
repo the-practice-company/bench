@@ -22,8 +22,8 @@
 | `absolute-path` | `tests/test_check_package.py`, `/Users/` в прозе скилла |
 | `relative-path-in-skill` | `tests/test_check_package.py`, вызов `scripts/*` без `${CLAUDE_PLUGIN_ROOT}` |
 | `destructive-example` | `tests/test_check_package.py`, пример `mv` в инструкциях ADOPT |
-| `gate-not-read-only` | `check_read_only`: хеш дерева фикстуры до и после прогона гейта |
-| `tests-touched-product` | тот же приём вокруг прогона тестов, хеш по `scripts/` и `.claude-plugin/` |
+| `gate-not-read-only` | `tests/test_check_package.py::TestGateNotReadOnlyMechanism`, гейт-подделка пишет в копию фикстуры |
+| `tests-touched-product` | `tests/test_check_package.py::TestTestsTouchedProductMechanism`, прогон тестов пишет в `scripts/marker.py` |
 | `skill-without-description` | `tests/test_check_package.py`, SKILL.md без описания |
 | `skill-without-eval` | `tests/test_check_package.py`, скилл без `eval.txt` |
 | `skill-name-mismatch` | `tests/test_check_package.py`, имя не совпало с папкой |
