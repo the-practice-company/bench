@@ -24,6 +24,7 @@ _WIKILINK = re.compile(r"!?\[\[([^\]\n]+)\]\]")
 _MDLINK = re.compile(r"\[[^\]\n]*\]\(([^)\n]+)\)")
 
 SCANNED_FOR_TOKENS = ("CLAUDE.md", "README.md", "SKILL.md")
+RULES_PREFIX = ".claude/rules/"
 
 ALLOWLIST_NAME = ".link-allow"
 
@@ -156,6 +157,11 @@ def _in_perimeter(rel, ignored):
     return not rel.startswith(ignored)
 
 
+def _scanned_for_tokens(rel, name):
+    """Периметр backtick-сканирования: четыре строки таблицы, и ни строкой больше."""
+    return name in SCANNED_FOR_TOKENS or rel.startswith(RULES_PREFIX)
+
+
 def _settings_paths(root, ignored):
     out = []
     for path in sorted(root.glob(".claude/settings*.json")):
@@ -232,17 +238,18 @@ def scan(root, today=None):
                                     "правило ничего не исключает, удалите: %s" % entry.pattern))
 
     # Backtick-токены: пути и команды вперемешку, признак — is_path_token.
-    # escapes-root проверяется в любом md-файле периметра — абсолютный или
-    # выходящий за корень путь опасен независимо от того, где он упомянут.
-    # unresolved (существование) проверяется только в файлах, на которые
-    # реально ходят агент и хуки (SCANNED_FOR_TOKENS, .claude/rules/*.md) —
-    # иначе гейт тонет в упоминаниях команд и путей в вольной прозе.
+    # Периметр — ровно четыре строки таблицы «Что проверяется»: CLAUDE.md,
+    # README.md, SKILL.md и .claude/rules/*.md. Ни одного класса за него
+    # не выносится, включая escapes-root: расширение сканирования ради
+    # ожидаемого счёта — нарушение спеки (DEC-0003), образец переезжает
+    # в периметр, а не периметр к образцу. Wikilink и markdown-ссылка
+    # разбираются выше, в любом .md, — это первые две строки той же таблицы.
     for path in sorted(root.rglob("*.md")):
         rel = path.relative_to(root).as_posix()
         if not _in_perimeter(rel, ignored):
             continue
-        is_rule = rel.startswith(".claude/rules/")
-        canonical = path.name in SCANNED_FOR_TOKENS or is_rule
+        if not _scanned_for_tokens(rel, path.name):
+            continue
         text = path.read_text(encoding="utf-8")
         for lineno, line in enumerate(text.split("\n"), start=1):
             for token in _INLINE.findall(line):
@@ -252,7 +259,7 @@ def scan(root, today=None):
                 if pathlib_rules.escapes_root(token, base=""):
                     findings.append(Finding("escapes-root", rel, lineno, "`%s`" % token))
                     continue
-                if canonical and not (root / token).exists():
+                if not (root / token).exists():
                     findings.append(Finding("unresolved", rel, lineno, "`%s`" % token))
 
     findings.extend(_settings_paths(root, ignored))

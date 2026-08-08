@@ -26,21 +26,42 @@ class TestPathToken(unittest.TestCase):
         for token in ("0.05", "v1.2", "3.14", "0.05 с"):
             self.assertFalse(is_path_token(token), token)
 
-    def test_bare_slash_tilde_or_dotdot_are_not_paths(self):
-        """Голый маркер без содержимого путём не является."""
+    def test_bare_slash_tilde_and_dotdot_are_paths_by_the_table(self):
+        """Таблица спеки не знает исключения для голого маркера.
+
+        `/` и `~` — «начинается с `/` или `~` → путь, и сразу ошибка»,
+        `../` — «содержит `/` → путь». Ужатие DEC-0003 откатано: в спеке
+        для этих трёх токенов опоры нет.
+        """
         for token in ("/", "~", "../"):
-            self.assertFalse(is_path_token(token), token)
+            self.assertTrue(is_path_token(token), token)
 
     def test_slash_command_with_arguments_is_not_a_path(self):
+        """Отвергается пробелом, а не двоеточием: это командная строка."""
         self.assertFalse(is_path_token("/baton:auto 1"))
 
-    def test_api_route_with_param_is_not_a_path(self):
-        self.assertFalse(is_path_token("/backlinks/:path"))
+    def test_slash_command_without_arguments_is_a_path_by_the_table(self):
+        """Оно же без аргумента — путь, начинающийся с `/`, и потому ошибка.
 
-    def test_delimited_regex_is_not_a_path(self):
-        self.assertFalse(is_path_token("/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/"))
+        Спеке этого мало не кажется: вопрос предъявлен автору (DEC-0003,
+        «Invalidated if»). До ответа гейт ведёт себя так, как написано.
+        """
+        self.assertTrue(is_path_token("/baton:auto"))
+
+    def test_api_route_with_param_is_a_path_by_the_table(self):
+        """Содержит `/` — значит путь. Отдельной строки про `:` в таблице нет."""
+        self.assertTrue(is_path_token("/backlinks/:path"))
+
+    def test_delimited_regex_is_a_path_by_the_table(self):
+        """Начинается с `/` — значит путь. Формы регулярки таблица не знает."""
+        self.assertTrue(is_path_token("/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/"))
 
     def test_shell_command_with_a_slash_is_not_a_path(self):
+        """Единственное ужатие, которое спека обосновывает сама.
+
+        «Без признака гейт либо ругается на `grep`» — а `grep -rn "x" areas/`
+        отличается от пути ровно пробелами.
+        """
         for token in ('grep -rn "x" areas/', "sed 's/a/b/'"):
             self.assertFalse(is_path_token(token), token)
 

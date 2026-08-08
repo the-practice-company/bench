@@ -121,6 +121,61 @@ class TestIndexDedup(unittest.TestCase):
             self.assertNotIn("ambiguous", report.counts())
 
 
+class TestBacktickPerimeter(unittest.TestCase):
+    """Периметр backtick-сканирования — таблица «Что проверяется» спеки.
+
+    Backtick-токены читаются только в `CLAUDE.md`, `README.md`, `SKILL.md`
+    и `.claude/rules/*.md`. Wikilink и markdown-ссылка — в любом `.md`:
+    это первые две строки той же таблицы. Расширять сканирование
+    backtick'ов за периметр запрещено (DEC-0003), чего бы это ни стоило
+    счёту находок.
+    """
+
+    NOISE = "Домашний путь: `~/notes.md`, скрипта `scripts/net.py` нет.\n"
+
+    def _root(self, tmp, rel, text):
+        from pathlib import Path as P
+        root = P(tmp)
+        target = root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+        return root
+
+    def test_backtick_tokens_outside_the_perimeter_are_not_read(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._root(tmp, "areas/hiring/note.md", self.NOISE)
+            self.assertEqual(scan(root).counts(), {})
+
+    def test_backtick_tokens_in_claude_md_are_read(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._root(tmp, "CLAUDE.md", self.NOISE)
+            self.assertEqual(scan(root).counts(),
+                             {"escapes-root": 1, "unresolved": 1})
+
+    def test_backtick_tokens_in_rule_files_are_read(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._root(tmp, ".claude/rules/areas.md", self.NOISE)
+            self.assertEqual(scan(root).counts(),
+                             {"escapes-root": 1, "unresolved": 1})
+
+    def test_wikilink_above_the_root_is_caught_in_any_md(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._root(tmp, "areas/hiring/note.md",
+                              "Выше корня: [[../../../soseddniy-repo/file]]\n")
+            self.assertEqual(scan(root).counts(), {"escapes-root": 1})
+
+    def test_markdown_link_to_a_file_is_caught_in_any_md(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._root(tmp, "areas/hiring/note.md",
+                              "Так нельзя: [профиль](../core/me.md)\n")
+            self.assertEqual(scan(root).counts(), {"md-link-to-file": 1})
+
+
 class TestBacktickTokenNoise(unittest.TestCase):
     def test_shell_commands_with_slashes_are_not_unresolved_in_canonical_files(self):
         import tempfile

@@ -13,34 +13,30 @@ PATH_EXTENSIONS = (".md", ".py", ".sh", ".json", ".base", ".yml", ".yaml", ".txt
 
 URL_SCHEMES = ("https:", "http:", "mailto:", "tel:")
 
-# Голый маркер без содержимого: не путь, а сокращение в прозе.
-_BARE_MARKERS = ("/", "~", "../")
-
-# `:` и `?` — слэш-команды (`/baton:auto 1`) и API-роуты с параметрами
-# (`/backlinks/:path`, `/bases/:name?view=`), не файловые пути.
-_NON_PATH_CHARS = (":", "?")
-
-# Метасимволы, по которым узнаётся `/regex/`, а не абсолютный путь.
-_REGEX_META = set("^$*+()[]{}|\\")
-
 
 def is_url(token):
     return token.startswith(URL_SCHEMES)
 
 
 def is_path_token(token):
+    """Таблица «Что backtick-токен считается путём» дословно, плюс пробел.
+
+    Порядок строк таблицы: есть `/` — путь; закрытое расширение — путь;
+    ведущий `/` или `~` — путь и сразу ошибка; всё остальное — не путь.
+    Ни `:`, ни `?`, ни форма регулярки, ни голый маркер строкой таблицы
+    не являются: ужатие DEC-0003 откатано, слэш-команды и маршруты API
+    в backtick'ах гейт называет `escapes-root` — вопрос предъявлен автору,
+    правится спека, а не признак (незыблемое №7).
+
+    Единственное исключение — токен с пробелом: его обосновывает сама
+    мотивировка спеки («Без признака гейт либо ругается на `grep`»),
+    потому что `grep -rn "x" areas/` отличается от пути только пробелами.
+    """
     token = token.strip()
     if not token or is_url(token):
         return False
     if any(ch.isspace() for ch in token):
-        return False  # у путей в этом репозитории нет пробелов — а у команд есть
-    if any(ch in token for ch in _NON_PATH_CHARS):
-        return False
-    if token in _BARE_MARKERS:
-        return False
-    if (token.startswith("/") and token.endswith("/") and len(token) > 1
-            and any(ch in _REGEX_META for ch in token)):
-        return False  # `/^[a-z]+$/` — регулярка, а не путь
+        return False  # командная строка, а не путь: у путей здесь пробелов нет
     if token.startswith("/") or token.startswith("~"):
         return True
     if "/" in token:
