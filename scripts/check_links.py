@@ -65,11 +65,22 @@ class Link:
         self.kind = kind
 
 
+def _blank_fences(text):
+    """Вырезает только ```-блоки, сохраняя переводы строк и inline-код внутри строк.
+
+    Отдельно от _blank_code: backtick-сканирование ниже само читает inline-код
+    (это его источник токенов), ему нужно только не видеть fenced-примеры.
+    """
+    def keep_newlines(match):
+        return re.sub(r"[^\n]", " ", match.group(0))
+    return _FENCE.sub(keep_newlines, text)
+
+
 def _blank_code(text):
     """Вырезает код, сохраняя переводы строк, чтобы номера не поехали."""
     def keep_newlines(match):
         return re.sub(r"[^\n]", " ", match.group(0))
-    return _INLINE.sub(keep_newlines, _FENCE.sub(keep_newlines, text))
+    return _INLINE.sub(keep_newlines, _blank_fences(text))
 
 
 def extract_links(text):
@@ -84,17 +95,23 @@ def extract_links(text):
     return out
 
 
-def _index(root):
+def _index(root, ignored):
     """basename без расширения -> список относительных путей.
 
     Для файла в корне репозитория basename и относительный путь без
     расширения — одна и та же строка (`README` == `README`): нельзя
     регистрировать её дважды под одним ключом, иначе один файл выглядит
     как два кандидата и bare-ссылка на него ложно помечается ambiguous.
+
+    Тот же периметр (`_ignored`/`_in_perimeter`), что у обоих главных
+    циклов: иначе файл из архива или .gitignore-поддерева становится
+    резолвящейся целью, хотя гейт его нигде больше не читает.
     """
     index = {}
     for path in root.rglob("*.md"):
         rel = path.relative_to(root).as_posix()
+        if not _in_perimeter(rel, ignored):
+            continue
         stem = unicodedata.normalize("NFC", path.stem)
         rel_stem = unicodedata.normalize("NFC", rel[:-3])
         for key in {stem, rel_stem}:
@@ -104,14 +121,25 @@ def _index(root):
     return index
 
 
-def _orphan_perimeter(root):
-    """Пути, где отсутствие входящей ссылки означает что-то определённое."""
+def _orphan_perimeter(root, ignored):
+    """Пути, где отсутствие входящей ссылки означает что-то определённое.
+
+    Тот же периметр, что у главных циклов: без него поддерево, которое
+    гейт нигде не читает ради ссылок (архив, .gitignore), всё равно
+    проверяется на сирот — и оказывается сиротским по построению, потому
+    что связывающие его ссылки никто не сканирует.
+    """
     perimeter = set()
     for path in root.rglob("*.md"):
         rel = path.relative_to(root).as_posix()
+        if not _in_perimeter(rel, ignored):
+            continue
         if zones.zone_of(rel) == "sources" and "/items/" in rel:
             perimeter.add(rel)
     for readme in root.rglob("README.md"):
+        rel_readme = readme.relative_to(root).as_posix()
+        if not _in_perimeter(rel_readme, ignored):
+            continue
         try:
             fields = parse_frontmatter(readme.read_text(encoding="utf-8"))
         except FrontmatterError:
@@ -120,7 +148,10 @@ def _orphan_perimeter(root):
             continue
         items = readme.parent / "items"
         for path in items.rglob("*.md") if items.exists() else []:
-            perimeter.add(path.relative_to(root).as_posix())
+            rel_item = path.relative_to(root).as_posix()
+            if not _in_perimeter(rel_item, ignored):
+                continue
+            perimeter.add(rel_item)
     return perimeter
 
 
@@ -162,7 +193,7 @@ def _scanned_for_tokens(rel, name):
     return name in SCANNED_FOR_TOKENS or rel.startswith(RULES_PREFIX)
 
 
-def _settings_paths(root, ignored):
+def _settings_paths(root, ignored, allowed):
     out = []
     for path in sorted(root.glob(".claude/settings*.json")):
         rel = path.relative_to(root).as_posix()
@@ -175,17 +206,17 @@ def _settings_paths(root, ignored):
                     continue
                 if pathlib_rules.escapes_root(token, base=""):
                     out.append(Finding("escapes-root", rel, lineno, token))
-                elif not (root / token).exists():
+                elif not (root / token).exists() and not allowed(token):
                     out.append(Finding("unresolved", rel, lineno, token))
     return out
 
 
 def scan(root, today=None):
     root = Path(root)
-    index = _index(root)
+    ignored = _ignored(root)
+    index = _index(root, ignored)
     findings = []
     referenced = set()
-    ignored = _ignored(root)
 
     allow_path = root / ALLOWLIST_NAME
     allow = parse_allowlist(allow_path.read_text(encoding="utf-8")) if allow_path.exists() else []
@@ -222,20 +253,11 @@ def scan(root, today=None):
             candidates = index.get(target, [])
             for candidate in candidates:
                 referenced.add(candidate)          # относительный путь цели
-                referenced.add(Path(candidate).stem)
             if len(candidates) > 1:
                 findings.append(Finding("ambiguous", rel, link.line,
                                         "%s → %s" % (link.raw, ", ".join(sorted(candidates)))))
             elif not candidates and not allowed(target):
                 findings.append(Finding("unresolved", rel, link.line, link.raw))
-
-    for entry in allow:
-        if entry.reason is None:
-            findings.append(Finding("dead-allow", ALLOWLIST_NAME, entry.line,
-                                    "строка без причины: %s" % entry.pattern))
-        elif not entry.used:
-            findings.append(Finding("dead-allow", ALLOWLIST_NAME, entry.line,
-                                    "правило ничего не исключает, удалите: %s" % entry.pattern))
 
     # Backtick-токены: пути и команды вперемешку, признак — is_path_token.
     # Периметр — ровно четыре строки таблицы «Что проверяется»: CLAUDE.md,
@@ -244,13 +266,17 @@ def scan(root, today=None):
     # ожидаемого счёта — нарушение спеки (DEC-0003), образец переезжает
     # в периметр, а не периметр к образцу. Wikilink и markdown-ссылка
     # разбираются выше, в любом .md, — это первые две строки той же таблицы.
+    # Fenced-блоки вырезаются тем же способом, что и в extract_links: пример
+    # внутри ``` — документация, а не живой токен (секция 13, «Перед разбором
+    # вырезаются блоки кода и inline-код»); inline backtick-код здесь не
+    # вырезается — это и есть источник токенов этого прохода.
     for path in sorted(root.rglob("*.md")):
         rel = path.relative_to(root).as_posix()
         if not _in_perimeter(rel, ignored):
             continue
         if not _scanned_for_tokens(rel, path.name):
             continue
-        text = path.read_text(encoding="utf-8")
+        text = _blank_fences(path.read_text(encoding="utf-8"))
         for lineno, line in enumerate(text.split("\n"), start=1):
             for token in _INLINE.findall(line):
                 token = token.strip("`").strip()
@@ -259,16 +285,28 @@ def scan(root, today=None):
                 if pathlib_rules.escapes_root(token, base=""):
                     findings.append(Finding("escapes-root", rel, lineno, "`%s`" % token))
                     continue
-                if not (root / token).exists():
+                if not (root / token).exists() and not allowed(token):
                     findings.append(Finding("unresolved", rel, lineno, "`%s`" % token))
 
-    findings.extend(_settings_paths(root, ignored))
+    findings.extend(_settings_paths(root, ignored, allowed))
 
-    for rel in sorted(_orphan_perimeter(root)):
-        stem = rel[:-3]
-        if stem in referenced or Path(rel).stem in referenced:
-            continue
-        findings.append(Finding("orphan", rel, 1, "на файл никто не сослался"))
+    # Мёртвые записи аллоулиста оцениваются последними: только к этому
+    # моменту все места, поднимающие unresolved (wikilink-цикл, backtick-
+    # цикл, settings.json), уже прогнали через него свои цели и пометили
+    # использованные записи — иначе запись, разрешающая находку из более
+    # позднего прохода, выглядит неиспользованной и гейт противоречит сам
+    # себе: одновременно unresolved и «удалите правило, которое это гасит».
+    for entry in allow:
+        if entry.reason is None:
+            findings.append(Finding("dead-allow", ALLOWLIST_NAME, entry.line,
+                                    "строка без причины: %s" % entry.pattern))
+        elif not entry.used:
+            findings.append(Finding("dead-allow", ALLOWLIST_NAME, entry.line,
+                                    "правило ничего не исключает, удалите: %s" % entry.pattern))
+
+    for rel in sorted(_orphan_perimeter(root, ignored)):
+        if rel not in referenced:
+            findings.append(Finding("orphan", rel, 1, "на файл никто не сослался"))
 
     return Report(findings)
 

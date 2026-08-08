@@ -190,6 +190,88 @@ class TestBacktickTokenNoise(unittest.TestCase):
             self.assertEqual(scan(root).counts(), {})
 
 
+class TestBacktickTokensInsideFences(unittest.TestCase):
+    """Дефект 1: backtick-цикл не резал ```-блоки, хотя extract_links режет.
+
+    Один и тот же пример внутри fenced-блока: wikilink в нём и так молчит
+    (extract_links вырезает код первым), а соседний backtick-путь в том же
+    блоке до фикса становился живым токеном — гейт противоречил сам себе
+    насчёт того, где код является кодом.
+    """
+
+    def test_dangling_path_inside_a_fence_is_not_scanned(self):
+        import tempfile
+        from pathlib import Path as P
+        with tempfile.TemporaryDirectory() as tmp:
+            root = P(tmp)
+            (root / "CLAUDE.md").write_text(
+                "# Пример\n\n"
+                "Внутри примера и wikilink, и backtick-путь на несуществующее:\n\n"
+                "```\n"
+                "[[nonexistent/target]] и `docs/example-nonexistent.md`\n"
+                "```\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(scan(root).counts(), {})
+
+    def test_same_dangling_path_outside_the_fence_still_fires(self):
+        """Контроль: фикс не глушит backtick-сканирование целиком, только fenced-блок."""
+        import tempfile
+        from pathlib import Path as P
+        with tempfile.TemporaryDirectory() as tmp:
+            root = P(tmp)
+            (root / "CLAUDE.md").write_text(
+                "# Пример\n\n"
+                "Снаружи примера: `docs/example-nonexistent.md`\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(scan(root).counts(), {"unresolved": 1})
+
+
+class TestAllowlistCoversEveryUnresolvedSite(unittest.TestCase):
+    """Дефект 2: аллоулист проверялся только там, где резолвится wikilink.
+
+    Backtick-цикл и проверка settings.json поднимали unresolved, минуя
+    allow-check, — запись аллоулиста, покрывающая такой путь, никогда не
+    отмечалась использованной. Автор получал два противоречащих друг другу
+    сообщения: неподавленный unresolved и dead-allow, требующий удалить то
+    самое правило, которое должно было его погасить.
+    """
+
+    def test_allow_entry_suppresses_an_unresolved_backtick_token(self):
+        import tempfile
+        from pathlib import Path as P
+        with tempfile.TemporaryDirectory() as tmp:
+            root = P(tmp)
+            (root / ".claude" / "rules").mkdir(parents=True)
+            (root / ".claude" / "rules" / "areas.md").write_text(
+                "---\n"
+                "description: Правило зоны areas\n"
+                "paths: [\"areas/**\"]\n"
+                "---\n"
+                "Записи кладутся в `areas/hiring/items/`.\n",
+                encoding="utf-8",
+            )
+            (root / ".link-allow").write_text(
+                "areas/hiring/items/ # папка создаётся по ходу работы, ссылка опережает\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(scan(root).counts(), {})
+
+    def test_allow_entry_suppresses_an_unresolved_settings_json_path(self):
+        import json
+        import tempfile
+        from pathlib import Path as P
+        with tempfile.TemporaryDirectory() as tmp:
+            root = P(tmp)
+            (root / ".claude").mkdir()
+            (root / ".claude" / "settings.local.json").write_text(
+                json.dumps({"hooks": {"cmd": ".claude/scripts/missing.sh"}}), encoding="utf-8")
+            (root / ".link-allow").write_text(
+                ".claude/scripts/missing.sh # хук ещё не написан\n", encoding="utf-8")
+            self.assertEqual(scan(root).counts(), {})
+
+
 class TestOrphan(unittest.TestCase):
     def test_unreferenced_source_is_a_report_not_an_error(self):
         report = scan(BROKEN)
@@ -202,3 +284,40 @@ class TestOrphan(unittest.TestCase):
     def test_records_outside_sources_and_registries_are_not_counted(self):
         report = scan(GREEN)
         self.assertNotIn("orphan", report.counts())
+
+    def test_bare_stem_match_elsewhere_does_not_silence_a_real_orphan(self):
+        """Дефект 3: orphan гасился по голому stem файла где угодно в дереве.
+
+        Ссылка на `core/notes/call.md` (полный путь, резолвится однозначно)
+        не имеет отношения к `sources/calls/items/call.md`, но до фикса
+        совпадение одного лишь basename «call» гасило сироту.
+        """
+        import tempfile
+        from pathlib import Path as P
+        with tempfile.TemporaryDirectory() as tmp:
+            root = P(tmp)
+            (root / "sources" / "calls" / "items").mkdir(parents=True)
+            (root / "sources" / "calls" / "items" / "call.md").write_text(
+                "нет входящих\n", encoding="utf-8")
+            (root / "core" / "notes").mkdir(parents=True)
+            (root / "core" / "notes" / "call.md").write_text(
+                "другой файл с тем же именем\n", encoding="utf-8")
+            (root / "core" / "hub.md").write_text(
+                "[[core/notes/call]]\n", encoding="utf-8")
+            report = scan(root)
+            self.assertEqual(report.counts().get("orphan"), 1)
+
+    def test_gitignored_subtree_is_outside_the_orphan_perimeter(self):
+        """Дефект 4: периметр сирот не применял тот же .gitignore-фильтр,
+        что оба главных цикла, поэтому файл из игнорируемого поддерева
+        проверялся на сирот, хотя ссылки, которые могли бы его прикрыть,
+        гейт там же никогда не читает."""
+        import tempfile
+        from pathlib import Path as P
+        with tempfile.TemporaryDirectory() as tmp:
+            root = P(tmp)
+            (root / "sources" / "vendor" / "items").mkdir(parents=True)
+            (root / ".gitignore").write_text("sources/vendor/\n", encoding="utf-8")
+            (root / "sources" / "vendor" / "items" / "x.md").write_text(
+                "контент из игнорируемого поддерева\n", encoding="utf-8")
+            self.assertEqual(scan(root).counts(), {})
