@@ -363,4 +363,13 @@ assert_contains "$core" "observed_branch" "core skill names the branch field"
 assert_contains "$core" "a stop, not a repair" "core skill makes a diverged observed_branch a stop"
 assert_contains "$core" "superpowers:subagent-driven-development" "core skill names the procedure that executes a wave"
 
+assert_contains "$resume" "Repair both silently" "resume still repairs the two fields baton-observe can speak to"
+assert_contains "$resume" "observed_branch" "resume checks the branch"
+assert_contains "$resume" "do not repair it" "resume does not silently repair a diverged branch"
+# Step 6's write list used to say `observed_branch` is set "from what
+# baton-observe reported", which silently undoes step 2's refusal to repair
+# it -- the second half of the skill re-granting what the first half denied.
+assert_not_contains "$resume" '`observed_branch` and `tree_clean` set from what' \
+    "step 6 does not write back a field step 2 refused to repair"
+
 finish

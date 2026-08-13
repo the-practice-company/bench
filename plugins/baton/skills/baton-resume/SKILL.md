@@ -93,11 +93,11 @@ permanently, over a line of documentation.
 "${CLAUDE_PLUGIN_ROOT}/scripts/baton-observe"
 ```
 
-Three frontmatter fields in `state.md` describe the repository rather than
-claiming anything about the work: `observed_sha`, `observed_branch`,
-`tree_clean`. Repair all three silently where they disagree with what came
-back — stale reading, and the repository is right. Note the repairs; you do
-not hold the lease yet, so nothing is written until step 6.
+Two frontmatter fields in `state.md` describe the repository rather than
+claiming anything about the work: `observed_sha` and `tree_clean`.
+Repair both silently where they disagree with what came back — stale reading,
+and the repository is right. Note the repairs; you do not hold the lease yet,
+so nothing is written until step 6.
 
 Compare `observed_sha` against this run's `work_sha`, not its `sha`. `sha` is
 raw `HEAD` and moves on every checkpoint commit, so it could never equal a
@@ -105,7 +105,12 @@ baseline the checkpoint before it recorded; `work_sha` is the last commit
 outside `docs/baton/`, which checkpoint commits never touch, so it holds
 across checkpoints and moves when work lands. Empty `work_sha` is not a
 failure — nothing outside `docs/baton/` is reachable from `HEAD` yet. Then
-compare `observed_branch`.
+compare `observed_branch` — and **do not repair it**. It is the one
+field here that does not describe the tree but asks whether this is the tree
+at all, so a disagreement means this session may be reading a `state.md` that
+is not this run's. Set `needs_human: true`, say which branch `state.md`
+expects and which one you are on, and stop. Do not switch branches to
+resolve it: you hold no lease yet, and the human may have moved on purpose.
 
 `tree_clean: false` matters most on a resume: uncommitted work in the tree,
 most often from a session that died mid-edit — the one you are picking up.
@@ -264,8 +269,10 @@ session".
 and everything steps 2 and 3 turned up exists only in your head.
 
 **Always:** the observed-field repairs from step 2 — `observed_sha` set from
-`baton-observe`'s `work_sha`, `observed_branch` and `tree_clean` set from what
-it reported.
+`baton-observe`'s `work_sha`, and `tree_clean` set from what it reported.
+`observed_branch` is not on this list. Step 2 does not repair it, and a resume
+that reached step 6 at all is one whose branch agreed, so there is nothing to
+write.
 
 **And, if steps 2 or 3 found a divergence** that step 4's on-disk flags did
 not already cover — a `closed_at_sha` no longer an ancestor of `HEAD`, or a
