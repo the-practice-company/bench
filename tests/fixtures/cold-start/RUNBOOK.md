@@ -19,27 +19,29 @@ Those files live under `docs/baton/`:
   next. Rewritten on every checkpoint.
 
 `test-cold-start.sh`, `test-cold-start-diverged.sh`,
-`test-cold-start-takeover.sh` and `test-cold-start-autopilot.sh` (in this same
-directory's parent) each build a fixture repository and check, by script, what
-is mechanically checkable about it: that everything a resuming agent would
-need is present on disk, that — for the diverged fixture — its three
-divergences are real (a `closed_at_sha` that genuinely is not an ancestor of
-`HEAD`, an `observed_sha` that genuinely is behind the current `work_sha`, an
-`observed_branch` that genuinely names a branch this checkout is not on),
-that — for the takeover fixture — its lease genuinely reads as expired to a
-session that did not write it, and genuinely names a session other than the
-one that will resume, and that — for the autopilot fixture — its grant is
-grounded in a journal entry that exists, and neither of its two open waves is
-excluded by the dependency graph. That last one is checked less thoroughly
-than it reads: scenario 4's setup says which parts of that fixture's premise
-you have to confirm by eye, and why. That is as far as a script can go. None of the four tests can prove an agent actually reads and
-uses what's there, still less that it *notices* a divergence, or a
-pre-existing lease, or a wave the graph permits and a contract forbids, and
-does the right thing about it instead of quietly working around it — proving
-that takes a real agent, in a real session, doing the real thing. A scripted
-stand-in for that step would turn a green checkmark into no evidence at all,
-which is why this half is a runbook for a human to run by hand, not a test
-file.
+`test-cold-start-diverged-branch.sh`, `test-cold-start-takeover.sh` and
+`test-cold-start-autopilot.sh` (in this same directory's parent) each build a
+fixture repository and check, by script, what is mechanically checkable about
+it: that everything a resuming agent would need is present on disk, that —
+for the diverged fixture — its two divergences are real (a `closed_at_sha`
+that genuinely is not an ancestor of `HEAD`, an `observed_sha` that genuinely
+is behind the current `work_sha`), that — for the diverged-branch fixture —
+its `observed_branch` genuinely names a branch this checkout is not on and
+its other fields are otherwise consistent, that — for the takeover fixture —
+its lease genuinely reads as expired to a session that did not write it, and
+genuinely names a session other than the one that will resume, and that —
+for the autopilot fixture — its grant is grounded in a journal entry that
+exists, and neither of its two open waves is excluded by the dependency
+graph. That last one is checked less thoroughly than it reads: scenario 4's
+setup says which parts of that fixture's premise you have to confirm by eye,
+and why. That is as far as a script can go. None of the five tests can prove
+an agent actually reads and uses what's there, still less that it *notices* a
+divergence, or a pre-existing lease, or a wave the graph permits and a
+contract forbids, and does the right thing about it instead of quietly
+working around it — proving that takes a real agent, in a real session,
+doing the real thing. A scripted stand-in for that step would turn a green
+checkmark into no evidence at all, which is why this half is a runbook for a
+human to run by hand, not a test file.
 
 Five scenarios follow. Run all five by hand before each release:
 
@@ -505,9 +507,23 @@ nothing distinguishes them.
 
 ### Setup
 
-Build the diverged fixture as in scenario 2. Its `state.md` claims
-`observed_branch: baton/run-that-is-not-here`, a branch that does not exist in
-the checkout.
+Build the diverged-branch fixture — a different fixture from scenario 2's,
+deliberately: it is otherwise as clean and consistent as scenario 1's, so the
+one thing planted in it is the only thing to find. Its `state.md` claims
+`observed_branch: baton/run-that-is-not-here`, a branch that does not exist
+in the checkout; wave 1's `closed_at_sha` genuinely is an ancestor of `HEAD`,
+`observed_sha` genuinely equals the current `work_sha`, and there is no
+`.baton/precompact-facts`. `suspect: false` and `needs_human: false`, same as
+every other fixture in this runbook.
+
+```bash
+bash tests/fixtures/cold-start/build-diverged-branch.sh /tmp/baton-diverged-branch
+cd /tmp/baton-diverged-branch
+claude
+```
+
+Install the plugin and confirm it the same way as scenario 1's setup above,
+if this is a different machine or directory.
 
 ### The test
 
@@ -528,10 +544,11 @@ hook injects.
 ### Why this is a runbook scenario and not a shell test
 
 The mechanical half — that the fixture's claim really disagrees with the
-checkout — is pinned in `test-cold-start-diverged.sh`. Whether an agent
-*notices* and stops is a judgement, and the failure mode being guarded against
-is precisely an agent that silently repairs the field and carries on. A script
-cannot tell that apart from one that never looked.
+checkout, and that nothing else about the fixture does — is pinned in
+`test-cold-start-diverged-branch.sh`. Whether an agent *notices* and stops is
+a judgement, and the failure mode being guarded against is precisely an agent
+that silently repairs the field and carries on. A script cannot tell that
+apart from one that never looked.
 
 ## Recording the result
 
@@ -558,13 +575,13 @@ again, especially a silent rewrite of `observed_branch` — points at
 `baton-resume` step 2's branch check not finding its way into what the agent
 actually does. None of them points at the model.
 `test-cold-start.sh`, `test-cold-start-diverged.sh`,
-`test-cold-start-takeover.sh` and `test-cold-start-autopilot.sh` already
-proved each of their fixtures holds what a resuming agent needs, and, for the
-diverged, takeover and autopilot ones, that their respective premises are
-real — so anything missed in any of the five scenarios was not made findable
-enough, and that is fixable. It is not evidence that a fixture's premise itself
-silently rotted out from under it; the scripted tests are what would catch
-that.
+`test-cold-start-diverged-branch.sh`, `test-cold-start-takeover.sh` and
+`test-cold-start-autopilot.sh` already proved each of their fixtures holds
+what a resuming agent needs, and, for the diverged, diverged-branch, takeover
+and autopilot ones, that their respective premises are real — so anything
+missed in any of the five scenarios was not made findable enough, and that is
+fixable. It is not evidence that a fixture's premise itself silently rotted
+out from under it; the scripted tests are what would catch that.
 
 ## Runs on record
 

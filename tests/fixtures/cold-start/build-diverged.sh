@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Build a repository where three claims in state.md have diverged from the
+# Build a repository where two claims in state.md have diverged from the
 # repository, and nothing on disk admits it: suspect and needs_human both
 # read false, exactly as clean as the cold-start fixture. Finding the
 # divergence anyway is the resuming agent's job, not something this fixture
-# does for it -- see RUNBOOK.md's scenarios 2 and 5.
+# does for it -- see RUNBOOK.md's second scenario.
 #
-# Three independent divergences, all real:
+# Two independent divergences, both real:
 #
 #   1. Wave 1 is marked done at a closed_at_sha that is NOT an ancestor of
 #      main's HEAD. Built as a genuine, resolvable commit -- kept alive by a
@@ -21,13 +21,6 @@
 #      facts is written recording that later state, the same way the
 #      PreCompact hook would have -- that is what gives baton-resume's step
 #      3 something to find without a live hook run.
-#
-#   3. observed_branch names a branch this checkout is not on and never was
-#      -- baton/run-that-is-not-here is never created. Unlike 1 and 2, this
-#      is not a claim to be repaired or flagged with suspect: true; it is
-#      the question of whether this session is even reading the right run's
-#      state.md at all, and baton-resume's answer is to stop and write
-#      nothing. See RUNBOOK.md scenario 5.
 set -euo pipefail
 
 dest="${1:?usage: build-diverged.sh <destination-dir>}"
@@ -92,6 +85,7 @@ git commit -q -m "wave 2: session renewal, partial"
 # -- captured now, before the commit below, so state.md can cite this stale
 # value deliberately instead of current HEAD's.
 stale_work_sha="$(git rev-parse HEAD)"
+stale_branch="$(git symbolic-ref --short HEAD)"
 
 # Work lands after that checkpoint -- no new checkpoint captures it. This is
 # exactly the case baton-resume step 3 exists to catch: a commit outside
@@ -149,7 +143,7 @@ schema: baton/state/v1
 writer: fixture-session
 updated_at: 2026-08-03T09:00:00Z
 observed_sha: $stale_work_sha
-observed_branch: baton/run-that-is-not-here
+observed_branch: $stale_branch
 tree_clean: true
 suspect: false
 needs_human: false

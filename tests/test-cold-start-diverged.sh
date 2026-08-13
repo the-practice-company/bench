@@ -2,14 +2,13 @@
 # Pins the premise of the diverged fixture (tests/fixtures/cold-start/
 # build-diverged.sh): what this suite can check mechanically about a
 # repository where a claim disagrees with the repository. The behaviour
-# this fixture exists to exercise -- that a resuming agent notices a
-# divergence, says what diverged, and stops rather than continuing to
-# Next action -- is not something a script can observe; that half is
-# RUNBOOK.md's, run by a human: scenario 2 for the two divergences that set
-# suspect: true, scenario 5 for the third, which is a different kind of stop
-# that writes nothing at all. What is checked here is narrower and purely
-# mechanical: that the fixture's three divergences are real, so it cannot rot
-# into a clean fixture without this suite noticing.
+# this fixture exists to exercise -- that a resuming agent notices the
+# divergence, says what diverged, sets suspect: true, and stops rather than
+# continuing to Next action -- is not something a script can observe; that
+# half is RUNBOOK.md's second scenario, run by a human. What is checked
+# here is narrower and purely mechanical: that the fixture's two
+# divergences are real, so it cannot rot into a clean fixture without this
+# suite noticing.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -81,19 +80,6 @@ assert_equals "$([ "$precompact_work_sha" = "$observed_sha" ] && echo same || ec
 # covered), not the actual detection this fixture is for.
 assert_contains "$state" "suspect: false" "the fixture does not pre-flag the divergence: suspect reads false"
 assert_contains "$state" "needs_human: false" "the fixture does not pre-flag the divergence: needs_human reads false"
-
-# Divergence 3: state.md names a branch this checkout is not on. Mechanical
-# half only -- that the fixture's divergence is real. Whether the agent stops
-# on it is RUNBOOK.md scenario 5.
-claimed_branch="$(printf '%s' "$state" | sed -n 's/^observed_branch: *//p' | head -1)"
-actual_branch="$(git symbolic-ref --short -q HEAD || echo '(detached)')"
-if [ -n "$claimed_branch" ] && [ "$claimed_branch" != "$actual_branch" ]; then
-    pass "the diverged fixture claims a branch it is not on ($claimed_branch vs $actual_branch)"
-else
-    fail "the diverged fixture claims a branch it is not on"
-    echo "    claimed: $claimed_branch"
-    echo "    actual:  $actual_branch"
-fi
 
 cd /
 rm -rf "$FIXTURE"
