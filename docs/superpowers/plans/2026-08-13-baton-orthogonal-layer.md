@@ -289,7 +289,35 @@ with:
   wave does.
 ```
 
-- [ ] **Step 5: Run the skill tests**
+- [ ] **Step 5: Repair the catch-all the new bullet just falsified**
+
+The Divergence policy ends with a default, currently:
+
+```markdown
+A field on neither list is claimed. These lists are what the schema carries
+today, and the default has to be the reading that preserves evidence.
+```
+
+That was exhaustive while every non-claimed field sat inside an enumerated
+kind. `observed_branch` now satisfies its literal condition — on neither list —
+while the bullet four lines above hands it a different policy entirely. Read
+top to bottom the specific bullet wins, so nothing misbehaves today; what
+breaks is the next editor, who extends the section by pattern-matching a
+sentence that is no longer true. Replace with:
+
+```markdown
+A field named nowhere above is claimed. These bullets are what the schema
+carries today, and the default has to be the reading that preserves evidence.
+```
+
+Two lines for two — it costs nothing against the 175-line cap. Pin it:
+
+```bash
+assert_contains "$core" "A field named nowhere above is claimed" \
+    "core skill's catch-all does not sweep in the field with its own policy"
+```
+
+- [ ] **Step 6: Run the skill tests**
 
 Run: `bash tests/test-skills.sh`
 Expected: all PASS, including `skill baton is within the 500-line convention`.
@@ -318,10 +346,16 @@ Append to `tests/test-skills.sh`, before `finish`:
 `$resume` is already defined in this file — do not redefine it.
 
 ```bash
-assert_contains "$resume" "Repair all three silently" "resume still repairs the three genuinely observed fields"
+assert_contains "$resume" "Repair both silently" "resume still repairs the two fields baton-observe can speak to"
 assert_contains "$resume" "observed_branch" "resume checks the branch"
 assert_contains "$resume" "do not repair it" "resume does not silently repair a diverged branch"
+assert_not_contains "$resume" '`observed_branch` and `tree_clean` set from what' \
+    "step 6 does not write back a field step 2 refused to repair"
 ```
+
+Single quotes, not double: the needle contains backticks, and this file already
+pins backticked needles that way (see the `pass` is a second party saying so
+assertion). In double quotes bash would read them as command substitution.
 
 - [ ] **Step 2: Run it to verify it fails**
 
@@ -343,12 +377,23 @@ not hold the lease yet, so nothing is written until step 6.
 becomes:
 
 ```markdown
-Three frontmatter fields in `state.md` describe the repository rather than
-claiming anything about the work: `observed_sha`, `tree_clean`, `writer`.
-Repair all three silently where they disagree with what came back — stale
-reading, and the repository is right. Note the repairs; you do not hold the
-lease yet, so nothing is written until step 6.
+Two frontmatter fields in `state.md` describe the repository rather than
+claiming anything about the work: `observed_sha` and `tree_clean`.
+Repair both silently where they disagree with what came back — stale reading,
+and the repository is right. Note the repairs; you do not hold the lease yet,
+so nothing is written until step 6.
 ```
+
+**Two, not three.** An earlier draft of this plan kept the count at three by
+substituting `writer`. That was wrong, and checking it is what caught it:
+`plugins/baton/scripts/baton-observe` prints `sha`, `short_sha`, `work_sha`,
+`branch`, `tree_clean` and `dirty_count` — no `writer`. This paragraph is
+scoped to what `baton-observe` reports, so `writer` has nothing to be
+reconciled against here; the lease is step 5's, and `writer` is written from
+the session id rather than repaired against an observation. The `baton` skill
+is right to keep `writer` on its observed list — that list is about
+`state.md` fields re-derived rather than trusted, and the lease file is a
+source it names. Do not "fix" the model skill to match this paragraph.
 
 - [ ] **Step 4: Replace the branch comparison with the stop**
 
@@ -369,12 +414,33 @@ expects and which one you are on, and stop. Do not switch branches to
 resolve it: you hold no lease yet, and the human may have moved on purpose.
 ```
 
-- [ ] **Step 5: Run the skill tests**
+- [ ] **Step 5: Stop step 6 writing back what step 2 refused to repair**
+
+Step 6's `**Always:**` list currently reads:
+
+```markdown
+**Always:** the observed-field repairs from step 2 — `observed_sha` set from
+`baton-observe`'s `work_sha`, `observed_branch` and `tree_clean` set from what
+it reported.
+```
+
+Leave it as it is and step 2 says do not repair the branch while step 6 says
+always write it from what `baton-observe` reported. Replace with:
+
+```markdown
+**Always:** the observed-field repairs from step 2 — `observed_sha` set from
+`baton-observe`'s `work_sha`, and `tree_clean` set from what it reported.
+`observed_branch` is not on this list. Step 2 does not repair it, and a resume
+that reached step 6 at all is one whose branch agreed, so there is nothing to
+write.
+```
+
+- [ ] **Step 6: Run the skill tests**
 
 Run: `bash tests/test-skills.sh`
 Expected: all PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add plugins/baton/skills/baton-resume/SKILL.md tests/test-skills.sh
