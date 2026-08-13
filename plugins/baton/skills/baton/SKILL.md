@@ -96,8 +96,8 @@ diverged.
   in the other direction — writing `off` is always yours, writing anything
   else is the human's, through `/baton:auto`, a command you cannot invoke.
 
-A field on neither list is claimed. These lists are what the schema carries
-today, and the default has to be the reading that preserves evidence.
+A field named nowhere above is claimed. These bullets are what the schema
+carries today, and the default has to be the reading that preserves evidence.
 
 Clearing your own `suspect` is the same act as silently fixing the claim that
 raised it. Granting yourself the autopilot is that act one level up: it

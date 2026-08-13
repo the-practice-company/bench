@@ -372,4 +372,7 @@ assert_contains "$resume" "do not repair it" "resume does not silently repair a 
 assert_not_contains "$resume" '`observed_branch` and `tree_clean` set from what' \
     "step 6 does not write back a field step 2 refused to repair"
 
+assert_contains "$core" "A field named nowhere above is claimed" \
+    "core skill's catch-all does not sweep in the field with its own policy"
+
 finish
