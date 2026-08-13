@@ -190,9 +190,9 @@ diff <(git show HEAD:docs/baton/state.md) .baton/checkpoint-state.md
 ```
 
 Every line on the `<` side is a line this checkpoint deletes. Take them one at a
-time and name the step that decided each: an observed field or `writer` from
-step 3, a `Now` line from step 4, a wave row you closed. A difference you cannot
-name is a section that fell out of a draft rebuilt from memory, and it aborts the
+time and name the step that decided each: an observed field from step 3, a `Now`
+line from step 4, a wave row you closed. A difference you cannot name is a
+section that fell out of a draft rebuilt from memory, and it aborts the
 checkpoint: re-read the committed file, apply your changes to *that*, diff again.
 Nothing downstream catches it.
 
@@ -210,8 +210,9 @@ correct, not a failure.
 **8. Release the lease only if the session is over.** Mid-stretch, keep it.
 "Over" has to be something you can point at, not a feeling: the human said they
 are stopping, asked you to wrap up, or took the run back; or the last wave is
-`done` with nothing left to pick up. A compaction is none of those. Release once
-the state write above has succeeded, and not before:
+`done` with nothing left to pick up. A compaction is none of those.
+Verify before you release, never after: a verification that fails once the lease
+is gone is one you cannot act on. Run both checks below, then:
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/baton-lock" release "${CLAUDE_CODE_SESSION_ID:-$CLAUDE_SESSION_ID}"

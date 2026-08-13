@@ -18,18 +18,23 @@ for name in baton baton-checkpoint baton-resume baton-autopilot; do
     # Per-file caps, not one flat convention. A single ceiling high enough
     # for the largest skill is no ceiling for the others, and the growth
     # this bounds arrived one justified paragraph at a time.
-    # These four sum to 1135, which test-budget.sh has to carry as its budget.
-    # Raising one without lowering another puts the total over, deliberately --
-    # so a cap that moves here moves the budget too, in the same commit.
-    # Each cap is the file's measured floor rounded up, not a fraction of what
-    # the file happened to weigh before the cleanup: baton-checkpoint's was set
-    # at 305 by that arithmetic and moved to 320 once someone read the file with
-    # the invariant in hand and found 305 unreachable without cutting rules.
+    #
+    # Each cap is the file's measured floor plus about three lines -- room for
+    # one restored rule, not for a paragraph -- and never a fraction of what the
+    # file used to weigh. That second method is how baton-checkpoint got 305, a
+    # number nobody had checked; reading the file with the cleanup invariant in
+    # hand put its floor at 321, hence 324. baton at 172/175 and baton-resume at
+    # 307/310 are the same rule. baton-autopilot is deliberately at 330 with no
+    # headroom: its owner hit that wall and found a line rather than ask for the
+    # number to move, which is the behaviour these caps exist to produce.
+    #
+    # These four sum to 1139, which test-budget.sh carries as its budget. A cap
+    # that moves here moves that number too, in the same commit.
     case "$name" in
         baton)            cap=175 ;;
         baton-autopilot)  cap=330 ;;
         baton-resume)     cap=310 ;;
-        baton-checkpoint) cap=320 ;;
+        baton-checkpoint) cap=324 ;;
     esac
     lines="$(wc -l < "$f" | tr -d ' ')"
     if [ "$lines" -le "$cap" ]; then
@@ -125,6 +130,16 @@ assert_contains "$checkpoint" '| `auto` | Closed under the autopilot' \
     "the gate table still has the auto row that its lead sentence promises"
 assert_contains "$checkpoint" '## Why each attempt did not move it' \
     "the blocked entry keeps the section that earns it, not only its type"
+# This ordering lived only as an edge in the process digraph -- write -> verify
+# -> over -> release -- while the prose puts `## Verify before claiming success`
+# two sections after step 8. So the digraph was the only artefact in the file
+# saying the checkpoint is confirmed BEFORE the lease goes, and deleting it as a
+# 1:1 restatement of the steps took the rule with it. No assertion could have
+# caught that: nothing pins an edge, and no prose reviewer misses a sentence
+# that was never in the prose. Release first and a failed verification finds you
+# without the lease you need to act on it.
+assert_contains "$checkpoint" "Verify before you release, never after" \
+    "checkpoint confirms the write landed before it gives up the lease"
 assert_contains "$checkpoint" "Read the current state, whole" "checkpoint skill instructs reading the current state file first"
 assert_contains "$checkpoint" "baton-lock" "checkpoint skill mentions the lock script"
 assert_contains "$checkpoint" "release" "checkpoint skill covers releasing the lease"
