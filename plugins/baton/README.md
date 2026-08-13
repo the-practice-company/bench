@@ -36,6 +36,121 @@ Start a fresh session afterwards — hooks, skills and commands only take
 effect in a session that begins after the install, not the one you installed
 from.
 
+## A run, end to end
+
+Say the task is **usage-based billing for an API** — too big for one sitting,
+and you want it carried on while you sleep.
+
+baton does not run the work. superpowers does. baton decides which wave is
+next, records what closed, and keeps that recoverable when the context is
+compacted. So the walkthrough below is mostly the ordinary superpowers flow
+with four baton commands around it.
+
+### 1. Design it, before baton exists
+
+Use `superpowers:brainstorming` as you always would. It writes an umbrella
+spec to `docs/superpowers/specs/2026-08-13-usage-billing-design.md`.
+
+`/baton:init` refuses to start without one. baton decomposes a spec; it does
+not replace the conversation that produces it.
+
+### 2. Set the run up — `/baton:init`
+
+Once per repository, and it is a conversation, not a form. It works out with
+you: the goal, how the work splits into waves, what each depends on, what
+"closed" means for each in EARS, what no wave may break, the command that
+proves the repository works — and, per wave, **which document that wave builds
+to**.
+
+It also settles one thing once, so nobody has to answer it at 03:40: whether
+this run works in your checkout as it stands, or in an isolated worktree of
+its own. Working in place is the default — baton needs no separate tree for
+anything of its own, and the declared preference is what stops
+`using-git-worktrees` asking for consent mid-wave when there is nobody to give
+it.
+
+Out comes `docs/baton/constitution.md`:
+
+```yaml
+- wave: 1
+  name: metering
+  depends_on: []
+  exit_criteria:
+    - When a request is served, the system shall record one usage event
+      against the calling account.
+
+- wave: 2
+  name: rating
+  depends_on: [1]
+  exit_criteria:
+    - The system shall turn a period of usage events into priced invoice
+      lines.
+```
+
+Then you ratify it by hand — `status: ratified`, `ratified_by`,
+`ratified_at`, `git_anchor`. From that moment the file is read-only to the
+agent, so the thresholds it is judged against sit outside its reach.
+
+**Ratify before you compact.** Clearing a context filled by the decomposition
+dialogue is a sensible thing to do here, and safe — the state file is already
+written and committed. But an unratified constitution is a guess about what
+you wanted, so a session that comes back to one will stop and ask, and you
+will have spent a compaction to arrive at the step you were on.
+
+Waves whose spec cell in `state.md` is `—` are not startable. Most waves will
+point at the umbrella spec, or at one section of it. A wave the umbrella
+covers in a single line gets its own `brainstorming` pass — and that is a
+decision you make here, at setup, not at midnight.
+
+### 3. Hand it over — `/baton:auto`
+
+```
+/baton:auto            # every wave still todo
+/baton:auto 2          # wave 2 and no other
+```
+
+It lays out which waves in what order, where each spec comes from, the exit
+criteria quoted word for word, the command that will check them, and — the
+useful part — where it is unsure. You correct it or say go. Then you leave.
+
+### 4. What happens while you are gone
+
+Per wave, in order:
+
+| | |
+|---|---|
+| **Plan** | `superpowers:writing-plans` against that wave's spec |
+| **Work** | `superpowers:subagent-driven-development` — a fresh subagent per task, spec-compliance review then code-quality review after each |
+| **Gate** | `baton-gate` runs `verify_cmd` and scans for placeholder markers; the agent walks the exit criteria one at a time against the repository |
+| **Record** | a verdict filed under `docs/baton/gates/`, the wave closed, a checkpoint committed |
+
+Then the next wave. A wave that cannot close goes to `blocked`, with a journal
+entry saying what stopped it, and the run moves on to one that can.
+
+### 5. In the morning — `/baton:status`
+
+Deviations first: what closed, what blocked, which decisions want your review.
+Waves closed overnight read `auto` in the gate column. Turning `auto` into
+`pass` is your work — `pass` means a second party looked.
+
+### 6. The next night — `/baton:continue`
+
+One word restarts the run on a fresh session. Deliberately not automatic: a
+session opened to check one thing has not agreed to six hours of unattended
+work.
+
+### 7. When the run is over
+
+All waves `done`, and `superpowers:finishing-a-development-branch` asks the
+question it always asks — merge, PR, or clean up. Once per run, not once per
+wave, because that is a question only you can answer.
+
+---
+
+**The shape worth remembering:** baton is what happens before the first wave
+and after the last one, plus a short record between waves. Inside a wave it is
+not there.
+
 ## First run
 
 ```
