@@ -26,6 +26,16 @@ Switching branches is a write to the working tree from a procedure that has not 
 
 **3. How much the cleanup actually yields** → measured per task, capped in Task 11.
 
+> **Settled by measurement, and the estimate lost.** The per-file caps below
+> were arithmetic — roughly a third off each file's then-current size —
+> written before anyone had read those files with the invariant in hand. Task
+> 10 measured `baton-checkpoint`'s actual floor at ~317 with every argument
+> sentence gone and every rule kept. So its cap is **320**, not 305, and the
+> total budget is **1115**, not 1100. Holding 305 would have meant cutting
+> rules to defend a number nobody had checked — which is the failure the cap
+> exists to prevent, wearing the opposite mask. Caps are set from the floor
+> upward, not from a target downward.
+
 Recording the arithmetic honestly up front: the spec estimated 900–1000 lines total. A third off each file gives `157 + 333 + 291 + 305 = 1086`, and the `baton` skill grows slightly from Tasks 3 and 7. So **1100 is the realistic ceiling**, and the spec's estimate was optimistic by about 10%. Task 11 sets the cap at 1100. If the cleanup lands lower without breaking the invariant, tighten it in that same commit.
 
 **The cleanup invariant, restated because every cleanup task depends on it:**
@@ -1117,7 +1127,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SKILLS="$REPO_ROOT/plugins/baton/skills"
 . "$SCRIPT_DIR/helpers.sh"
 
-BUDGET=1100
+BUDGET=1115
 
 total=0
 for f in "$SKILLS"/*/SKILL.md; do
@@ -1146,7 +1156,12 @@ chmod +x tests/test-budget.sh
 - [ ] **Step 2: Run it**
 
 Run: `bash tests/test-budget.sh`
-Expected: PASS, with the four per-skill counts printed and a total at or below 1100. If it fails, the cleanup in Tasks 8–10 did not reach its caps — go back rather than raising `BUDGET`.
+Expected: PASS, with the four per-skill counts printed and a total at or below 1115. If it fails, the cleanup in Tasks 8–10 did not reach its caps — go back rather than raising `BUDGET`.
+
+`1115` is `175 + 330 + 290 + 320`, the sum of the per-file caps in
+`tests/test-skills.sh`. Keep the two in step: a budget that does not equal the
+sum of the caps is a second, quieter ceiling, and whichever is lower is the
+real one.
 
 - [ ] **Step 3: Add the picture to the README**
 
