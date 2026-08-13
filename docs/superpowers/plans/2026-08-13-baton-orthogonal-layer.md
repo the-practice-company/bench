@@ -582,6 +582,77 @@ git commit -m "baton-autopilot: name the procedures, and stop deriving the spec 
 
 ---
 
+### Task 5b: a skipped wave must survive into the morning
+
+Not in the original plan. Task 5's review found it, and it is a regression this
+change introduced rather than one it inherited.
+
+Before Task 5, a wave whose `spec` cell read `—` got a spec the agent derived
+and it ran. After Task 5 it is skipped — and the skip is recorded nowhere. The
+wave stays `todo`; `state.md` says nothing about having been passed over; the
+end-of-run report names only `blocked` waves; and `needs_human` does not fire,
+because it is gated on something being `blocked` and step 1 says in as many
+words that a spec-less wave is not blocked. A run can therefore finish clean
+having silently not done a wave — the one wave that needed the human most,
+since what it wants is a `brainstorming` session, the single thing an
+unattended run could never have supplied.
+
+**Sequencing: this lands after Task 8's cleanup commit**, against the cleaned
+text. The anchors quoted below are from before that cleanup and may have been
+reworded; match on the rule, not on the characters.
+
+**Files:** `plugins/baton/skills/baton-autopilot/SKILL.md`, `tests/test-skills.sh`.
+
+- [ ] **Step 1: Write the failing assertion**
+
+```bash
+assert_contains "$autopilot" "skipped for want of a spec" \
+    "a wave skipped for an empty spec cell is named in the end-of-run report"
+```
+
+- [ ] **Step 2: Widen the flag condition**
+
+In `## The pat`, the end-of-run paragraph currently raises the flag
+`**if anything is `blocked`**`. Widen it:
+
+```markdown
+`needs_human: true` **if anything is `blocked`, or was skipped for want of a
+spec**
+```
+
+- [ ] **Step 3: Name them in the report**
+
+After the existing rule naming every blocked wave and what each was waiting on,
+add:
+
+```markdown
+Name every wave you skipped for a `—` spec cell too, and say that is why. A
+skipped wave is still `todo`, so nothing on disk records that you passed it —
+this report is the only place it exists. It also wants the human more plainly
+than a blocked wave does: what it needs is a `brainstorming` session, which is
+the one thing this run could not have supplied for itself.
+```
+
+- [ ] **Step 4: Fix the sentence that now lets it through**
+
+That paragraph ends by telling the agent when to leave the flag alone —
+currently `If nothing is blocked and the scope simply finished`. A scope that
+finished by skipping half its waves is not a scope that simply finished:
+
+```markdown
+If nothing is blocked, nothing was skipped, and the scope simply finished,
+leave `needs_human` alone — that run wants no one.
+```
+
+- [ ] **Step 5: Run and commit**
+
+```bash
+git add plugins/baton/skills/baton-autopilot/SKILL.md tests/test-skills.sh
+git commit -m "baton-autopilot: a wave nobody ran is not a wave that closed"
+```
+
+---
+
 ### Task 6: `/baton:auto` refuses a spec-less wave
 
 The refusal has to reach the human while they are still here — the readiness review is the last moment they are.
