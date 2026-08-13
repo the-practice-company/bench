@@ -16,12 +16,12 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SKILLS="$REPO_ROOT/plugins/baton/skills"
 . "$SCRIPT_DIR/helpers.sh"
 
-# 1139 is the sum of the four per-file caps in test-skills.sh, which is where
+# 1148 is the sum of the four per-file caps in test-skills.sh, which is where
 # the reasoning for each of them lives. Keep the two in step: a budget that
 # does not equal that sum is a second, quieter ceiling, and whichever is lower
 # is the real one. test-skills.sh asserts the equality, reading this line, so
 # the two now move together or fail together rather than drifting quietly.
-BUDGET=1139
+BUDGET=1148
 
 total=0
 for f in "$SKILLS"/*/SKILL.md; do

@@ -22,22 +22,29 @@ for name in baton baton-checkpoint baton-resume baton-autopilot; do
     # one restored rule, not for a paragraph -- and never a fraction of what the
     # file used to weigh. That second method is how baton-checkpoint got 305, a
     # number nobody had checked; reading the file with the cleanup invariant in
-    # hand put its floor at 321, hence 324. baton at 172/175 and baton-resume at
-    # 307/310 are the same rule. baton-autopilot ran at 330 with no headroom and
-    # twice paid for a restored rule by finding an argument to cut; the third
-    # time there was nothing left to find. It stands at 333 against a 330 cap
-    # and this test is RED on it deliberately: the rule that cost those three
-    # lines -- what happens when the criteria walk finds a criterion unmet -- is
-    # the case the gate exists for, and the number moves in the pass that sets
-    # all four caps and the budget together, not here.
+    # hand put its floor at 321, hence 324.
     #
-    # These four sum to 1139, which test-budget.sh carries as its budget, and
+    # The four floors as this branch left them: baton 172, baton-autopilot 333,
+    # baton-resume 310, baton-checkpoint 321. Every cap below is its floor plus
+    # three, set in one pass rather than one conversation per file -- the first
+    # time these numbers moved they moved separately, and three separate
+    # negotiations is how a ceiling turns into a running total.
+    #
+    # Two of those floors rose because a rule went back in: baton-resume states
+    # the workspace preference to using-git-worktrees instead of letting it ask,
+    # and baton-autopilot says what happens when the criteria walk finds a
+    # criterion unmet -- the case the gate exists for, which was unwritten.
+    # baton-autopilot had already paid for two restored rules by finding an
+    # argument to cut and had nothing left to find, which is the signal a cap is
+    # doing its job rather than the signal to shave the nearest sentence.
+    #
+    # These four sum to 1148, which test-budget.sh carries as its budget, and
     # the assertion after this loop is what makes that a fact rather than a
     # claim. A cap that moves here moves that number too, in the same commit.
     case "$name" in
         baton)            cap=175 ;;
-        baton-autopilot)  cap=330 ;;
-        baton-resume)     cap=310 ;;
+        baton-autopilot)  cap=336 ;;
+        baton-resume)     cap=313 ;;
         baton-checkpoint) cap=324 ;;
     esac
     cap_total=$((cap_total + cap))
