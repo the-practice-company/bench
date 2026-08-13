@@ -255,6 +255,12 @@ session rather than the run, and `/baton:init` adds it to `.gitignore`.
 - **No state outside the log.** Every checkpoint is a commit, so
   `git log -p docs/baton/state.md` is the full history. A checkpoint with
   nothing to say writes nothing.
+- **Resume verifies before it trusts.** A grant to work without a human is not
+  a grant to work from an unverified state, so the divergence checks run on
+  every resume including an autopilot one. The one input resume cannot observe
+  is whether a human is in the session — the session source says how the
+  session arrived, not who is in it — which is why `/baton:continue` exists as
+  a separate word rather than a smarter guess.
 
 ## Worth knowing before you rely on it
 
