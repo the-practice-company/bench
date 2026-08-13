@@ -5,15 +5,14 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SKILLS="$REPO_ROOT/plugins/baton/skills"
 . "$SCRIPT_DIR/helpers.sh"
 
+# This list is hardcoded; test-budget.sh globs */SKILL.md. So a fifth skill
+# gets no per-file cap here and is still counted there -- test-budget.sh is
+# the backstop, and it is the one that would catch it, by failing on a total.
+# Add the name here when a skill is added, or the cap it never had is the one
+# nobody notices missing.
+cap_total=0
 for name in baton baton-checkpoint baton-resume baton-autopilot; do
     f="$SKILLS/$name/SKILL.md"
-    assert_file_exists "$f" "skill $name exists"
-    [ -f "$f" ] || continue
-
-    body="$(cat "$f")"
-    assert_equals "$(sed -n '1p' "$f")" "---" "skill $name starts with frontmatter"
-    assert_contains "$body" "name: $name" "skill $name declares its name"
-    assert_contains "$body" "description: Use when" "skill $name describes when to trigger"
 
     # Per-file caps, not one flat convention. A single ceiling high enough
     # for the largest skill is no ceiling for the others, and the growth
@@ -24,18 +23,31 @@ for name in baton baton-checkpoint baton-resume baton-autopilot; do
     # file used to weigh. That second method is how baton-checkpoint got 305, a
     # number nobody had checked; reading the file with the cleanup invariant in
     # hand put its floor at 321, hence 324. baton at 172/175 and baton-resume at
-    # 307/310 are the same rule. baton-autopilot is deliberately at 330 with no
-    # headroom: its owner hit that wall and found a line rather than ask for the
-    # number to move, which is the behaviour these caps exist to produce.
+    # 307/310 are the same rule. baton-autopilot ran at 330 with no headroom and
+    # twice paid for a restored rule by finding an argument to cut; it is at 333
+    # because the third time there was nothing left to find. The file had been
+    # cut to its floor and the rule -- what happens when the criteria walk finds
+    # a criterion unmet -- is the case the gate exists for.
     #
-    # These four sum to 1139, which test-budget.sh carries as its budget. A cap
-    # that moves here moves that number too, in the same commit.
+    # These four sum to 1142, which test-budget.sh carries as its budget, and
+    # the assertion after this loop is what makes that a fact rather than a
+    # claim. A cap that moves here moves that number too, in the same commit.
     case "$name" in
         baton)            cap=175 ;;
-        baton-autopilot)  cap=330 ;;
+        baton-autopilot)  cap=333 ;;
         baton-resume)     cap=310 ;;
         baton-checkpoint) cap=324 ;;
     esac
+    cap_total=$((cap_total + cap))
+
+    assert_file_exists "$f" "skill $name exists"
+    [ -f "$f" ] || continue
+
+    body="$(cat "$f")"
+    assert_equals "$(sed -n '1p' "$f")" "---" "skill $name starts with frontmatter"
+    assert_contains "$body" "name: $name" "skill $name declares its name"
+    assert_contains "$body" "description: Use when" "skill $name describes when to trigger"
+
     lines="$(wc -l < "$f" | tr -d ' ')"
     if [ "$lines" -le "$cap" ]; then
         pass "skill $name is within its $cap-line cap ($lines lines)"
@@ -43,6 +55,16 @@ for name in baton baton-checkpoint baton-resume baton-autopilot; do
         fail "skill $name is within its $cap-line cap ($lines lines)"
     fi
 done
+
+# The caps above and test-budget.sh's BUDGET are one statement made twice, and
+# until now only a comment said so. Raise a cap and forget the budget and both
+# files stay green -- until the skills grow into the headroom, at which point
+# the failure surfaces in test-budget.sh, naming a total rather than the cap
+# that actually moved. Read out of that file rather than copied into this one:
+# a second literal here would be a third place to forget.
+budget="$(sed -n 's/^BUDGET=\([0-9][0-9]*\).*/\1/p' "$SCRIPT_DIR/test-budget.sh")"
+assert_equals "$cap_total" "$budget" \
+    "the per-file caps sum to the budget test-budget.sh enforces"
 
 core="$(cat "$SKILLS/baton/SKILL.md")"
 assert_contains "$core" "Red Flags" "core skill lists the rationalisations to catch"
@@ -427,6 +449,20 @@ assert_contains "$autopilot" '`3` also takes `needs_human: true`' \
 # alone appears a dozen times in this file and would pin nothing.
 assert_contains "$autopilot" "Never substitute a command of your own" \
     "the agent does not run a command it thinks equivalent to verify_cmd"
+# The gate's central case, and it was unwritten: the file said green evidence
+# was necessary but not sufficient, said to walk the exit_criteria, and never
+# said what an unmet one does. Both halves are pinned because they are only
+# correct together. An unmet criterion counting as an attempt is what makes
+# the ceiling bound the walk at all; scoping the unchanged-evidence stop is
+# what stops that same ceiling collapsing to one. A criteria walk leaves
+# verify_exit=0 and the failing set empty every time, so the unchanged-evidence
+# test fires on attempt 2 of every criteria failure -- which the plugin's own
+# autopilot fixture contradicts: build-autopilot.sh records three attempts on
+# exactly this case, evidence unmoved throughout.
+assert_contains "$autopilot" "An unmet criterion is" \
+    "a criterion the walk finds unmet is a failed attempt, not a close"
+assert_contains "$autopilot" "**Evidence-red attempts only.**" \
+    "the unchanged-evidence stop does not fire on a failed criteria walk"
 # An empty pattern list is a legitimate constitution, so a zero here can mean
 # the scan was never asked anything -- indistinguishable, in the output, from
 # a scan that read every changed file and found nothing.
@@ -451,8 +487,13 @@ assert_not_contains "$resume" '`observed_branch` and `tree_clean` set from what'
 assert_contains "$core" "A field named nowhere above is claimed" \
     "core skill's catch-all does not sweep in the field with its own policy"
 
-assert_not_contains "$autopilot" "derive one from" \
-    "the autopilot no longer writes a wave's spec for itself"
+# Was `assert_not_contains "$autopilot" "derive one from"`, pinned to the exact
+# wording of a sentence deleted in aa3d41f -- so it forbade one phrasing of a
+# derivation branch and passed any rephrasing of it, which is the opposite of
+# what it claimed. The rule is that the skill refuses to derive a spec at all,
+# so pin the refusal: a re-introduced branch has to remove or contradict it.
+assert_contains "$autopilot" "Never derive that document yourself" \
+    "the autopilot refuses to write a wave's spec, however a branch is worded"
 assert_contains "$autopilot" "superpowers:subagent-driven-development" \
     "the work step names the procedure that executes it"
 assert_contains "$autopilot" "not a second review of the code" \

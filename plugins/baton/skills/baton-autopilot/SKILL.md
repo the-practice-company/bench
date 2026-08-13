@@ -151,7 +151,8 @@ then gate again.
 
 **Evidence green** is a necessary condition and not a sufficient one. Walk the
 wave's `exit_criteria` from the constitution, one at a time, against the
-repository — not against your impression of the work.
+repository — not against your impression of the work. **An unmet criterion is
+a failed attempt**: fix it, gate again, and count it against the ceiling.
 
 ## A dirty tree at gate time
 
@@ -243,6 +244,8 @@ A red gate is work, not a stop. Fix it and gate again.
 
 Stop when the evidence stops moving: unchanged evidence is the same
 `verify_exit` and the same set of failing tests as the previous attempt.
+**Evidence-red attempts only.** A criteria walk leaves the evidence identical
+every time, so this would stop every criteria failure at attempt 2.
 
 There is also a ceiling: **three attempts** at closing one wave.
 
