@@ -76,8 +76,7 @@ Run the evidence collector first:
 "${CLAUDE_PLUGIN_ROOT}/scripts/baton-gate" --since "<the previous wave's closed_at_sha>"
 ```
 
-`closed_at_sha` holds that run's `work_sha`, not its `sha`, so it already
-names the last commit that moved the work.
+`closed_at_sha` holds that run's `work_sha`, not its `sha`.
 
 `--since` does not move between attempts on the same wave.
 
@@ -105,22 +104,21 @@ stop: `needs_human: true`, name the roots, and say what clears it, which is
 
 Read the exit code before the output. **0 is the only code a verdict can come
 out of**, and even then it means the evidence exists, not that it is green:
-read `verify_exit` and `placeholder_hits`. Any other code is a stop — the
-script's own message names the cause, so report that rather than paraphrasing
-it. `3` and `4` both point at the constitution and hand the human different
-jobs; `64` is a bad argument, checked before `verify_cmd` runs, so nothing was
-spent; anything else is git or awk failing underneath, which is not a verdict
-against the wave.
+read `verify_exit` and `placeholder_hits`. Any other code is a stop, and the
+script's own message names the cause — report that rather than paraphrasing
+it. `3` and `4` both mean the gate could not reach a verdict and hand the
+human different jobs; `3` also takes `needs_human: true`. `64` is a bad
+argument, checked before `verify_cmd` runs, so nothing was spent; anything
+else is git or awk failing underneath, not a verdict against the wave.
 
 **Absence is not symmetric between the two constitution fields the gate
 needs**, so do not read one across to the other: a missing
 `placeholder_patterns` is exit 3, a missing `verify_cmd` is exit 4, reported
-as empty.
+as empty. Never substitute a command of your own for `verify_cmd`.
 
 ## Reading the evidence
 
-Exit 0 prints eleven keys, one `key=value` line each. Nine of them say what
-they are. Two do not:
+Exit 0 prints eleven keys, one `key=value` line each. Six need a reading:
 
 - **`sha` and `work_sha` answer different questions.** `sha` is HEAD when the
   evidence was gathered — the tree `verify_cmd` ran against, and the one the
@@ -130,14 +128,12 @@ they are. Two do not:
   everything between.
 - **`placeholder_hits=0` is only evidence if the scan was asked anything.** An
   empty `placeholder_patterns` — what the scan was asked to look for — is a
-  legitimate constitution meaning scan nothing, and produces the same `0`. The
-  two fields are printed adjacent so the answer sits beside its own question;
-  carry both into the verdict. A non-zero count is **files that matched**, not
+  legitimate constitution meaning scan nothing, and produces the same `0`.
+  Carry both into the verdict. A non-zero count is **files that matched**, not
   markers.
 
 `changed_files=0` is a real property, not a sign nothing happened: a wave that
-only deleted files reports it, and so does one that touched only
-`docs/baton/`.
+only deleted files reports it, as does one that touched only `docs/baton/`.
 
 `tree_clean` qualifies `sha` — see below.
 
@@ -175,9 +171,11 @@ carry on with the wave.
 Check every remaining path against the **union** of the wave's plan, its spec,
 and the diff since this wave's `--since`. Inside any of them: ordinary work.
 Commit it and gate again — this does not count against the three-attempt
-ceiling, since no verdict was rendered. Outside all three — something you
-cannot account for as this wave's work: `needs_human: true`, name the paths,
-stop. Do not stash it; that hides it from the next session too.
+ceiling, since no verdict was rendered. If it comes back dirty on that next
+run, something is writing files nothing accounts for: take the stop below.
+Outside all three — something you cannot account for as this wave's work:
+`needs_human: true`, name the paths, stop. Do not stash it; that hides it from
+the next session too.
 
 ## The verdict file
 
@@ -263,7 +261,9 @@ When a wave cannot close:
 3. checkpoint;
 4. look for another wave.
 
-**Do not raise `needs_human` here.**
+**Do not raise `needs_human` here.** It is the run-level stop flag:
+`baton-resume` and `/baton:continue` both halt on finding it set, before the
+lease is taken.
 
 **A wave is available only if all four hold:**
 
