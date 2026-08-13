@@ -357,4 +357,10 @@ assert_contains "$autopilot" "Absence is not symmetric" \
 assert_contains "$autopilot" "only evidence if the scan was asked anything" \
     "autopilot skill refuses to read placeholder_hits=0 as clean when patterns are empty"
 
+# Observed fields are repaired silently; this one is not, because it does not
+# describe the tree -- it answers whether this is the tree at all.
+assert_contains "$core" "observed_branch" "core skill names the branch field"
+assert_contains "$core" "a stop, not a repair" "core skill makes a diverged observed_branch a stop"
+assert_contains "$core" "superpowers:subagent-driven-development" "core skill names the procedure that executes a wave"
+
 finish
