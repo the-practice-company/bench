@@ -398,4 +398,12 @@ assert_contains "$autopilot" "superpowers:finishing-a-development-branch" \
 assert_contains "$resume" "Write nothing, not even" \
     "the branch stop writes no flag into a state.md it cannot establish is this run's"
 
+# Step 1 skips a wave whose spec cell is `—` rather than deriving one, and a
+# skipped wave stays `todo` -- so nothing on disk records that it was passed
+# over. The end-of-run report is the only place it can appear, and the run it
+# appears in is the one that most wants a human: what the wave needs is a
+# brainstorming session.
+assert_contains "$autopilot" "skipped for want of a spec" \
+    "a wave skipped for an empty spec cell is named in the end-of-run report"
+
 finish

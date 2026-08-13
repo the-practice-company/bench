@@ -35,8 +35,7 @@ whatever the human put there.
 ## The loop
 
 Take waves in **the constitution's wave order, restricted to waves in scope**.
-Do not sort by `depends_on`; it is a constraint that order must satisfy, not
-the thing that generates it. If the constitution's own order violates its own
+Do not sort by `depends_on`. If the constitution's own order violates its own
 `depends_on`, stop — the constitution is wrong, and it is the human's.
 
 Then, for each wave:
@@ -63,9 +62,7 @@ Then, for each wave:
 5. **Close or block.** Then the next wave.
 
 Checkpoint between waves, always.
-**And between attempts, not only between waves.** The attempt counter lives in
-`state.md` (see "When fixing stops being fixing"), so it only exists once a
-checkpoint has written it.
+**And between attempts, not only between waves.**
 
 ## The gate
 
@@ -148,9 +145,7 @@ only deleted files reports it, and so does one that touched only
 **Some non-zero `verify_exit` values are not evidence about the code.** `127`
 means the command was never found; `130`, `137` and `143` are deaths by signal.
 All four say the suite did not run, not did not pass. Stop and report; do not
-enter the fix-and-regate loop below. Every attempt spent fixing code against a
-suite that never ran is an attempt off the ceiling, and three of them close
-nothing.
+enter the fix-and-regate loop below.
 
 **Evidence red** — `verify_exit` non-zero for a reason that is about the code,
 or `placeholder_hits` above zero — means the wave does not close. Go fix it,
@@ -162,8 +157,7 @@ repository — not against your impression of the work.
 
 ## A dirty tree at gate time
 
-`tree_clean=false` means the evidence describes a tree no `sha` names, so a
-green verdict filed on it is a claim about a tree nobody can check out.
+`tree_clean=false` means the evidence describes a tree no `sha` names.
 
 Name the paths first — from the document, not from memory:
 
@@ -171,9 +165,7 @@ Name the paths first — from the document, not from memory:
 git -c core.quotePath=false status --porcelain -uall --ignore-submodules=none
 ```
 
-Those flags are `baton-observe`'s own. A plain `git status --porcelain` can
-report nothing while the tree is genuinely dirty, and an empty list would make
-"every path is accounted for" vacuously true.
+Those flags are `baton-observe`'s own.
 
 Discount `.baton/` before anything else — it is the gate's own working
 directory. If it shows up at all, `.gitignore` lost a line: report that and
@@ -282,14 +274,22 @@ lease is taken.
    `blocked`.
 
 If no wave is available, the run is over and this is where the flag belongs:
-checkpoint, `needs_human: true` **if anything is `blocked`**, write
-`autopilot: off`, and stop with a report.
+checkpoint, `needs_human: true` **if anything is `blocked`, or was
+skipped for want of a spec**, write `autopilot: off`, and stop with a report.
 
 Say in that report that the run is over and
 `superpowers:finishing-a-development-branch` is what closes it — merge, PR or
 clean up. Name every blocked wave in that report, and say what each was
-waiting on. If nothing is blocked and the scope simply finished, leave
-`needs_human` alone.
+waiting on.
+
+Name every wave you skipped for a `—` spec cell too, and say that is why. A
+skipped wave is still `todo`, so nothing on disk records that you passed it —
+this report is the only place it exists. It wants the human more plainly than
+a blocked wave does: what it needs is a `brainstorming` session, which is the
+one thing this run could not have supplied for itself.
+
+If nothing is blocked, nothing was skipped, and the scope simply finished,
+leave `needs_human` alone — that run wants no one.
 
 ## What the autopilot never covers
 
