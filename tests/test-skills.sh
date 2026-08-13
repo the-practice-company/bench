@@ -375,4 +375,13 @@ assert_not_contains "$resume" '`observed_branch` and `tree_clean` set from what'
 assert_contains "$core" "A field named nowhere above is claimed" \
     "core skill's catch-all does not sweep in the field with its own policy"
 
+assert_not_contains "$autopilot" "derive one from" \
+    "the autopilot no longer writes a wave's spec for itself"
+assert_contains "$autopilot" "superpowers:subagent-driven-development" \
+    "the work step names the procedure that executes it"
+assert_contains "$autopilot" "not a second review of the code" \
+    "the gate is framed as a record of closure"
+assert_contains "$autopilot" "superpowers:finishing-a-development-branch" \
+    "the end-of-run report names the skill that closes the run"
+
 finish

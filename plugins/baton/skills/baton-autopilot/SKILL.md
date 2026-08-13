@@ -66,17 +66,25 @@ Then, for each wave:
    the second, and being next in the constitution's order is not the same as
    being ready. Not available, and not blocked either — skip it and take the
    next; the order is a sequence to walk, not a queue that stalls.
-1. **Spec.** If the wave's `spec` cell in the Waves table names a file, that
-   spec is the human's and you work to it. If it reads `—`, derive one from
-   the constitution: the wave's `exit_criteria`, its `produces` and `consumes`,
-   and the non-negotiables. Deriving is narrowing what the human already
-   ratified, not inventing scope — if it feels like invention, that is the
-   signal to stop, not to be bolder.
+1. **Spec.** The wave's `spec` cell names the document this wave builds to,
+   and a human put it there — the umbrella spec, one section of it, or a spec
+   written for this wave alone. Work to that document.
+
+   `—` means the wave is not ready. Skip it and take the next; it is not
+   blocked and it is not yours to fix, because writing that spec is
+   `superpowers:brainstorming`, which needs the human this session does not
+   have. Deriving one from the `exit_criteria` would leave you judging your
+   own derivation at step 4, with both sides of the check coming out of the
+   same head.
 2. **Plan.** `superpowers:writing-plans` against that spec.
-3. **Work.** Delegate it. You are the orchestrator; the rule that you do not
-   write code in the primary session is not suspended by the human's absence —
-   it is more load-bearing without them, since context is the only resource
-   the run cannot refill and nobody is around to notice you spending it.
+3. **Work.** `superpowers:subagent-driven-development` against that plan. It
+   is named here for the same reason step 2 names `writing-plans`: its
+   two-stage review is where a wave is held to its spec, and a step that only
+   said "delegate it" gets filled by whichever tool looks most like a
+   reviewer. Do not substitute one.
+
+   You are the orchestrator, and the rule that you do not write code in the
+   primary session is not suspended by the human's absence.
 4. **Gate.** `baton-gate`, then your own verdict. See below.
 5. **Close or block.** Then the next wave.
 
@@ -90,6 +98,17 @@ checkpoint still saying attempt 1, hands the resumed session a free attempt —
 the ceiling silently resets, which is the one thing a ceiling must not do.
 
 ## The gate
+
+The gate records that a wave closed against the criteria the human ratified.
+It is **not a second review of the code** — `subagent-driven-development` has
+already reviewed every task twice, and the first of those stages is the one
+that checks nothing is missing and nothing is extra. The gate opens no
+findings and starts no rounds. It answers one question and leaves the answer
+on disk for the morning.
+
+One `verify_cmd` for the whole run is enough for the same reason: the tests
+written inside the wave answer whether the wave works, so what is left for
+the gate is whether it broke anything else.
 
 Run the evidence collector first:
 
@@ -451,6 +470,11 @@ If no wave is available, the run is over and this is where the flag belongs:
 checkpoint, `needs_human: true` **if anything is `blocked`**, write
 `autopilot: off`, and stop with a report. Nothing is left to carry, so the halt
 costs nothing and the morning meets the flag at the one moment it is true.
+
+Say in that report that the run is over and
+`superpowers:finishing-a-development-branch` is what closes it — merge, PR or
+clean up. That skill asks a question only the human can answer, which is why
+it runs once here rather than at the end of every wave.
 
 Name every blocked wave in that report, and say what each was waiting on. A run
 that parked wave 2 and then closed 3, 4 and 5 ends with four green rows and one
