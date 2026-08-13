@@ -23,6 +23,8 @@ digraph resume {
     "Not a baton run - say so, suggest /baton:init, stop" [shape=doublecircle];
     "Read constitution.md and state.md" [shape=box];
     "baton-observe; check merge-base ancestry" [shape=box];
+    "Branch disagrees?" [shape=diamond];
+    "Report the branch mismatch - stop, write nothing" [shape=doublecircle];
     "Read .baton/precompact-facts if present" [shape=box];
     "suspect or needs_human already on disk?" [shape=diamond];
     "Resolve that first - report to the human" [shape=doublecircle];
@@ -35,7 +37,9 @@ digraph resume {
     "docs/baton/state.md exists?" -> "Not a baton run - say so, suggest /baton:init, stop" [label="no"];
     "docs/baton/state.md exists?" -> "Read constitution.md and state.md" [label="yes"];
     "Read constitution.md and state.md" -> "baton-observe; check merge-base ancestry";
-    "baton-observe; check merge-base ancestry" -> "Read .baton/precompact-facts if present";
+    "baton-observe; check merge-base ancestry" -> "Branch disagrees?";
+    "Branch disagrees?" -> "Report the branch mismatch - stop, write nothing" [label="yes"];
+    "Branch disagrees?" -> "Read .baton/precompact-facts if present" [label="no"];
     "Read .baton/precompact-facts if present" -> "suspect or needs_human already on disk?";
     "suspect or needs_human already on disk?" -> "Resolve that first - report to the human" [label="yes"];
     "suspect or needs_human already on disk?" -> "Acquire the writer lease" [label="no"];
@@ -108,9 +112,14 @@ failure — nothing outside `docs/baton/` is reachable from `HEAD` yet. Then
 compare `observed_branch` — and **do not repair it**. It is the one
 field here that does not describe the tree but asks whether this is the tree
 at all, so a disagreement means this session may be reading a `state.md` that
-is not this run's. Set `needs_human: true`, say which branch `state.md`
-expects and which one you are on, and stop. Do not switch branches to
-resolve it: you hold no lease yet, and the human may have moved on purpose.
+is not this run's. Report it and stop: name the branch `state.md` expects and
+the branch you are on, and go no further. Do not switch branches to resolve
+it — the human may have moved on purpose.
+
+**Write nothing, not even `needs_human`.** You hold no lease, and the file you
+would write to is the one you cannot establish is this run's. Nothing is lost:
+no script reads that flag, and the next session re-derives this same
+disagreement here in step 2, for the price of one `baton-observe`.
 
 `tree_clean: false` matters most on a resume: uncommitted work in the tree,
 most often from a session that died mid-edit — the one you are picking up.
@@ -211,13 +220,16 @@ The next compaction writes a fresh one. Left behind, it makes the next resume
 re-litigate a question this one already answered, and the answer only gets
 more wrong as the run goes on.
 
-**4. Handle the flags that were already on disk.** Steps 0 to 3 are all reads;
-this is the first step that decides anything. `suspect: true` in the
-`state.md` from step 1 means a claim already diverged, caught by an earlier
-session's checkpoint or resume; `needs_human: true` means the run is already
-stopped. Either one, found already set, is the whole job until resolved:
-report it and stop rather than working around it. What steps 2 and 3 just
-found themselves is different — that is step 6, once you hold the lease.
+**4. Handle the flags that were already on disk.** Steps 0 to 3 read and, on
+one finding, stop — a branch that disagrees ends the resume in step 2 without
+writing. Past that, this is the first step that decides anything. `suspect:
+true` in the `state.md` from step 1 means a claim already diverged, caught by
+an earlier session's checkpoint or resume; `needs_human: true` means the run
+is already stopped. Either one, found already set, is the whole job until
+resolved: report it and stop rather than working around it. What steps 2 and 3
+just found themselves is different — that is step 6, once you hold the lease.
+The branch check is the exception: it does not reach step 6, because it does
+not reach step 5.
 
 Resolution is not yours alone. `suspect` marks a claimed field that disagrees
 with the repository, and which of the two is wrong is a question about intent

@@ -384,4 +384,7 @@ assert_contains "$autopilot" "not a second review of the code" \
 assert_contains "$autopilot" "superpowers:finishing-a-development-branch" \
     "the end-of-run report names the skill that closes the run"
 
+assert_contains "$resume" "Write nothing, not even" \
+    "the branch stop writes no flag into a state.md it cannot establish is this run's"
+
 finish

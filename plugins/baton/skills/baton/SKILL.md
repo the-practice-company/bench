@@ -78,10 +78,11 @@ diverged.
   never the authority.
 - **`observed_branch`** — looks observed and is not. The others describe the
   tree; this one answers whether this is the tree at all. A disagreement is
-  **a stop, not a repair**: `needs_human: true`, name the branch `state.md`
-  expects and the branch you are on, and stop. Repairing it silently is how a
-  session on the wrong branch adopts a `state.md` that belongs to no run it is
-  in.
+  **a stop, not a repair**: name the branch `state.md` expects and the branch
+  you are on, and stop without writing — not even a flag, because the file you
+  would write to is the one you cannot establish is this run's. Repairing it
+  silently is how a session on the wrong branch adopts a `state.md` that
+  belongs to no run it is in.
 - **Claimed fields** — a wave marked `done`, a gate marked `auto` or `pass`,
   the `closed_at_sha` recorded against a closed wave, which is the one claim
   `baton-resume` checks mechanically. Never fix these. Set `suspect: true`,
