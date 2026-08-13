@@ -18,8 +18,9 @@ for name in baton baton-checkpoint baton-resume baton-autopilot; do
     # Per-file caps, not one flat convention. A single ceiling high enough
     # for the largest skill is no ceiling for the others, and the growth
     # this bounds arrived one justified paragraph at a time.
-    # These four sum to 1115, which is the budget in test-budget.sh. Raising
-    # one without lowering another puts the total over, and that is deliberate.
+    # These four sum to 1135, which test-budget.sh has to carry as its budget.
+    # Raising one without lowering another puts the total over, deliberately --
+    # so a cap that moves here moves the budget too, in the same commit.
     # Each cap is the file's measured floor rounded up, not a fraction of what
     # the file happened to weigh before the cleanup: baton-checkpoint's was set
     # at 305 by that arithmetic and moved to 320 once someone read the file with
