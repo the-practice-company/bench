@@ -31,10 +31,12 @@ its other fields are otherwise consistent, that — for the takeover fixture —
 its lease genuinely reads as expired to a session that did not write it, and
 genuinely names a session other than the one that will resume, and that —
 for the autopilot fixture — its grant is grounded in a journal entry that
-exists, and neither of its two open waves is excluded by the dependency
-graph. That last one is checked less thoroughly than it reads: scenario 4's
-setup says which parts of that fixture's premise you have to confirm by eye,
-and why. That is as far as a script can go. None of the five tests can prove
+exists, neither of its two open waves is excluded by the dependency graph,
+and both carry a real `spec` cell of their own, not the empty one that would
+leave neither available regardless of the graph. That last one is checked
+less thoroughly than it reads: scenario 4's setup says which parts of that
+fixture's premise you have to confirm by eye, and why. That is as far as a
+script can go. None of the five tests can prove
 an agent actually reads and uses what's there, still less that it *notices* a
 divergence, or a pre-existing lease, or a wave the graph permits and a
 contract forbids, and does the right thing about it instead of quietly
@@ -390,10 +392,11 @@ wave 2 `blocked` after three attempts and journaled, waves 3 and 4 still
 `needs_human` is `false`, deliberately, and that is the first thing to
 understand about this fixture. A parked wave is not a stopped run: the flag is
 the *run-level* stop, raised only when nothing is left to take, and wave 4 is
-still available. A fixture that raised it would be posing a run that had to
-stop, rather than this one, which did not have to — and, because
-`baton-resume` step 4 halts on finding the flag already set, it would also
-stop the run before any of the interesting steps were reached.
+still available under all four availability rules. A fixture that raised it
+would be posing a run that had to stop, rather than this one, which did not
+have to — and, because `baton-resume` step 4 halts on finding the flag
+already set, it would also stop the run before any of the interesting steps
+were reached.
 
 Wave 3 does **not** depend on wave 2 in the dependency graph; its `depends_on`
 is `[1]`, and wave 1 is `done`. It is excluded only because it consumes
@@ -401,6 +404,13 @@ is `[1]`, and wave 1 is `done`. It is excluded only because it consumes
 scenario exists to find out: an agent that learned the graph rule and dropped
 the contract rule as pedantic passes every other scenario in this runbook and
 fails this one.
+
+Every wave here also carries a real `spec` cell, wave 3 included — the fourth
+availability rule, alongside status, the graph and the contract. Wave 3's
+spec cell is filled for the same reason its `depends_on` is left satisfied:
+so it is excluded for the one reason this scenario is testing, not for a
+second, unrelated one that would leave a reader unable to tell which rule
+actually stopped it.
 
 ### Setup
 
@@ -417,14 +427,15 @@ this is a different machine or directory.
 
 `test-cold-start-autopilot.sh` pins the premise this scenario rests on, and it
 pins the shape rather than the vocabulary: it reads `produces:` from wave 2's
-own block and `consumes:` from wave 3's and wave 4's, and each wave's status
-from its own table row, so a contract line that moved to a different wave fails
-there instead of quietly degenerating the fixture here. Confirmed by mutation
-against a verified baseline — marking wave 3 `done`, giving wave 4 a
-`consumes:`, moving `produces:` off wave 2, moving `consumes:` off wave 3,
-unblocking wave 2, and letting `Next action` name a wave are each caught. So a
-change to the fixture's shape surfaces there rather than as a silent failure
-here.
+own block, `consumes:` from wave 3's and wave 4's, each wave's `spec` cell
+from its own table row, and each wave's status the same way, so a contract
+line — or a spec cell — that moved to a different wave fails there instead of
+quietly degenerating the fixture here. Confirmed by mutation against a
+verified baseline — marking wave 3 `done`, giving wave 4 a `consumes:`,
+moving `produces:` off wave 2, moving `consumes:` off wave 3, resetting wave
+3's or wave 4's `spec` cell to `—`, unblocking wave 2, and letting `Next
+action` name a wave are each caught. So a change to the fixture's shape
+surfaces there rather than as a silent failure here.
 
 ### The test
 
@@ -495,13 +506,13 @@ All six must hold.
    status is where the morning gets the list.
 
 **Taking wave 3 is the failure this scenario exists to catch.** An agent that
-checks `depends_on`, finds wave 1 `done`, and starts wave 3 has applied two of
-the three availability rules and skipped the one the graph does not show. What
-it then builds rests on a contract nobody has defined yet and has to be thrown
-away — worse than the idle night the move was meant to avoid, and industrious-
-looking the whole way. Writing `pass` at condition 4 is the other one: it turns
-"the agent closed this alone" into "a human signed this off", and afterwards
-nothing distinguishes them.
+checks `depends_on`, finds wave 1 `done`, and starts wave 3 has applied three
+of the four availability rules and skipped the one the graph does not show.
+What it then builds rests on a contract nobody has defined yet and has to be
+thrown away — worse than the idle night the move was meant to avoid, and
+industrious-looking the whole way. Writing `pass` at condition 4 is the other
+one: it turns "the agent closed this alone" into "a human signed this off",
+and afterwards nothing distinguishes them.
 
 ## Scenario 5: the branch that is not this branch
 
