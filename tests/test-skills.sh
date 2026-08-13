@@ -270,6 +270,14 @@ assert_contains "$autopilot" "weaken the gate" "autopilot skill forbids weakenin
 # incidental prose mentions of baton-gate elsewhere in the file.
 assert_contains "$autopilot" 'scripts/baton-gate" --since' \
     "autopilot skill calls the evidence script, with the argument that scopes it"
+# --since is chosen here, two sections before `work_sha` is defined under
+# "Reading the evidence". Without this clause the cell is a forward reference
+# to a term the reader does not have yet, and the agent reaches for `sha`,
+# which is the one field the next wave's scan must not start from. Deleted
+# once already -- by me, to buy a line against the cap, which is the wrong
+# reason to spend a sentence that tells you what a field is for.
+assert_contains "$autopilot" "the last commit that moved the work" \
+    "closed_at_sha says what it names, where --since is actually chosen"
 # /baton:auto resolves --since and records it as base: on the grant entry, and
 # this skill is the only thing that reads it. Unread, the human sets a base
 # because the root-commit fallback is wrong for their repository, and the run

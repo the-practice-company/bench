@@ -76,7 +76,8 @@ Run the evidence collector first:
 "${CLAUDE_PLUGIN_ROOT}/scripts/baton-gate" --since "<the previous wave's closed_at_sha>"
 ```
 
-`closed_at_sha` holds that run's `work_sha`, not its `sha`.
+`closed_at_sha` holds that run's `work_sha`, not its `sha`: it already names
+the last commit that moved the work.
 
 `--since` does not move between attempts on the same wave.
 
@@ -128,8 +129,9 @@ Exit 0 prints eleven keys, one `key=value` line each. Six need a reading:
   everything between.
 - **`placeholder_hits=0` is only evidence if the scan was asked anything.** An
   empty `placeholder_patterns` — what the scan was asked to look for — is a
-  legitimate constitution meaning scan nothing, and produces the same `0`.
-  Carry both into the verdict. A non-zero count is **files that matched**, not
+  legitimate constitution meaning scan nothing, and produces the same `0`. The
+  two fields are printed adjacent so the answer sits beside its own question;
+  carry both into the verdict. A non-zero count is **files that matched**, not
   markers.
 
 `changed_files=0` is a real property, not a sign nothing happened: a wave that
@@ -261,9 +263,7 @@ When a wave cannot close:
 3. checkpoint;
 4. look for another wave.
 
-**Do not raise `needs_human` here.** It is the run-level stop flag:
-`baton-resume` and `/baton:continue` both halt on finding it set, before the
-lease is taken.
+**Do not raise `needs_human` here.**
 
 **A wave is available only if all four hold:**
 
