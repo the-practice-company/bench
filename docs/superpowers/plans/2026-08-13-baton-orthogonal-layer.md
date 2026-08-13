@@ -1355,3 +1355,21 @@ git commit -m "tests: a fixture that is not on the branch it claims, and the sce
 - The spec's §9 table has a commit against every row.
 
 Then use `superpowers:finishing-a-development-branch`.
+
+---
+
+## Deliberately not fixed here
+
+Found by the whole-branch review, judged out of scope, recorded so they are not lost.
+
+**The `spec` cell is the new load-bearing invariant and has no mechanism behind it.** `verify_cmd` and `placeholder_patterns` are safe because they live in a file `baton-write` refuses unconditionally. The `spec` cell lives in `state.md`, which the agent rewrites at every checkpoint. The skill asserts "a human put it there" and "never derive that document yourself" — both prose. Nothing stops an unattended agent writing a spec document, entering its path at the next checkpoint, and taking the wave: the self-judging loop this branch removed, reconstituted one level up. The divergence policy classifies the cell as claimed by catch-all, which governs whether it may be *repaired* but says nothing about who may *author* it. **This is the first thing to harden next.**
+
+**A wave left `doing` by a mid-wave compaction has no branch in the loop.** Availability rule 1 is `status` is `todo`, so an agent entering `baton-autopilot` at step 0 skips it. What saves it today is that a resumed session enters through `baton-resume`'s `Next action` instead, a different entry point — and the skill never says which one a resumed session uses. Pre-existing, but sharper now that the availability list is pinned as authoritative.
+
+**The budget rations lines, and what is scarce is tokens.** `fmt -w 100` across the four skills would remove roughly a fifth of the line count, delete nothing, and turn both tests green with room to spare — an evasion that looks like tidying. A byte or word budget alongside the line budget closes it.
+
+**`references/` is the budget's largest hole, and the roadmap points straight at it.** `test-budget.sh` globs `*/SKILL.md`, so a `skills/<name>/references/*.md` file is neither capped nor counted. The design defers references files to a later round; whoever introduces them must widen that glob in the same commit or the budget quietly stops meaning anything.
+
+**Command files are loaded into context and are not capped.** `commands/` is ~600 lines. This branch moved evicted prose to `README.md`, which genuinely is not loaded — but nothing in the tests distinguishes the two destinations, and `auto.md` is the natural landing spot for anything cut from `baton-autopilot`.
+
+**`build-diverged.sh` is a name that invites the mistake this branch already undid once.** Nothing in the filename says it carries two specific divergences rather than being the general-purpose diverged fixture. Rename before a sixth scenario arrives.
