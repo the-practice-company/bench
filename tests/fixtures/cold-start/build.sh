@@ -100,10 +100,10 @@ needs_human: false
 
 ## Waves
 
-| # | name | status | branch/worktree | spec | plan | closed_at_sha | gate |
-|---|------|--------|-----------------|------|------|---------------|------|
-| 1 | login | done | main | — | — | $wave1_sha | — |
-| 2 | session | doing | main | — | — | — | — |
+| # | name | status | spec | plan | closed_at_sha | gate |
+|---|------|--------|------|------|---------------|------|
+| 1 | login | done | — | — | $wave1_sha | — |
+| 2 | session | doing | — | — | — | — |
 
 **Current wave:** 2 — session
 

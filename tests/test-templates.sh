@@ -23,7 +23,7 @@ assert_contains "$state" "needs_human: false" "state carries the needs_human fla
 assert_contains "$state" "**Non-negotiables:**" "state restates the live constraints, not only the goal"
 assert_contains "$state" "**Operating mode:**" "state restates who the agent is"
 assert_contains "$state" "**Suspect:**" "state has a place to describe a divergence"
-assert_contains "$state" "branch/worktree" "state records where each wave lives"
+assert_not_contains "$state" "branch/worktree" "state's wave table carries no per-wave worktree column"
 
 lines="$(wc -l < "$TPL/state.md" | tr -d ' ')"
 if [ "$lines" -le 60 ]; then

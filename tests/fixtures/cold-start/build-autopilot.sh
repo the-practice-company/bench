@@ -284,12 +284,12 @@ autopilot_grant: DEC-0001
 
 ## Waves
 
-| # | name | status | branch/worktree | spec | plan | closed_at_sha | gate |
-|---|------|--------|-----------------|------|------|---------------|------|
-| 1 | login | done | main | — | — | $wave1_sha | auto |
-| 2 | session | blocked | main | — | — | — | — |
-| 3 | refresh | todo | main | — | — | — | — |
-| 4 | docs | todo | main | — | — | — | — |
+| # | name | status | spec | plan | closed_at_sha | gate |
+|---|------|--------|------|------|---------------|------|
+| 1 | login | done | — | — | $wave1_sha | auto |
+| 2 | session | blocked | — | — | — | — |
+| 3 | refresh | todo | — | — | — | — |
+| 4 | docs | todo | — | — | — | — |
 
 **Current wave:** — none in progress; wave 2 blocked
 

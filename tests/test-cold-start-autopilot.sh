@@ -68,12 +68,12 @@ assert_contains "$grant_entry" "base: —" \
 # nothing produced, is exactly what these two catch.
 row1="$(wave_row 1)"
 assert_equals "$(row_field "$row1" 3)" "done" "wave 1's status is done"
-assert_equals "$(row_field "$row1" 8)" "auto" "wave 1's gate reads auto, matching the verdict file below"
+assert_equals "$(row_field "$row1" 7)" "auto" "wave 1's gate reads auto, matching the verdict file below"
 
 # gate: auto is a claim; the verdict file is the evidence for it. A row
 # that says auto with no file behind it is a claim /baton:status and a
 # resuming agent both have nothing to check it against.
-wave1_sha="$(row_field "$row1" 7)"
+wave1_sha="$(row_field "$row1" 6)"
 gate_file="docs/baton/gates/wave-1-attempt-1-${wave1_sha}.md"
 assert_file_exists "$gate_file" "wave 1's auto-gate verdict file exists, named after its own closed_at_sha"
 gate_content="$(cat "$gate_file" 2>/dev/null || true)"
