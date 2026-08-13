@@ -315,8 +315,9 @@ The rule from Task 3, applied in the procedure that executes it.
 
 Append to `tests/test-skills.sh`, before `finish`:
 
+`$resume` is already defined in this file — do not redefine it.
+
 ```bash
-resume="$(cat "$SKILLS/baton-resume/SKILL.md")"
 assert_contains "$resume" "Repair all three silently" "resume still repairs the three genuinely observed fields"
 assert_contains "$resume" "observed_branch" "resume checks the branch"
 assert_contains "$resume" "do not repair it" "resume does not silently repair a diverged branch"
@@ -394,11 +395,13 @@ The core of the change. Step 1 loses the derivation branch; step 3 names `subage
 
 Append to `tests/test-skills.sh`, before `finish`:
 
+`$autopilot` is already defined in this file — do not redefine it under a
+second name.
+
 ```bash
-auto_skill="$(cat "$SKILLS/baton-autopilot/SKILL.md")"
-assert_not_contains "$auto_skill" "derive one from" "the autopilot no longer writes a wave's spec for itself"
-assert_contains "$auto_skill" "superpowers:subagent-driven-development" "the work step names the procedure that executes it"
-assert_contains "$auto_skill" "not a second review of the code" "the gate is framed as a record of closure"
+assert_not_contains "$autopilot" "derive one from" "the autopilot no longer writes a wave's spec for itself"
+assert_contains "$autopilot" "superpowers:subagent-driven-development" "the work step names the procedure that executes it"
+assert_contains "$autopilot" "not a second review of the code" "the gate is framed as a record of closure"
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
@@ -496,7 +499,7 @@ it runs once here rather than at the end of every wave.
 Add the matching assertion to `tests/test-skills.sh`:
 
 ```bash
-assert_contains "$auto_skill" "superpowers:finishing-a-development-branch" "the end-of-run report names the skill that closes the run"
+assert_contains "$autopilot" "superpowers:finishing-a-development-branch" "the end-of-run report names the skill that closes the run"
 ```
 
 - [ ] **Step 6: Run the skill tests**
@@ -795,6 +798,17 @@ do not enter the fix-and-regate loop below. Every attempt spent fixing code
 against a suite that never ran is an attempt off the ceiling, and three of
 them close nothing.
 ```
+
+**One rule in that section is pinned and must not leave.** The paragraph after
+the table (`plugins/baton/skills/baton-autopilot/SKILL.md:151-157`) opens
+`**Absence is not symmetric between those two fields**`, and
+`tests/test-skills.sh` asserts that phrase. It is a rule, not an argument for
+one: it stops the agent reading exit 3 and exit 4 across from each other. Keep
+a line carrying `Absence is not symmetric` in the skill and compress the rest
+of the paragraph — the worked example of *which* field is which code is what
+moves to the README in Step 4. Run `bash tests/test-skills.sh` after this step
+specifically; a green suite is the only thing separating "compressed" from
+"deleted a rule".
 
 - [ ] **Step 4: Move the evicted reasoning to the README**
 
