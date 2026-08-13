@@ -35,15 +35,22 @@ Switching branches is a write to the working tree from a procedure that has not 
 > `baton-resume`'s 290 was reachable only by deleting its digraph's
 > `[shape=…]` declarations, and those are the graph's vocabulary — box for an
 > action, diamond for a decision, doublecircle for a terminal state — so a
-> cap met by spending them is a cap set below the floor. It went to 310. The
-> budget is therefore **1139**, not 1100. Holding either number would have meant cutting
-> rules to defend a number nobody had checked — which is the failure the cap
-> exists to prevent, wearing the opposite mask. Caps are set from the floor
-> upward, not from a target downward.
+> cap met by spending them is a cap set below the floor. It went to 310, and
+> later to **313** when the final review found that `workspace` was a field no
+> procedure ever handed to the skill meant to read it. `baton-autopilot` moved
+> the same way, 330 → **336**, for the case the gate exists for and had never
+> written down. The budget is therefore **1148**, not 1100.
+>
+> Holding any of those numbers would have meant cutting rules to defend an
+> estimate nobody had checked — the failure the cap exists to prevent, wearing
+> the opposite mask. **Caps are set from the measured floor upward, not from a
+> target downward**, and they moved in one pass at the end rather than one
+> conversation per file: three separate negotiations, each defensible alone, is
+> how a ceiling becomes a running total.
 
 The arithmetic as it stood before anyone measured, kept for the record: the spec estimated 900–1000 lines total; a third off each file gave `157 + 333 + 291 + 305 = 1086`, so **1100** looked like the realistic ceiling and the spec looked optimistic by about 10%.
 
-Both numbers were wrong in the same direction, and for the same reason — neither was a measurement. What the four files actually weigh with every argument gone and every rule kept is `172 + 330 + 307 + 321 = 1130`. The caps are those floors plus about three lines each, room for one restored rule and not for a paragraph: `175 + 330 + 310 + 324 = **1139**`, which is what `tests/test-budget.sh` carries.
+Both numbers were wrong in the same direction, and for the same reason — neither was a measurement. What the four files actually weigh with every argument gone and every rule kept is `172 + 333 + 310 + 321 = 1136`. The caps are those floors plus about three lines each, room for one restored rule and not for a paragraph: `175 + 336 + 313 + 324 = **1148**`, which is what `tests/test-budget.sh` carries.
 
 **The cleanup invariant, restated because every cleanup task depends on it:**
 
@@ -1152,7 +1159,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SKILLS="$REPO_ROOT/plugins/baton/skills"
 . "$SCRIPT_DIR/helpers.sh"
 
-BUDGET=1139
+BUDGET=1148
 
 total=0
 for f in "$SKILLS"/*/SKILL.md; do
@@ -1181,9 +1188,9 @@ chmod +x tests/test-budget.sh
 - [ ] **Step 2: Run it**
 
 Run: `bash tests/test-budget.sh`
-Expected: PASS, with the four per-skill counts printed and a total at or below 1139. If it fails, the cleanup in Tasks 8–10 did not reach its caps — go back rather than raising `BUDGET`.
+Expected: PASS, with the four per-skill counts printed and a total at or below 1148. If it fails, the cleanup in Tasks 8–10 did not reach its caps — go back rather than raising `BUDGET`.
 
-`1139` is `175 + 330 + 310 + 324`, the sum of the per-file caps in
+`1148` is `175 + 336 + 313 + 324`, the sum of the per-file caps in
 `tests/test-skills.sh`. Keep the two in step: a budget that does not equal the
 sum of the caps is a second, quieter ceiling, and whichever is lower is the
 real one.
