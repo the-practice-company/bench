@@ -1194,6 +1194,22 @@ git commit -m "tests: a budget, because every line was added for a good reason"
 
 ### Task 12: The half of the branch stop no script can watch
 
+> **Corrected during implementation.** As written below, this task adds the
+> branch divergence to `build-diverged.sh`, which already carries two others.
+> That breaks RUNBOOK scenario 2: a compliant agent hits the branch check in
+> `baton-resume` step 2 *before* it runs the `closed_at_sha` ancestry check or
+> reads `.baton/precompact-facts`, so scenario 2's pass conditions become
+> unreachable. A fixture with three divergences tests one and hides two.
+>
+> What was built instead: `build-diverged.sh` and `test-cold-start-diverged.sh`
+> stay at two divergences, and the branch stop gets its own fixture
+> `build-diverged-branch.sh` — deliberately clean in every other respect, so it
+> is the only thing an agent can find — with its own
+> `tests/test-cold-start-diverged-branch.sh`. Scenario 5 points at that one.
+>
+> The steps below stand as the description of the assertion and the scenario;
+> only the fixture they attach to changed.
+
 `tests/test-cold-start-diverged.sh` says it plainly in its own header: whether a resuming agent *notices* a divergence, says what diverged, and stops is not something a script can observe. That half is the runbook's, run by a human.
 
 **Files:**
