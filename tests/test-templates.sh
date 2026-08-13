@@ -215,4 +215,19 @@ assert_contains "$constitution" "workspace: in-place" "constitution declares the
 assert_contains "$constitution" "in-place | worktree" "constitution names both workspace values"
 assert_contains "$constitution" "subagent-driven-development" "constitution's operating mode names the procedure work is delegated to"
 
+# The seeded spec cell used to be `—`, and `—` is not a `REPLACE-` marker, so
+# init's sweep for leftover markers passed straight over it. An agent filling
+# the template mechanically then shipped a state.md whose every wave the
+# autopilot reads as unavailable, and nothing said so until /baton:auto refused
+# the entire scope. Seeded as a marker, the existing sweep covers it.
+#
+# Both assertions, and the second is the one doing the work: the first goes
+# green off any mention of the marker anywhere in the file -- including a
+# comment about this rule -- while the second fails on a re-seed, which is the
+# regression. Deleting the "redundant" one deletes the coverage.
+assert_contains "$state" "REPLACE-WITH-SPEC-DOC" \
+    "the seeded wave row makes its spec cell a marker init has to clear"
+assert_not_contains "$state" "| todo | — |" \
+    "the seeded spec cell is not the em dash the autopilot reads as unavailable"
+
 finish

@@ -239,6 +239,13 @@ assert_not_contains "$auto_cmd" "I will derive it from the constitution" "the re
 assert_contains "$auto_cmd" 'its `spec` cell must name a document' "the scope rules refuse a wave with no spec"
 assert_contains "$auto_cmd" "If that leaves no waves at all" \
     "the scope rules say what happens when dropping spec-less waves empties the scope"
+# The availability list grew to four when the spec rule went in, and this
+# sentence went on saying three -- so the count told the reader the newest
+# rule, the one most likely to reject a scope, was not among the ones checked.
+# Pinned to the count and not to "availability": the ordinal at "the third
+# availability rule" a few lines up is a different number that is still right.
+assert_contains "$auto_cmd" "it checks all four" \
+    "auto's scope check counts the availability rules the loop actually applies"
 
 # --- init asks the two questions that make the rest work ---
 init_cmd="$(cat "$PLUGIN/commands/init.md")"
