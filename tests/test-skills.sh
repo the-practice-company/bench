@@ -372,6 +372,13 @@ assert_contains "$autopilot" "Name every blocked wave in that report" \
     "a run that parked a wave and finished the rest does not read as a clean night"
 assert_contains "$autopilot" "cannot account for as this wave" \
     "autopilot skill stops on an uncommitted path it cannot attribute to the wave"
+# The commit-and-regate branch is explicitly exempt from the three-attempt
+# ceiling -- correctly, since no verdict was rendered -- so it is the one loop
+# in this skill with no counter bounding it. Unbounded, a repository writing
+# files nothing accounts for keeps it committing and regating with nobody
+# watching. The bound is the second occurrence routing to the stop instead.
+assert_contains "$autopilot" "take the stop below" \
+    "a tree still dirty after the regate takes the stop, not the loop again"
 
 # Verified against the script's behaviour, not its header comment: an absent
 # verify_cmd exits 4 (reported as "empty"), an absent placeholder_patterns
@@ -380,6 +387,15 @@ assert_contains "$autopilot" "cannot account for as this wave" \
 # them back into one parenthetical is exactly how this was wrong before.
 assert_contains "$autopilot" "Absence is not symmetric" \
     "autopilot skill keeps the two fields' absence causes on their own exit codes"
+# Exit 3 is a stop AND a flag. A stop without the flag does not stick under
+# the autopilot: the next /baton:continue resumes, hits exit 3 again, stops
+# again, and nothing on disk ever says a human must clear it.
+# NOT `assert_contains "$autopilot" "needs_human: true"`: that string appears
+# six times in this file already -- the multi-root stop, the pat, the never-
+# covers list -- so the bare form was green before exit 3 said anything about
+# the flag, and stays green with this clause deleted. Pinned to the clause.
+assert_contains "$autopilot" '`3` also takes `needs_human: true`' \
+    "exit 3 raises the run-level flag, not just a stop"
 # An empty pattern list is a legitimate constitution, so a zero here can mean
 # the scan was never asked anything -- indistinguishable, in the output, from
 # a scan that read every changed file and found nothing.
