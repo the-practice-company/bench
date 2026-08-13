@@ -24,17 +24,19 @@ for name in baton baton-checkpoint baton-resume baton-autopilot; do
     # number nobody had checked; reading the file with the cleanup invariant in
     # hand put its floor at 321, hence 324. baton at 172/175 and baton-resume at
     # 307/310 are the same rule. baton-autopilot ran at 330 with no headroom and
-    # twice paid for a restored rule by finding an argument to cut; it is at 333
-    # because the third time there was nothing left to find. The file had been
-    # cut to its floor and the rule -- what happens when the criteria walk finds
-    # a criterion unmet -- is the case the gate exists for.
+    # twice paid for a restored rule by finding an argument to cut; the third
+    # time there was nothing left to find. It stands at 333 against a 330 cap
+    # and this test is RED on it deliberately: the rule that cost those three
+    # lines -- what happens when the criteria walk finds a criterion unmet -- is
+    # the case the gate exists for, and the number moves in the pass that sets
+    # all four caps and the budget together, not here.
     #
-    # These four sum to 1142, which test-budget.sh carries as its budget, and
+    # These four sum to 1139, which test-budget.sh carries as its budget, and
     # the assertion after this loop is what makes that a fact rather than a
     # claim. A cap that moves here moves that number too, in the same commit.
     case "$name" in
         baton)            cap=175 ;;
-        baton-autopilot)  cap=333 ;;
+        baton-autopilot)  cap=330 ;;
         baton-resume)     cap=310 ;;
         baton-checkpoint) cap=324 ;;
     esac
@@ -511,5 +513,16 @@ assert_contains "$resume" "Write nothing, not even" \
 # brainstorming session.
 assert_contains "$autopilot" "skipped for want of a spec" \
     "a wave skipped for an empty spec cell is named in the end-of-run report"
+
+# The workspace preference was a field nothing read: /baton:init collected it,
+# the constitution declared it, baton/SKILL.md called using-git-worktrees
+# "settled once" by it, and no procedure ever handed it over -- that skill reads
+# the agent's instructions, not the constitution. Pinned to the hand-off and not
+# to the word: `workspace` goes green the moment step 1 lists the field, and
+# listing a field is not conveying it.
+assert_contains "$resume" "superpowers:using-git-worktrees" \
+    "resume names the skill the workspace preference has to reach"
+assert_contains "$resume" "state it to that skill rather than letting it ask" \
+    "resume states the preference unasked, since the autopilot has nobody to answer a consent prompt"
 
 finish
