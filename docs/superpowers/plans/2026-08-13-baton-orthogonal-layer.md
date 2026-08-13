@@ -396,7 +396,7 @@ Append to `tests/test-skills.sh`, before `finish`:
 
 ```bash
 auto_skill="$(cat "$SKILLS/baton-autopilot/SKILL.md")"
-assert_not_contains "$auto_skill" "derive one from the constitution" "the autopilot no longer writes a wave's spec for itself"
+assert_not_contains "$auto_skill" "derive one from" "the autopilot no longer writes a wave's spec for itself"
 assert_contains "$auto_skill" "superpowers:subagent-driven-development" "the work step names the procedure that executes it"
 assert_contains "$auto_skill" "not a second review of the code" "the gate is framed as a record of closure"
 ```
@@ -404,7 +404,14 @@ assert_contains "$auto_skill" "not a second review of the code" "the gate is fra
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `bash tests/test-skills.sh`
-Expected: two FAILs — the `assert_not_contains` and the `subagent-driven-development` one.
+Expected: FAILs including `did not expect to find: derive one from`.
+
+The needle is `derive one from` and not the whole phrase on purpose. In the
+file today, `derive one from the constitution` wraps: `derive one from` ends
+one line and `the constitution:` begins the next. `grep -F` is line-based, so
+the fuller, more specific-looking needle would find nothing and the assertion
+would go green before the change was made. `helpers.sh` prints a NOTE when
+that happens; a needle that fits on one line is better than a note.
 
 - [ ] **Step 3: Rewrite steps 1 and 3**
 
@@ -637,13 +644,18 @@ And after the **Operating mode** bullet:
 At the end of `## 6. Hand it back for ratification`, append:
 
 ```markdown
-Say one more thing, because it costs them a round otherwise: **ratify before
-you compact.** Clearing a context filled by this dialogue is a sensible move
-here and a safe one — `state.md` is already written and committed. But a
-session that comes back to an unratified constitution will stop and ask for
-the ratification, which is correct and is also a compaction spent arriving
-where they already were.
+Say one more thing, because it costs them a round otherwise:
+**ratify before you compact.** Clearing a context filled by this dialogue is a
+sensible move here and a safe one — `state.md` is already written and
+committed. But a session that comes back to an unratified constitution will
+stop and ask for the ratification, which is correct and is also a compaction
+spent arriving where they already were.
 ```
+
+Keep `**ratify before you compact.**` on one line. The assertion in Step 1
+looks for `before you compact`, and `grep -F` is line-based: break that phrase
+across the wrap and the assertion fails on the reflow while the rule is sitting
+right there.
 
 - [ ] **Step 5: Run the command tests**
 
@@ -1128,8 +1140,10 @@ git commit -m "tests: a fixture that is not on the branch it claims, and the sce
 ## Done when
 
 - `bash tests/run-tests` is green, including the new `test-budget.sh`.
-- `grep -rn "branch/worktree" plugins/ tests/` returns nothing.
-- `grep -rn "derive one from the constitution" plugins/` returns nothing.
+- `grep -rn "branch/worktree" plugins/ tests/` returns nothing outside
+  `tests/test-templates.sh`, where the string is the needle of the assertion
+  forbidding it.
+- `grep -rn "derive one from" plugins/` returns nothing.
 - `plugins/baton/skills/*/SKILL.md` totals 1100 lines or fewer.
 - The spec's §9 table has a commit against every row.
 
