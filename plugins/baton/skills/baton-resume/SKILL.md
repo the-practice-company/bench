@@ -15,6 +15,21 @@ idempotent: if you are unsure whether you already resumed, resume again.
 
 ```dot
 digraph resume {
+    "docs/baton/state.md exists?" [shape=diamond];
+    "Not a baton run - say so, suggest /baton:init, stop" [shape=doublecircle];
+    "Read constitution.md and state.md" [shape=box];
+    "baton-observe; check merge-base ancestry" [shape=box];
+    "Branch disagrees?" [shape=diamond];
+    "Report the branch mismatch - stop, write nothing" [shape=doublecircle];
+    "Read .baton/precompact-facts if present" [shape=box];
+    "suspect or needs_human already on disk?" [shape=diamond];
+    "Resolve that first - report to the human" [shape=doublecircle];
+    "Acquire the writer lease" [shape=box];
+    "Write what you found - repairs always, suspect if diverged" [shape=box];
+    "Divergence found by this resume?" [shape=diamond];
+    "Release the lease, report it - stop" [shape=doublecircle];
+    "Execute Next action in the restored operating mode" [shape=doublecircle];
+
     "docs/baton/state.md exists?" -> "Not a baton run - say so, suggest /baton:init, stop" [label="no"];
     "docs/baton/state.md exists?" -> "Read constitution.md and state.md" [label="yes"];
     "Read constitution.md and state.md" -> "baton-observe; check merge-base ancestry";
@@ -281,6 +296,8 @@ working code.
 | "I know roughly where we were" | You do not. That is what the compaction took. |
 | "The summary I woke up with reads complete" | Summaries always read complete. That is the premise this whole skill is built on. |
 | "state.md says done, good enough" | Claims are checked against the repository, not accepted. |
+| "The branch is wrong, I'll switch to the one `state.md` names" | The human may have moved on purpose. Name both branches, stop, and let them say which repository this is. |
+| "The branch disagrees, so I'll flag it and carry on" | Neither half of that. The resume ends there, and not even the flag gets written: you hold no lease, and the `state.md` you would write it into is the one you cannot establish is this run's. |
 | "suspect is set but I can work around it" | Resolving it is the work, and only the human can resolve it. |
 | "The lease is held, I'll write anyway" | Two writers is exactly the failure the lease exists to prevent. |
 | "I'll pipe the fields I changed into `baton-write`" | It replaces the whole file with your stdin. Anything you did not carry over is deleted, the commit succeeds, and the tree looks clean. |

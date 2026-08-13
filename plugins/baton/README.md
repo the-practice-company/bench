@@ -246,10 +246,16 @@ session rather than the run, and `/baton:init` adds it to `.gitignore`.
 ## How it stays honest
 
 - **The repository is the source of truth about facts.** Observed fields —
-  the commit, the branch, whether the tree is clean — are re-derived every
-  time, never remembered. A claim that disagrees with the repository (a wave
-  marked done that the repository doesn't back up) is flagged, never quietly
-  corrected.
+  the commit, whether the tree is clean — are re-derived every time, never
+  remembered, and repaired in place when they disagree. A claim that
+  disagrees with the repository (a wave marked done that the repository
+  doesn't back up) is flagged, never quietly corrected.
+- **The branch is neither.** It is observed, but it does not describe the
+  tree the way the others do — it answers whether this is the tree at all. So
+  a disagreement between the branch `state.md` names and the branch you are
+  on is not repaired and not flagged: it stops the run where it stands, with
+  both branches named and nothing written, because the `state.md` that would
+  record the flag is the one that cannot be established as this run's.
 - **One writer.** The writer role is held under a lock for the whole
   session, not re-acquired per write.
 - **No state outside the log.** Every checkpoint is a commit, so
