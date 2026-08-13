@@ -823,6 +823,24 @@ git commit -m "/baton:init: settle the spec source and the workspace while the h
 
 ### Task 8: Clean `baton-autopilot` to 330 lines
 
+> **What this task got wrong, recorded because Tasks 9 and 10 inherit the
+> shape.** The four sections named below save about 93 lines of the 194 needed.
+> The other ~101 are demanded by the cap and specified nowhere — so more than
+> half the compression was unguided, in a task whose own acceptance criterion
+> says "if a rule had no test and you are unsure, keep it". The review found
+> one discretionary defect in that unguided half and three in the *specified*
+> replacements, which is the opposite of what the plan's shape predicted.
+>
+> Three of the four rules lost were lost by transcribing the replacement text
+> below: exit 3 stopped raising `needs_human: true`, exit 4 was described as
+> pointing at the constitution when it has machine-side causes, and the
+> dirty-tree commit-and-regate branch kept its exemption from the three-attempt
+> ceiling while losing the sentence that bounded it. **A replacement paragraph
+> written from a distance is a worse instrument than a criterion**, because it
+> looks precise while silently dropping whatever it forgot to mention. Where a
+> future cleanup task must name a number, it should name the criterion and let
+> the implementer meet it, not hand over prose to transcribe.
+
 Largest file, and the one whose sections were surveyed in the spec. Apply the invariant: rules stay, arguments for them go.
 
 **Files:**
