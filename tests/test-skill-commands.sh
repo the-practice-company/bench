@@ -237,6 +237,8 @@ assert_contains "$runbook" "/baton:continue" "scenario 4 exercises the fresh-ses
 auto_cmd="$(cat "$PLUGIN/commands/auto.md")"
 assert_not_contains "$auto_cmd" "I will derive it from the constitution" "the readiness review no longer offers to write the spec itself"
 assert_contains "$auto_cmd" 'its `spec` cell must name a document' "the scope rules refuse a wave with no spec"
+assert_contains "$auto_cmd" "If that leaves no waves at all" \
+    "the scope rules say what happens when dropping spec-less waves empties the scope"
 
 # --- init asks the two questions that make the rest work ---
 init_cmd="$(cat "$PLUGIN/commands/init.md")"
