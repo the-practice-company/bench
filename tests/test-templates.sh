@@ -209,4 +209,10 @@ else
     fail "state template is still within the 60-line cap after the autopilot fields ($lines3 lines)"
 fi
 
+# Declared once, per run, so using-git-worktrees never has to ask under the
+# autopilot -- its Step 0 honours a declared preference without a prompt.
+assert_contains "$constitution" "workspace: in-place" "constitution declares the workspace preference, defaulting to in-place"
+assert_contains "$constitution" "in-place | worktree" "constitution names both workspace values"
+assert_contains "$constitution" "subagent-driven-development" "constitution's operating mode names the procedure work is delegated to"
+
 finish
