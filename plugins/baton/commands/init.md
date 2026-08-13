@@ -42,9 +42,22 @@ One question at a time. Cover, in this order:
 - **Exit criteria.** For each wave, what must be true for it to be closed.
   Write them in EARS with a mandatory "shall". Push back on anything that
   cannot be checked: "the API is solid" is not a criterion.
+- **Which document each wave builds to.** Per wave: does the umbrella spec
+  cover it closely enough, does one section of it, or does this wave need its
+  own spec from `superpowers:brainstorming`? Whatever they answer goes in the
+  wave's `spec` cell. Ask it here, wave by wave, because the alternative is
+  asking it the evening someone hands the run over — and a wave whose cell is
+  empty then is a wave the autopilot will not take.
 - **Non-negotiables.** What must no wave break.
 - **Operating mode.** Confirm the default (orchestrator delegating to
   subagents and workflows) or take what they want instead.
+- **Where the run works.** In this checkout as it stands, or in an isolated
+  worktree of its own? Working in place is the default and baton needs no
+  separate tree for anything of its own — the isolation protects your other
+  work in this repository. The answer becomes `workspace:` in the
+  constitution's frontmatter, and it is what stops
+  `superpowers:using-git-worktrees` asking for consent mid-wave when there is
+  nobody to give it.
 
 ## 4. Ask for the verification command
 
@@ -147,3 +160,10 @@ agent reads the constitution and never writes it — `baton-write` refuses the
 path outright, so this is now a mechanical fact, not a convention — and
 everything downstream — what the gate checks, what may not be broken, where
 the wave boundaries are — is anchored to a document the human signed.
+
+Say one more thing, because it costs them a round otherwise:
+**ratify before you compact.** Clearing a context filled by this dialogue is a
+sensible move here and a safe one — `state.md` is already written and
+committed. But a session that comes back to an unratified constitution will
+stop and ask for the ratification, which is correct and is also a compaction
+spent arriving where they already were.

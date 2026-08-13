@@ -238,4 +238,10 @@ auto_cmd="$(cat "$PLUGIN/commands/auto.md")"
 assert_not_contains "$auto_cmd" "I will derive it from the constitution" "the readiness review no longer offers to write the spec itself"
 assert_contains "$auto_cmd" 'its `spec` cell must name a document' "the scope rules refuse a wave with no spec"
 
+# --- init asks the two questions that make the rest work ---
+init_cmd="$(cat "$PLUGIN/commands/init.md")"
+assert_contains "$init_cmd" "Which document each wave builds to" "init settles the spec source per wave"
+assert_contains "$init_cmd" "Where the run works" "init settles the workspace preference"
+assert_contains "$init_cmd" "before you compact" "init tells the human to ratify before compacting"
+
 finish
