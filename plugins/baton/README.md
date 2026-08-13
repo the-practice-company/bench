@@ -147,9 +147,21 @@ wave, because that is a question only you can answer.
 
 ---
 
-**The shape worth remembering:** baton is what happens before the first wave
-and after the last one, plus a short record between waves. Inside a wave it is
-not there.
+**The shape worth remembering:**
+
+```
+[where the run works — declared once, in the constitution]
+
+    wave 1:  plan  work  →  gate  →  checkpoint
+    wave 2:  plan  work  →  gate  →  checkpoint
+    wave 3:  plan  work  →  gate  →  checkpoint
+
+[you are back: merge? PR? clean up?]
+```
+
+baton is what happens before the first wave and after the last one, plus a
+short record between waves. Inside a wave it is not there — `plan` and `work`
+are superpowers' own skills, running exactly as they would without baton.
 
 ## First run
 
