@@ -78,10 +78,11 @@ actually be a scope, not a wish:
   Say which wave, and that the fix is to fill the cell before handing the run
   over.
 
-Waves whose `spec` cell reads `—` are not in scope, whether or not a wave
-number was given. With no argument, drop them from the scope and **name every
-one you dropped** — a run that quietly narrowed itself while the human watched
-the review scroll past is the same failure as one that widened itself.
+A numbered wave failing this was already refused above. With no argument, drop
+the spec-less waves from the scope and **name every one you dropped** — a run
+that quietly narrowed itself while the human watched the review scroll past is
+the same failure as one that widened itself. If that leaves no waves at all,
+say so and stop: an unattended run with nothing in scope is not a handover.
 
 **The base**, `--since <ref>`, is independent of the wave and optional either
 way. It exists for exactly the case `baton-autopilot` stops on: a multi-root
