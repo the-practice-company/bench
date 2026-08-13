@@ -65,7 +65,7 @@ actually be a scope, not a wish:
 - nothing in its `consumes` may appear in the `produces` of any wave that is
   currently `blocked` — the third availability rule `baton-autopilot` applies
   per wave, and skipping it here is how a scope gets accepted that the loop
-  immediately finds unavailable: it checks all three, finds nothing to work
+  immediately finds unavailable: it checks all four, finds nothing to work
   on, writes `autopilot: off`, and hands the grant back one step after a
   human sat through a review and said go. Most waves declare no `consumes` at
   all and pass this trivially; where one does and a `blocked` wave's
