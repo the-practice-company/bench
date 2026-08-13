@@ -233,4 +233,9 @@ assert_contains "$runbook" "## Scenario 4: autopilot" "the runbook has a scenari
 assert_contains "$runbook" "build-autopilot.sh" "scenario 4 names the fixture it runs against"
 assert_contains "$runbook" "/baton:continue" "scenario 4 exercises the fresh-session pickup"
 
+# --- auto refuses a spec-less wave ---
+auto_cmd="$(cat "$PLUGIN/commands/auto.md")"
+assert_not_contains "$auto_cmd" "I will derive it from the constitution" "the readiness review no longer offers to write the spec itself"
+assert_contains "$auto_cmd" 'its `spec` cell must name a document' "the scope rules refuse a wave with no spec"
+
 finish

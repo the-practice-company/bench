@@ -71,6 +71,17 @@ actually be a scope, not a wish:
   all and pass this trivially; where one does and a `blocked` wave's
   `produces` names it, say which wave is blocked and which contract they
   share, and stop.
+- its `spec` cell must name a document — the umbrella spec, a section of it,
+  or the wave's own. `—` means nobody has said what this wave builds to, and
+  the autopilot cannot supply that: the spec comes from
+  `superpowers:brainstorming`, which needs the human who is about to leave.
+  Say which wave, and that the fix is to fill the cell before handing the run
+  over.
+
+Waves whose `spec` cell reads `—` are not in scope, whether or not a wave
+number was given. With no argument, drop them from the scope and **name every
+one you dropped** — a run that quietly narrowed itself while the human watched
+the review scroll past is the same failure as one that widened itself.
 
 **The base**, `--since <ref>`, is independent of the wave and optional either
 way. It exists for exactly the case `baton-autopilot` stops on: a multi-root
@@ -100,8 +111,10 @@ Lay out, wave by wave in execution order:
   stop, not a reordering — say which waves and which dependency. The
   constitution is the human's; picking a different order than the one they
   wrote, silently, is not this command's call to make;
-- **where each spec comes from**: the file named in the wave's `spec` cell, or
-  "I will derive it from the constitution";
+- **where each spec comes from**: the document named in the wave's `spec`
+  cell, quoted as a path. Every wave in scope has one — a wave without it was
+  refused in step 2, and this line is what lets the human check that the
+  document named is the one they meant;
 - **what closing it means**: the `exit_criteria` quoted from the constitution,
   word for word, not paraphrased;
 - **what will check it**: `verify_cmd`;
