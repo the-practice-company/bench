@@ -40,18 +40,19 @@ Do not sort by `depends_on`. If the constitution's own order violates its own
 
 Then, for each wave:
 
-0. **Check it is available.** The three conditions under
-   [The pat](#the-pat) — in scope and `todo`, the whole transitive
-   `depends_on` closure `done`, nothing in its `consumes` produced by a
-   `blocked` wave. Not available, and not blocked either — skip it and take
-   the next.
+0. **Check it is available.** The conditions under [The pat](#the-pat) — in
+   scope and `todo`, the whole transitive `depends_on` closure `done`, nothing
+   in its `consumes` produced by a `blocked` wave, a `spec` cell that is not
+   `—`. Not available, and not blocked either — skip it and take the next; any
+   wave you never come back to belongs in the end-of-run report, because
+   nothing on disk will record that you passed it.
 1. **Spec.** The wave's `spec` cell names the document this wave builds to,
    and a human put it there — the umbrella spec, one section of it, or a spec
    written for this wave alone. Work to that document.
 
-   `—` means the wave is not ready. Skip it and take the next; it is not
-   blocked and it is not yours to fix, because writing that spec is
-   `superpowers:brainstorming`, which needs a human.
+   Never derive that document yourself. A `—` cell has already made the wave
+   unavailable at step 0, and a spec you wrote is one you would judge at your
+   own gate. Writing it is `superpowers:brainstorming`, which needs a human.
 2. **Plan.** `superpowers:writing-plans` against that spec.
 3. **Work.** `superpowers:subagent-driven-development` against that plan, and
    no other procedure in its place.
@@ -262,16 +263,15 @@ When a wave cannot close:
 3. checkpoint;
 4. look for another wave.
 
-**Do not raise `needs_human` here.** It is the run-level stop flag:
-`baton-resume` and `/baton:continue` both halt on finding it set, before the
-lease is taken.
+**Do not raise `needs_human` here.**
 
-**A wave is available only if all three hold:**
+**A wave is available only if all four hold:**
 
 1. its status is `todo` and it is inside the granted scope;
 2. every wave in the **transitive** closure of its `depends_on` is `done`;
 3. nothing in its `consumes` appears in the `produces` of any wave that is
-   `blocked`.
+   `blocked`;
+4. its `spec` cell is not `—`; that document is the human's to write.
 
 If no wave is available, the run is over and this is where the flag belongs:
 checkpoint, `needs_human: true` **if anything is `blocked`, or was

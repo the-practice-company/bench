@@ -201,12 +201,12 @@ assert_not_contains "$autopilot_desc" "set to anything but off" \
 assert_contains "$autopilot" "Reading the field yourself is not the decision" \
     "autopilot's prerequisite refuses a grant inferred from the field alone"
 
-# Eligibility has three conditions and the third is the one that would be
+# Eligibility has four conditions and the `consumes` one is what would be
 # dropped as pedantic -- two waves can be independent in the graph and
-# still share a contract the blocked wave was to define. Which is why the
-# third is pinned to its whole clause: `consumes` alone also appears where
-# the skill derives a spec, so the bare word would stay green after the
-# condition it is meant to defend had been deleted.
+# still share a contract the blocked wave was to define. Which is why it is
+# pinned to its whole clause: `consumes` alone also appears in step 0's
+# shorthand of these same conditions, so the bare word would stay green
+# after the condition it is meant to defend had been deleted.
 assert_contains "$autopilot" "transitive" \
     "autopilot skill requires the whole transitive dependency closure to be done"
 # The eligibility rule existed but governed only the post-block search, so the
@@ -220,6 +220,19 @@ assert_contains "$autopilot" "**Check it is available.**" \
     "autopilot checks availability before starting a wave, not only after a block"
 assert_contains "$autopilot" 'nothing in its `consumes` appears in the `produces`' \
     "autopilot skill excludes a wave that consumes what a blocked wave produces"
+# The availability list is what the end-of-run branch reads: it ends the run
+# when nothing is available. A spec-less wave that step 1 refuses but this
+# list still calls available is a wave the loop can take, skip, and take
+# again, with "if no wave is available" never becoming true. So the refusal
+# has to live HERE, not only in step 1.
+assert_contains "$autopilot" 'its `spec` cell is not `—`' \
+    "a wave with no spec is unavailable, not merely skipped once it has been taken"
+# The count and the enumeration rot independently -- the same lesson as
+# "eleven keys" over the key table, and "four edits" over the gate bullet. A
+# list of four under a lead sentence saying three is read as three, and the
+# fourth condition is the one an agent stops evaluating.
+assert_contains "$autopilot" "all four hold" \
+    "the lead sentence counts the spec condition among the conditions beneath it"
 
 # The pat is bounded by evidence first and a counter second.
 assert_contains "$autopilot" "unchanged evidence" \
