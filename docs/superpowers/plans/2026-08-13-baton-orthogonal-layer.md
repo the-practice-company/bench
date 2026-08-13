@@ -31,7 +31,12 @@ Switching branches is a write to the working tree from a procedure that has not 
 > written before anyone had read those files with the invariant in hand. Task
 > 10 measured `baton-checkpoint`'s actual floor at ~317 with every argument
 > sentence gone and every rule kept. So its cap is **320**, not 305, and the
-> total budget is **1115**, not 1100. Holding 305 would have meant cutting
+> total budget is **320**, not 305. A second cap moved for the same reason:
+> `baton-resume`'s 290 was reachable only by deleting its digraph's
+> `[shape=…]` declarations, and those are the graph's vocabulary — box for an
+> action, diamond for a decision, doublecircle for a terminal state — so a
+> cap met by spending them is a cap set below the floor. It went to 310. The
+> budget is therefore **1135**, not 1100. Holding either number would have meant cutting
 > rules to defend a number nobody had checked — which is the failure the cap
 > exists to prevent, wearing the opposite mask. Caps are set from the floor
 > upward, not from a target downward.
@@ -1145,7 +1150,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SKILLS="$REPO_ROOT/plugins/baton/skills"
 . "$SCRIPT_DIR/helpers.sh"
 
-BUDGET=1115
+BUDGET=1135
 
 total=0
 for f in "$SKILLS"/*/SKILL.md; do
@@ -1174,9 +1179,9 @@ chmod +x tests/test-budget.sh
 - [ ] **Step 2: Run it**
 
 Run: `bash tests/test-budget.sh`
-Expected: PASS, with the four per-skill counts printed and a total at or below 1115. If it fails, the cleanup in Tasks 8–10 did not reach its caps — go back rather than raising `BUDGET`.
+Expected: PASS, with the four per-skill counts printed and a total at or below 1135. If it fails, the cleanup in Tasks 8–10 did not reach its caps — go back rather than raising `BUDGET`.
 
-`1115` is `175 + 330 + 290 + 320`, the sum of the per-file caps in
+`1135` is `175 + 330 + 310 + 320`, the sum of the per-file caps in
 `tests/test-skills.sh`. Keep the two in step: a budget that does not equal the
 sum of the caps is a second, quieter ceiling, and whichever is lower is the
 real one.
