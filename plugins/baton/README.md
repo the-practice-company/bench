@@ -214,6 +214,17 @@ session, deliberately not automatic: a session started to check one thing has
 not agreed to an hour of unattended work, and only a human typing the command
 can say otherwise.
 
+The gate's design turns on one distinction: "the tests failed" and "the tests
+could not be run" arrive in the same shape, a number on a `verify_exit=` line.
+`baton-gate` deliberately does not remap `127` or the signal deaths into
+something tidier — a real test runner can propagate a `127` of its own, and
+guessing which case this is would be worse than reporting the number. So the
+exit codes keep the two apart at every other level: `3` and `4` both mean the
+gate could not reach a verdict, and they hand you different jobs. A missing
+`placeholder_patterns` is `3`, because `/baton:init` always writes that field
+and its absence is a statement about the constitution. A missing `verify_cmd`
+is `4`, reported as empty: there is simply nothing to run.
+
 ## What appears in your repository
 
 ```

@@ -15,11 +15,22 @@ for name in baton baton-checkpoint baton-resume baton-autopilot; do
     assert_contains "$body" "name: $name" "skill $name declares its name"
     assert_contains "$body" "description: Use when" "skill $name describes when to trigger"
 
+    # Per-file caps, not one flat convention. A single ceiling high enough
+    # for the largest skill is no ceiling for the others, and the growth
+    # this bounds arrived one justified paragraph at a time.
+    # These four sum to exactly the budget in test-budget.sh. Raising one
+    # without lowering another puts the total over, and that is deliberate.
+    case "$name" in
+        baton)            cap=175 ;;
+        baton-autopilot)  cap=330 ;;
+        baton-resume)     cap=290 ;;
+        baton-checkpoint) cap=305 ;;
+    esac
     lines="$(wc -l < "$f" | tr -d ' ')"
-    if [ "$lines" -le 500 ]; then
-        pass "skill $name is within the 500-line convention ($lines lines)"
+    if [ "$lines" -le "$cap" ]; then
+        pass "skill $name is within its $cap-line cap ($lines lines)"
     else
-        fail "skill $name is within the 500-line convention ($lines lines)"
+        fail "skill $name is within its $cap-line cap ($lines lines)"
     fi
 done
 
