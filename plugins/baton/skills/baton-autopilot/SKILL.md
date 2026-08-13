@@ -129,9 +129,8 @@ Exit 0 prints eleven keys, one `key=value` line each. Six need a reading:
   everything between.
 - **`placeholder_hits=0` is only evidence if the scan was asked anything.** An
   empty `placeholder_patterns` — what the scan was asked to look for — is a
-  legitimate constitution meaning scan nothing, and produces the same `0`. The
-  two fields are printed adjacent so the answer sits beside its own question;
-  carry both into the verdict. A non-zero count is **files that matched**, not
+  legitimate constitution meaning scan nothing, and produces the same `0`.
+  Carry both into the verdict. A non-zero count is **files that matched**, not
   markers.
 
 `changed_files=0` is a real property, not a sign nothing happened: a wave that
@@ -231,8 +230,7 @@ tree_clean: true
 Closed under the autopilot. No human confirmed this.
 ```
 
-A red attempt gets a file too, with `verdict: fail`. Two of them without a
-commit between share a `short_sha`, which the attempt number keeps apart.
+A red attempt gets a file too, with `verdict: fail`.
 
 Then close the wave exactly the way `baton-checkpoint` describes — four edits,
 `gate` taking `auto`. Write the verdict before the checkpoint; it lands under
@@ -263,7 +261,9 @@ When a wave cannot close:
 3. checkpoint;
 4. look for another wave.
 
-**Do not raise `needs_human` here.**
+**Do not raise `needs_human` here.** It is the run-level stop flag:
+`baton-resume` and `/baton:continue` both halt on finding it set, before the
+lease is taken.
 
 **A wave is available only if all four hold:**
 

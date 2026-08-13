@@ -404,6 +404,14 @@ assert_contains "$autopilot" "Absence is not symmetric" \
 # the flag, and stays green with this clause deleted. Pinned to the clause.
 assert_contains "$autopilot" '`3` also takes `needs_human: true`' \
     "exit 3 raises the run-level flag, not just a stop"
+# The parent's exit-4 row forbade this and the compression dropped it with the
+# row. Exit 4 is the gate saying it could not run verify_cmd -- the one moment
+# an agent has both a reason and an obvious way to run something else, and the
+# whole point of the field living in a file baton-write refuses to touch is
+# that the agent does not choose it. Pinned to the imperative: `verify_cmd`
+# alone appears a dozen times in this file and would pin nothing.
+assert_contains "$autopilot" "Never substitute a command of your own" \
+    "the agent does not run a command it thinks equivalent to verify_cmd"
 # An empty pattern list is a legitimate constitution, so a zero here can mean
 # the scan was never asked anything -- indistinguishable, in the output, from
 # a scan that read every changed file and found nothing.
