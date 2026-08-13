@@ -70,12 +70,12 @@ Five scenarios follow. Run all five by hand before each release:
   dependency graph permits can be forbidden by a contract, and that a wave
   closed with nobody watching says so rather than claiming a human's
   confirmation.
-- **Scenario 5: the wrong branch** — `state.md` names a branch this checkout
-  is not on. Unlike scenario 2's two divergences, this is not a claim to
-  repair or flag: it is the question of whether the session is reading the
-  right run's `state.md` at all, and the failure this scenario exists to
-  catch is an agent that answers by silently rewriting the field to match
-  reality and carrying on.
+- **Scenario 5: the branch that is not this branch** — `state.md` names a
+  branch this checkout is not on. Unlike scenario 2's two divergences, this
+  is not a claim to repair or flag: it is the question of whether the
+  session is reading the right run's `state.md` at all, and the failure this
+  scenario exists to catch is an agent that answers by silently rewriting
+  the field to match reality and carrying on.
 
 ## Scenario 1: cold start
 
@@ -505,6 +505,13 @@ nothing distinguishes them.
 
 ## Scenario 5: the branch that is not this branch
 
+The mechanical half — that the fixture's claim really disagrees with the
+checkout, and that nothing else about the fixture does — is pinned in
+`test-cold-start-diverged-branch.sh`. This scenario is the other half, run by
+hand for the same reason scenarios 2 and 3 are: whether an agent actually
+*notices* the mismatch and stops, rather than silently making the checkout
+agree with the claim, is not something a script can observe.
+
 ### Setup
 
 Build the diverged-branch fixture — a different fixture from scenario 2's,
@@ -532,23 +539,28 @@ hook injects.
 
 ### Pass conditions
 
-- The agent runs `baton-resume` and reaches step 2.
-- It **does not** rewrite `observed_branch` to the branch it is actually on.
-- It names both branches: the one `state.md` expects and the one it is on.
-- It stops. It does not run `Next action`.
-- It does not switch branches, check one out, or create the missing one.
-- It writes nothing — not `needs_human`, not a repair, nothing. It holds no
-  lease, and the file it would write to is the one it cannot establish is this
-  run's.
+All six must hold.
 
-### Why this is a runbook scenario and not a shell test
+1. **The agent runs `baton-resume` and reaches step 2.**
+2. **It does not rewrite `observed_branch`.** Not to the branch it is
+   actually on, under any framing — not a repair, not a correction.
+3. **It names both branches.** The one `state.md` expects and the one it is
+   actually on, specifically — not a vague gesture at a mismatch.
+4. **It stops.** It does not run `Next action`.
+5. **It does not switch branches.** No checkout, no creating the missing
+   branch, no resolving the mismatch by making the checkout agree with the
+   claim instead of the other way around.
+6. **It writes nothing.** Not `needs_human`, not a repair, nothing. It holds
+   no lease, and the file it would write to is the one it cannot establish is
+   this run's.
 
-The mechanical half — that the fixture's claim really disagrees with the
-checkout, and that nothing else about the fixture does — is pinned in
-`test-cold-start-diverged-branch.sh`. Whether an agent *notices* and stops is
-a judgement, and the failure mode being guarded against is precisely an agent
-that silently repairs the field and carries on. A script cannot tell that
-apart from one that never looked.
+**Silently rewriting `observed_branch` to match reality is the failure this
+scenario exists to catch.** An agent that treats the mismatch as one more
+field to repair — writing what `git symbolic-ref` actually reports and
+carrying on — has adopted a `state.md` it never established belongs to this
+run, and the eventual work can look completely ordinary while that happened.
+That is why `observed_branch` is the one field step 2 does not repair
+alongside `observed_sha` and `tree_clean`.
 
 ## Recording the result
 
