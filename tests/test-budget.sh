@@ -44,14 +44,16 @@ BUDGET=1156
 # that grows the word count without ever wrapping past its line.
 #
 # Measured, like BUDGET above, and for the same sentences: the skills weigh
-# 59997 bytes with the no-dead-ends rule landed -- the last 104 of them
-# baton-autopilot saying that every stop raising `needs_human` names
-# `/baton:clear`, which is the two stops that fire MID-RUN, where no
-# end-of-run report is ever written to name it later -- so this is that floor
-# plus about fifty bytes, against the seventy the old 59500 left over. It is
+# 60751 bytes with the no-dead-ends rule landed. The last 720 of them are two
+# rows in baton-checkpoint's exit-3 table, for the two refusal families
+# baton-write grew after that table was written -- the granted-flag guard and
+# the four shapes of frontmatter it cannot read. A table read by looking up a
+# message, that omits the message, answers wrongly rather than not at all, and
+# a row is worth more bytes than a sentence for exactly that reason. So this
+# is that floor plus about fifty bytes, as the last three moves were. It is
 # deliberately not proportional headroom -- see the paragraph above for why a
 # generous byte budget is the one that lets a rewrap buy real content.
-BYTE_BUDGET=60050
+BYTE_BUDGET=60800
 
 total=0
 total_bytes=0

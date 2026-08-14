@@ -134,6 +134,28 @@ assert_contains "$core" 'a gate marked `auto`' \
 
 checkpoint="$(cat "$SKILLS/baton-checkpoint/SKILL.md")"
 assert_contains "$checkpoint" "60 lines" "checkpoint skill states the state.md line cap"
+# The exit-3 message table is what an agent reads when a checkpoint is
+# refused, and it is read by looking up the message. Two families of refusal
+# were missing from it -- the granted-flag guard, and the four shapes of
+# frontmatter baton-write cannot read -- both added to that tool after this
+# table was written. A reader who does not find their message in a table whose
+# whole purpose is that lookup concludes theirs is not an exit 3 at all, which
+# is worse than the table's absence: it answers, wrongly.
+#
+# Pinned twice per row, because the trigger and the instruction rot
+# separately: a row whose key no longer matches the message is unfindable, and
+# a row found but silent about `/baton:clear` sends the agent to retry the one
+# write no retry can land.
+assert_contains "$checkpoint" 'is set in HEAD`, or refusing to clear' \
+    "the exit-3 table has a row for the granted-flag refusal, keyed on what the tool prints"
+assert_contains "$checkpoint" 'lowering it is `/baton:clear`'"'"'s, and not yours' \
+    "that row sends the agent to the human's command instead of to a retry"
+# The count and the enumeration in one needle, the same lesson as "eleven
+# keys" and "four edits": a row saying four while naming two is read as two,
+# and the shape an agent does not find named is the one it decides it does not
+# have.
+assert_contains "$checkpoint" 'four shapes it is — nothing arrived at all, line 1 is not a bare' \
+    "the unreadable-frontmatter row names the shapes it counts"
 # Closing a wave enumerates the edits it takes. Leaving the gate column out of
 # that list is not neutral: the row above the one being written already
 # carries a value, so an agent with nothing else to go on copies it, and
