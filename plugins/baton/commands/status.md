@@ -42,10 +42,11 @@ deviations matter more than progress:
    those are inputs that arrived mid-run and may need an amendment to the
    constitution.
 4. **Waves closed without a human.** Any row in the Waves table whose `gate`
-   reads `auto` is waiting on review — a wave the autopilot closed and no
-   human has confirmed yet. Name the verdict file under `docs/baton/gates/`
-   for each one, so the review has somewhere to start. `pass` means a human
-   already confirmed it; `—` means nothing has produced a verdict at all. A
+   reads `auto` was closed under the autopilot, on the word of the same agent
+   that did the work. Name the verdict file under `docs/baton/gates/` for each
+   one, so a human who wants to look has somewhere to start.
+   `—` means nothing produced a verdict at all. Neither value is a question
+   waiting on an answer — a run that is waiting on one says so at item 1. A
    run that has never closed a wave under the autopilot has no
    `docs/baton/gates/` directory yet — that is the ordinary case, not a
    fault to report; say nothing here rather than reporting an error.

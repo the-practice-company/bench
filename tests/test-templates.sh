@@ -197,10 +197,18 @@ fi
 assert_contains "$state" "autopilot: off" "state carries the autopilot flag, defaulting to off"
 assert_contains "$state" "autopilot_grant:" "state points at the journal entry that granted autonomy"
 
-# Three values, and the fact that two of them mean different things, is
-# the whole point -- see the v0.1.0 runbook run, where an agent wrote pass
-# into a column nothing claimed ownership of.
-assert_contains "$state" "auto\` closed under the autopilot" "state's gate legend distinguishes auto from pass"
+# Two values. `pass` was the third and it is gone: no script and no hook ever
+# read this column, so the mark changed nothing, was maintained by hand once
+# per wave, and had already been written falsely once -- see the v0.1.0
+# runbook run, where an agent wrote it into a column nothing claimed
+# ownership of. What `pass` was there to contrast with survives it, and is
+# what this still pins: `auto` says the wave closed with no human in the room
+# and the verdict is on disk.
+assert_contains "$state" "auto\` closed under the autopilot" "state's gate legend still says what auto means"
+# The other half of that pair, inverted rather than dropped. The guard used to
+# watch that the legend named the third value; it now watches that it does
+# not. A value the legend does not offer is one no agent can claim falsely.
+assert_not_contains "$state" "\`pass\`" "state's gate legend offers no pass to claim"
 
 lines3="$(wc -l < "$TPL/state.md" | tr -d ' ')"
 if [ "$lines3" -le 60 ]; then

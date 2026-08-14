@@ -186,8 +186,10 @@ assert_not_contains "$next" "wave 4" "Next action does not name which wave to ta
 assert_not_contains "$next" "wave 3" "Next action does not single out wave 3 either"
 assert_not_contains "$next" "session-contract" "Next action does not name the contract that excludes wave 3"
 
-# No wave claims a verdict nothing produced.
-assert_not_contains "$state" "| pass |" "no autopilot-fixture wave claims a human confirmation"
+# No wave claims a verdict nothing produced. `pass` is no longer a value the
+# gate column takes at all, which makes this a guard against a fixture
+# reviving one the plugin no longer defines.
+assert_not_contains "$state" "| pass |" "no autopilot-fixture wave claims a verdict no gate produced"
 
 assert_contains "$(cat .gitignore 2>/dev/null || true)" ".baton/" \
     "the autopilot fixture gitignores .baton/ the way /baton:init leaves it"

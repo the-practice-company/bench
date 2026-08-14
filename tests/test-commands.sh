@@ -82,8 +82,14 @@ assert_contains "$status" "the claim of a grant has nothing behind it" \
 # this green even with the verdict-naming instruction deleted.
 assert_contains "$status" "Name the verdict file under" \
     "status points at the verdicts behind auto-closed waves"
-assert_contains "$status" "already confirmed it" \
-    "status distinguishes an auto verdict (unreviewed) from a pass (a human confirmed it)"
+# This used to pin the clause telling `auto` apart from `pass`. `pass` is gone
+# -- nothing read it, and it was written falsely once -- so what item 4 has to
+# keep apart is `auto` from `—`: the autopilot closed this wave and filed a
+# verdict, against nothing closed it at all.
+assert_contains "$status" "means nothing produced a verdict at all" \
+    "status tells an auto-closed wave apart from one nothing closed"
+assert_not_contains "$status" '`pass`' \
+    "status names no gate value a human is expected to write"
 
 auto="$(cat "$CMD/auto.md")"
 

@@ -130,8 +130,18 @@ entry saying what stopped it, and the run moves on to one that can.
 ### 5. In the morning — `/baton:status`
 
 Deviations first: what closed, what blocked, which decisions want your review.
-Waves closed overnight read `auto` in the gate column. Turning `auto` into
-`pass` is your work — `pass` means a second party looked.
+Waves closed overnight read `auto` in the gate column, with the verdict file
+named beside each one.
+
+Nothing there is waiting to be countersigned. A run only waits on you in three
+ways, and `/baton:status` leads with all three: `suspect: true` or
+`needs_human: true` in the frontmatter, which stop it outright and which
+`/baton:clear` lowers once you have looked; a wave sitting at `blocked`, which
+waits on whatever its journal entry names, not on a mark from you; and an
+unratified constitution, which `/baton:ratify` settles. Silence on all three
+means the run is not asking for anything, and reading the verdicts is
+something you do because you want to, not because a column is waiting for
+your initials.
 
 ### 6. The next night — `/baton:continue`
 
@@ -218,8 +228,8 @@ Each wave is gated before it closes: `baton-gate` runs the constitution's
 `verify_cmd` and scans what the wave touched for placeholder markers, and the
 agent walks the exit criteria one at a time against the repository. Both
 halves are filed as a verdict under `docs/baton/gates/`. A wave closed this
-way reads `auto` in the gate column, never `pass` — `pass` says a human
-confirmed it, and turning `auto` into `pass` is the morning's work.
+way reads `auto` in the gate column — the column's way of saying that nobody
+but the agent that did the work has looked at it.
 
 `/baton:continue` is the one word that restarts an unattended run on a fresh
 session, deliberately not automatic: a session started to check one thing has
@@ -284,12 +294,16 @@ session rather than the run, and `/baton:init` adds it to `.gitignore`.
 
 **There is no second party yet.** `baton-gate` gathers the mechanical
 evidence and the agent walks the exit criteria, but the verdict is written by
-the same agent that did the work. That is exactly why an unattended close
-reads `auto` and not `pass`. An independent `baton-verify` is not built.
+the same agent that did the work. That is exactly what `auto` in the gate
+column records, and why the column has no value meaning "a human checked
+this": an independent `baton-verify` is not built, and a mark nothing reads
+is not a second party looking.
 
 A wave can still close the way it always could, with no autopilot involved:
 every exit criterion checked one by one against the repository, and a human
-confirms it before the wave moves to `done`.
+confirms it before the wave moves to `done`. That confirmation lives in the
+conversation and in the commit, not in a column — such a wave's gate stays
+`—`.
 
 ## Requirements
 

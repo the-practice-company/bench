@@ -30,8 +30,8 @@ autopilot_grant: —
 **Status:** `todo | doing | done | blocked`.
 `blocked` waits on a dependency; `needs_human: true` (frontmatter) stops the whole run.
 
-**Gate:** `—` nothing produced a verdict; `auto` closed under the autopilot,
-verdict in `docs/baton/gates/`; `pass` a human confirmed it.
+**Gate:** `—` nothing produced a verdict; `auto` closed under the autopilot —
+verdict in `docs/baton/gates/`, and nobody but the agent has looked at it.
 
 **Current wave:** 1 — REPLACE-WITH-WAVE-NAME
 

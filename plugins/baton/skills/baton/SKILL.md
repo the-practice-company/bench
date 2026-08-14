@@ -83,8 +83,8 @@ diverged.
   would write to is the one you cannot establish is this run's. Repairing it
   silently is how a session on the wrong branch adopts a `state.md` that
   belongs to no run it is in.
-- **Claimed fields** — a wave marked `done`, a gate marked `auto` or `pass`,
-  the `closed_at_sha` recorded against a closed wave, which is the one claim
+- **Claimed fields** — a wave marked `done`, a gate marked `auto`, the
+  `closed_at_sha` recorded against a closed wave, which is the one claim
   `baton-resume` checks mechanically. Never fix these. Set `suspect: true`,
   describe the divergence in the `Suspect` line of `state.md`'s `Now` section,
   and surface it. Silently correcting a claim destroys the evidence that
@@ -104,11 +104,11 @@ Clearing your own `suspect` is the same act as silently fixing the claim that
 raised it. Granting yourself the autopilot is that act one level up: it
 removes the human from every decision at once.
 
-The `gate` column reads `—` when nothing produced a verdict, `auto` (closed
-under the autopilot, with a verdict filed in `docs/baton/gates/`), or `pass`
-(a human confirmed it). They are not interchangeable: `auto` is a record that
-the tests were green and the criteria were walked, by the same agent that did
-the work. `pass` is a second party saying so.
+The `gate` column reads `—` when nothing produced a verdict, or `auto`: closed
+under the autopilot, with a verdict filed in `docs/baton/gates/`. That verdict
+records that the tests were green and the criteria were walked, and it is
+written by the same agent that did the work — a claimed field like the others
+above, not a second party's word for it.
 
 ## The threshold
 
@@ -151,7 +151,6 @@ These thoughts mean stop — you are rationalising.
 | "The exit criterion is unrealistic, I'll read it loosely" | A criterion read loosely is a gate not run. Escalate instead. |
 | "The constitution still says draft, but the intent is clear" | An unratified constitution is a guess about what the human wants. Stop and ask for ratification. |
 | "The human is away, so the autopilot is implied" | It is set by a command or it is not set. An implied grant is one you gave yourself. |
-| "I'll write `pass`, the tests were green" | Green tests are `auto`. `pass` says someone else looked. |
 
 ## Related skills
 

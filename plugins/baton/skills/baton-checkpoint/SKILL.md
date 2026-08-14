@@ -246,19 +246,18 @@ closed until all four are in:
 - `closed_at_sha` → this run's `work_sha` from `baton-observe`, not its `sha`,
   for the reason step 3 gives;
 - **Current wave** → whatever is now in progress;
-- the `gate` column → `pass` or `auto`, per the table below.
+- the `gate` column → `auto` or `—`, per the table below.
 
-The `gate` column takes one of three values:
+The `gate` column takes one of two values:
 
 | Value | What it says |
 |---|---|
-| `—` | Nothing produced a verdict. |
+| `—` | Nothing produced a verdict. A wave closed on a human's confirmation and no autopilot stays `—`: the confirmation happened in the conversation, and nothing was filed. |
 | `auto` | Closed under the autopilot: `baton-gate`'s evidence was green and you walked the criteria. The verdict is filed in `docs/baton/gates/`. |
-| `pass` | A human confirmed it, or a future `baton-verify` did. |
 
-Closing under the autopilot writes `auto`, not `pass`: `pass` claims a human saw
-this, and turning `auto` into `pass` is the morning's work. The row above the one
-you are filling in carries the previous run's value, not an instruction.
+The row above the one you are filling in carries the previous run's value, not
+an instruction — copying it is how a wave closed by hand acquires a verdict
+nothing produced.
 
 `closed_at_sha` is the one claim here checked mechanically: `baton-resume` and
 step 3 above both run `git merge-base --is-ancestor` against it for every wave

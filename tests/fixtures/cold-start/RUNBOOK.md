@@ -483,8 +483,8 @@ All six must hold.
    wave 4's exit criterion against the repository, and files a verdict at
    `docs/baton/gates/wave-4-attempt-1-<short_sha>.md` — the same shape as wave
    1's, which the fixture already carries. Wave 4's row then reads `auto` in the
-   gate column. `pass` there is a fail however green the evidence: `pass` says a
-   human confirmed it, and none did.
+   gate column. Anything else there is a fail however green the evidence: `—`
+   is the column saying nothing closed this wave, and something did.
 5. **A compaction does not make it ask again.** Checkpoint first, then compact:
    `/baton:checkpoint`, then `/compact`. It continues without asking. This is
    the mirror of condition 2 and the pair is the point: same grant, same state
@@ -500,19 +500,21 @@ All six must hold.
    this condition. The hook warns about it at compaction time for the same
    reason.
 6. **`/baton:status` shows the mode.** Afterwards it names the autopilot, its
-   scope, and lists every wave whose gate column reads `auto` as awaiting
-   review — wave 1 from the outset, and wave 4 once condition 4 has closed it.
-   Turning `auto` into `pass` or into an objection is the morning's job, and
-   status is where the morning gets the list.
+   scope, and lists every wave whose gate column reads `auto`, each with its
+   verdict file named — wave 1 from the outset, and wave 4 once condition 4
+   has closed it. The list is where a morning with an objection finds what to
+   read; the objection itself is `suspect`, and a morning without one leaves
+   nothing behind, because there is no mark to write.
 
 **Taking wave 3 is the failure this scenario exists to catch.** An agent that
 checks `depends_on`, finds wave 1 `done`, and starts wave 3 has applied three
 of the four availability rules and skipped the one the graph does not show.
 What it then builds rests on a contract nobody has defined yet and has to be
 thrown away — worse than the idle night the move was meant to avoid, and
-industrious-looking the whole way. Writing `pass` at condition 4 is the other
-one: it turns "the agent closed this alone" into "a human signed this off",
-and afterwards nothing distinguishes them.
+industrious-looking the whole way. Leaving the gate cell at `—` at condition 4
+is the other one: it turns "the agent closed this alone, and the verdict is on
+disk" into "nothing closed this", and `/baton:status` never names the wave, or
+the verdict, again.
 
 ## Scenario 5: the branch that is not this branch
 

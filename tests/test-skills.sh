@@ -92,15 +92,22 @@ assert_contains "$core" "Granted fields" "core skill classifies the autopilot fl
 assert_contains "$core" "toward more human involvement" \
     "core skill states which direction the agent may move a granted field"
 # NOT `assert_contains "$core" "auto"`: `auto` is a substring of `autopilot`,
-# which this same change introduces, so the bare word goes green off the
-# granted-fields bullet and stays green with the gate paragraph deleted
-# outright. Pinned to the sentence carrying the distinction instead.
-assert_contains "$core" '`pass` is a second party saying so' \
-    "core skill distinguishes the gate column's auto from its pass"
-# An auto verdict is a claim -- more of one than pass, since no human checked
-# it. Left off the claimed list, it reads as repairable, which is the exact
-# act the divergence policy exists to forbid.
-assert_contains "$core" 'a gate marked `auto` or `pass`' \
+# so the bare word goes green off the granted-fields bullet and stays green
+# with the gate paragraph deleted outright. Pinned to the clause that says
+# whose claim an `auto` verdict is instead.
+assert_contains "$core" 'by the same agent that did the work' \
+    "core skill says an auto verdict is the working agent's own claim"
+# This guard used to pin "`pass` is a second party saying so", and it now
+# watches for that second party's absence. The value went because nothing read
+# it: no script, no hook. A mark that changes nothing, is written by hand once
+# per wave, and has been written falsely once is not a review -- and the value
+# an agent cannot name is the one it cannot claim.
+assert_not_contains "$core" '`pass`' \
+    "the core skill offers no second-party gate value to claim"
+# An auto verdict is a claim: nobody but the agent that did the work has
+# checked it. Left off the claimed list, it reads as repairable, which is the
+# exact act the divergence policy exists to forbid.
+assert_contains "$core" 'a gate marked `auto`' \
     "core skill counts an auto verdict among the claims it may never repair"
 
 checkpoint="$(cat "$SKILLS/baton-checkpoint/SKILL.md")"
@@ -109,7 +116,7 @@ assert_contains "$checkpoint" "60 lines" "checkpoint skill states the state.md l
 # that list is not neutral: the row above the one being written already
 # carries a value, so an agent with nothing else to go on copies it, and
 # writes a verdict no gate produced.
-assert_contains "$checkpoint" 'The `gate` column takes one of three values' \
+assert_contains "$checkpoint" 'The `gate` column takes one of two values' \
     "checkpoint skill says what the gate column holds and who fills it"
 # There are now two ways a wave closes, and the dangerous misreading is not
 # that an agent misses the second one -- it is that it applies the second one
@@ -122,8 +129,21 @@ assert_contains "$checkpoint" 'While `autopilot` reads `off`' \
 # the assertions above pin only the first path's opener and the word autopilot.
 assert_contains "$checkpoint" 'While `autopilot` names a scope' \
     "checkpoint describes the second closing path, not just the flag that selects it"
-assert_contains "$checkpoint" '`auto`, not `pass`' \
-    "checkpoint says which value the autopilot path writes into the gate column"
+# The sentence this replaces said the autopilot path writes `auto` and not
+# `pass`, and carried a second rule in its second half: the row above the one
+# you are filling in is the previous wave's value, not an instruction. That is
+# the rule the v0.1.0 runbook run actually broke -- the agent copied the row
+# above -- and it outlives the value that was copied, so it is what is pinned.
+assert_contains "$checkpoint" "carries the previous run's value" \
+    "checkpoint tells the agent not to copy the gate cell from the row above"
+assert_not_contains "$checkpoint" '`pass`' \
+    "the checkpoint skill offers no third gate value to write"
+# `pass` was where a wave closed with a human's confirmation and no autopilot
+# landed. Delete the value and say nothing else and that path has no cell to
+# write, leaving `auto` as the only value the table names -- and the row above
+# already carries it.
+assert_contains "$checkpoint" 'and no autopilot stays `—`' \
+    "the table says where a wave closed by hand lands, now that pass is gone"
 # Raised in task 6: the autopilot skill requires a blocked entry when a wave
 # cannot close, and step 5 is the only place any entry's shape is written down.
 assert_contains "$checkpoint" 'type: blocked' \
@@ -161,7 +181,7 @@ assert_contains "$checkpoint" "four edits to this checkpoint's draft" \
 # that keeps "four edits" and deletes the gate bullet leaves three bullets under
 # a count of four, and the suite stays green -- which is the exact failure the
 # four-edits change was made to prevent.
-assert_contains "$checkpoint" 'the `gate` column → `pass` or `auto`' \
+assert_contains "$checkpoint" 'the `gate` column → `auto` or `—`' \
     "the fourth edit is actually enumerated, not just counted"
 # Likewise the three-value table: its lead sentence is pinned above, so
 # deleting every row beneath it survived.
