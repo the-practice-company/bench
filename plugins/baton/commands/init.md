@@ -136,13 +136,13 @@ git add docs/baton/constitution.md
 git commit -q -m "baton: constitution for <run>"
 ```
 
-That `cp` is the one hole in the refusal, which is why this command carries
-`disable-model-invocation: true` in its frontmatter. A refusal the agent can
-route around by calling `/baton:init` on itself mid-run is not a refusal, so
-the door is closed at the only place it can be: this command is invokable by
-the human typing it, and by nothing else. `/baton:checkpoint` and
-`/baton:status` stay open to the model — they write nothing the agent is
-judged by.
+That `cp` is one of the refusal's two holes — `/baton:ratify` is the other —
+which is why both carry `disable-model-invocation: true` in their
+frontmatter. A refusal the agent can route around by calling `/baton:init`
+on itself mid-run is not a refusal, so the door is closed at the only place
+it can be: both are invokable by the human typing them, and by nothing else.
+`/baton:checkpoint` and `/baton:status` stay open to the model — they write
+nothing the agent is judged by.
 
 Then write the initial state through `baton-write` so it lands atomically and
 gets committed, the same way every checkpoint after it will:

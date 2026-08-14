@@ -39,17 +39,26 @@ done
 # destination from auto.md, which is loaded every time it runs. This cap is
 # what makes that distinction cost something to ignore.
 #
-# Measured, never derived: 853 is what `wc -l plugins/baton/commands/*.md`
+# Measured, never derived: 855 is what `wc -l plugins/baton/commands/*.md`
 # reports with both new commands landed (auto 205, init 170, clear 140,
-# continue 128, ratify 103, status 71, checkpoint 36), and 856 is that floor
+# continue 128, ratify 103, status 71, checkpoint 38), and 858 is that floor
 # plus room for a line or two. A ceiling arrived at by arithmetic rather than
 # measurement shipped on a previous branch here and was unreachable, which
 # nobody noticed until review.
 #
-# Both numbers here were stale until this commit, in the way that is hardest
-# to see: the floor said 850 while init and status had quietly grown three
-# lines between them, so the budget sat at 853 -- exactly the total, a ceiling
-# with no room to restore a single line. Re-measured rather than nudged.
+# Both numbers here were stale once already, in the way that is hardest to
+# see: the floor said 850 while init and status had quietly grown three lines
+# between them, so the budget sat at 853 -- exactly the total, a ceiling with
+# no room to restore a single line. Re-measured rather than nudged.
+#
+# The floor moved again for this commit, and for content rather than for
+# drift: the no-dead-ends rule reached an eighth place, and checkpoint.md's
+# report now names `/baton:clear` beside the `suspect` it leads with -- two
+# lines that file did not carry, taking the floor from 853 to 855. Both
+# ceilings move with it rather than absorbing it, which is what measuring
+# rather than deriving costs when the measurement goes up: left at 856, this
+# one would have room for a line and the byte ceiling below would have room
+# for none, and the two stop describing the same room.
 #
 # It grew from 620 because the human-never-opens-a-file work added two
 # commands that did not exist: ratify.md and clear.md, the human's two halves
@@ -57,12 +66,12 @@ done
 # is drift, not the pattern continuing. Each is its own file because
 # `disable-model-invocation` is a per-file flag -- the separate file is the
 # barrier, not a presentational choice.
-CMD_BUDGET=856
+CMD_BUDGET=858
 
 # A second ceiling, in bytes, because the first one cannot see a rewrap.
-# `fmt -w 100` across these seven files takes them from 853 lines to 700 while
-# the byte count moves by 47. No word is deleted and nothing is said more
-# briefly: it opens 153 lines of headroom under CMD_BUDGET, and the roughly
+# `fmt -w 100` across these seven files takes them from 855 lines to 701 while
+# the byte count moves by 46. No word is deleted and nothing is said more
+# briefly: it opens 154 lines of headroom under CMD_BUDGET, and the roughly
 # 7.5 KB of new prose that could then be poured into that headroom is exactly
 # what the line cap exists to make someone argue for. The same trick was
 # demonstrated on this plugin's skills before their byte budget went in, and
@@ -75,8 +84,8 @@ CMD_BUDGET=856
 # content arriving at any wrap width at all, and is blind in turn to a rewrap
 # that genuinely does say less.
 #
-# Measured on a clean tree, like CMD_BUDGET: 42746 bytes (auto 10126, init
-# 8710, clear 6711, continue 6558, ratify 4764, status 4028, checkpoint 1849),
+# Measured on a clean tree, like CMD_BUDGET: 42882 bytes (auto 10126, init
+# 8736, clear 6711, continue 6558, ratify 4764, status 4028, checkpoint 1959),
 # so this is that floor plus 154 -- three lines at the 50 bytes a line in
 # these files averages, which is the room CMD_BUDGET's floor-plus-three
 # describes. The two are set to agree, deliberately. A line ceiling saying
@@ -93,10 +102,10 @@ CMD_BUDGET=856
 #
 # It is not set tighter than that, though test-budget.sh's own BYTE_BUDGET is
 # -- 49 bytes over the skills floor as this lands. This ceiling is here to
-# catch a rewrap that frees 153 lines while saying nothing new, and it clears
+# catch a rewrap that frees 154 lines while saying nothing new, and it clears
 # that by 14 KB. Metering single lines of prose is CMD_BUDGET's job, and it
 # does it more legibly, in the unit the writer is working in.
-BYTE_BUDGET=42900
+BYTE_BUDGET=43036
 
 cmd_total=0
 cmd_bytes=0

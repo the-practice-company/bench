@@ -58,6 +58,20 @@ for name in baton baton-checkpoint baton-resume baton-autopilot; do
     # not re-derived here -- a cap nobody had a reason to move is a cap nobody
     # measured today, and a number carried over from a measurement is not one.
     #
+    # Those two floors were right the day they were written and stopped being
+    # right further down the same branch: ea7783d and 68868b8 each added a line
+    # to the file they touched, and b064ed1 took baton-checkpoint from 320 to
+    # 322, past the 321 called its floor above. Measured again here, all four
+    # and not just the ones with a reason to move: baton 172, baton-autopilot
+    # 339, baton-resume 314, baton-checkpoint 322. Every cap below still holds
+    # over its file, so none of them moves in this commit -- but three of them
+    # now stand at floor plus two rather than the plus three the paragraph
+    # above describes, each having lost a line to the file growing under it.
+    # Buying that line back moves three caps and test-budget.sh's BUDGET
+    # together, which is a decision about what the layer may cost per run
+    # rather than a measurement, so it is not taken here. What is written here
+    # is what the room actually is.
+    #
     # These four sum to 1156, which test-budget.sh carries as its budget, and
     # the assertion after this loop is what makes that a fact rather than a
     # claim. A cap that moves here moves that number too, in the same commit.

@@ -427,4 +427,22 @@ status_cmd="$(cat "$PLUGIN/commands/status.md")"
 assert_contains "$status_cmd" 'With either flag up, name `/baton:clear`' \
     "status reports a raised flag with the command that lowers it"
 
+# And the same rule where the flag is not merely read back but raised: an
+# eighth place of this shape, found after the seven were done. /baton:continue
+# looked like a ninth and is not -- it relays what `baton-resume` reported, and
+# resume's step 4 names `/baton:clear` inside the text being relayed. This
+# command has no such upstream: the `suspect` it reports is raised by its own
+# reconciliation, a step or two earlier in the same session, and this file is
+# the only place that stop is described to the human. Told that a claim
+# diverged and not what lowers the flag, the human asks the agent to lower it,
+# and the agent spends a refusal finding out that it cannot.
+#
+# Pinned to the flag and the command in one clause, as the other seven are.
+# checkpoint.md has no other reason to say `/baton:clear` today, so a bare
+# needle would be carried by the first sentence anyone adds about clearing a
+# flag anywhere in the file, while this report went back to naming nothing.
+checkpoint_cmd="$(cat "$PLUGIN/commands/checkpoint.md")"
+assert_contains "$checkpoint_cmd" '`suspect: true` if reconciliation set it, and name `/baton:clear`' \
+    "the checkpoint report names the command that lowers the flag it leads with"
+
 finish
