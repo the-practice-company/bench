@@ -43,17 +43,18 @@ Then, for each wave:
 0. **Check it is available.** The conditions under [The pat](#the-pat) — in
    scope and `todo`, the whole transitive `depends_on` closure `done`, nothing
    in its `consumes` produced by a `blocked` wave, a constitution `spec` that
-   is not `—`. Not available, and not blocked either — skip it and take the
-   next; any wave you never come back to belongs in the end-of-run report,
+   names a document. Not available, and not blocked either — skip it and take
+   the next; any wave you never come back to belongs in the end-of-run report,
    because nothing on disk will record that you passed it.
 1. **Spec.** The wave's `spec` in the constitution names the document this
    wave builds to — the umbrella spec, one section of it, or a spec written
    for this wave alone. Work to that document.
 
-   Never derive that document yourself; a `—` is step 0's refusal, not a
-   licence here. `baton-write` refuses the constitution, so a spec you wrote
-   could not reach the field this step reads, and it would be one you judged
-   at your own gate — `superpowers:brainstorming` writes it, and needs a human.
+   Never derive that document yourself; a `—`, or no `spec:` key at all, is
+   step 0's refusal, not a licence here. `baton-write` refuses the
+   constitution, so a spec you wrote could not reach the field this step
+   reads, and it would be one you judged at your own gate —
+   `superpowers:brainstorming` writes it, and needs a human.
 2. **Plan.** `superpowers:writing-plans` against that spec.
 3. **Work.** `superpowers:subagent-driven-development` against that plan, and
    no other procedure in its place.
@@ -277,8 +278,10 @@ lease is taken.
 2. every wave in the **transitive** closure of its `depends_on` is `done`;
 3. nothing in its `consumes` appears in the `produces` of any wave that is
    `blocked`;
-4. its `spec` in the constitution is not `—`; that document is the human's
-   to write, and `baton-write` refuses the path you would write it at.
+4. its `spec` in the constitution **names a document**. `—` and an absent
+   `spec:` key are one refusal, not two — absent is not permission. That
+   document is the human's to write, and `baton-write` refuses the path you
+   would write it at.
 
 If no wave is available, the run is over and this is where the flag belongs:
 checkpoint, `needs_human: true` **if anything is `blocked`, or was
@@ -290,11 +293,12 @@ clean up. Name every blocked wave in that report, and say what each was
 waiting on. If you raised `needs_human`, name `/baton:clear` too: nothing else
 lowers it, and this report is the only thing the morning reads.
 
-Name every wave you skipped for a `—` spec too, and say that is why. A
-skipped wave is still `todo`, so nothing on disk records that you passed it —
-this report is the only place it exists. It wants the human more plainly than
-a blocked wave does: what it needs is a `brainstorming` session, which is the
-one thing this run could not have supplied for itself.
+Name every wave you skipped for want of a spec too — `—`, or no `spec:` key
+at all — and say that is why. A skipped wave is still `todo`, so nothing on
+disk records that you passed it — this report is the only place it exists. It
+wants the human more plainly than a blocked wave does: what it needs is a
+`brainstorming` session, which is the one thing this run could not have
+supplied for itself.
 
 If nothing is blocked, nothing was skipped, and the scope simply finished,
 leave `needs_human` alone — that run wants no one.

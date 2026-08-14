@@ -101,10 +101,11 @@ written and committed. But an unratified constitution is a guess about what
 you wanted, so a session that comes back to one will stop and ask, and you
 will have spent a compaction to arrive at the step you were on.
 
-A wave whose `spec` in the constitution reads `—` is not startable. Most
-waves point at the umbrella spec, or at one section of it. A wave the
-umbrella covers in a single line gets its own `brainstorming` pass — and that
-is a decision you make here, at setup, not at midnight.
+A wave whose `spec` in the constitution reads `—`, or carries no `spec:` line
+at all, is not startable. Most waves point at the umbrella spec, or at one
+section of it. A wave the umbrella covers in a single line gets its own
+`brainstorming` pass — and that is a decision you make here, at setup, not at
+midnight.
 
 ### 3. Hand it over — `/baton:auto`
 

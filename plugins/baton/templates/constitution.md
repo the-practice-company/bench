@@ -69,8 +69,9 @@ it, or a spec written for that wave alone. It is read before the exit
 criteria, and it is written here rather than in state.md for the same reason
 `verify_cmd` is — `baton-write` refuses this path, so the agent cannot name
 the document its own work will be judged against. `—` means nobody has said
-yet, and the autopilot will not take such a wave: what it needs is
-`superpowers:brainstorming`, which needs a human.
+yet, and a wave carrying no `spec:` line at all says exactly that too: the
+autopilot takes neither, and what both need is `superpowers:brainstorming`,
+which needs a human.
 
 Exit criteria use EARS. Five patterns, "shall" is mandatory:
 

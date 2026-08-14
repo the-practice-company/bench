@@ -27,7 +27,13 @@ SKILLS="$REPO_ROOT/plugins/baton/skills"
 # resolves the wait they report -- `/baton:ratify` and `/baton:clear`. A stop
 # that names no command sends the human to the README, and under the autopilot
 # the report is written at 03:40 to be read by someone who was not there.
-BUDGET=1156
+#
+# From 1156 with one of them: baton-autopilot's availability rule refused a
+# `—` spec and, by saying only that, admitted a wave whose constitution has no
+# `spec:` key at all -- which is every wave of every run written before 0.2.0
+# moved the field there. Absent and `—` are now one refusal in all four places
+# that phrase it. Four lines, and no argument was cut to pay for them.
+BUDGET=1161
 
 # What is actually scarce is tokens, and a line count is a wrap-width
 # artifact, not a token count: `fmt -w 100` across the four skills removes
@@ -53,7 +59,12 @@ BUDGET=1156
 # is that floor plus about fifty bytes, as the last three moves were. It is
 # deliberately not proportional headroom -- see the paragraph above for why a
 # generous byte budget is the one that lets a rewrap buy real content.
-BYTE_BUDGET=60800
+#
+# Re-measured for the same four lines BUDGET moved for: 60923 bytes, so 60973
+# on the same floor-plus-fifty rule. Both ceilings move together here because
+# the content is genuinely new -- a rewrap would have moved the line count
+# alone, which is exactly the case the two numbers exist to tell apart.
+BYTE_BUDGET=60973
 
 total=0
 total_bytes=0

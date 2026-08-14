@@ -72,12 +72,25 @@ for name in baton baton-checkpoint baton-resume baton-autopilot; do
     # rather than a measurement, so it is not taken here. What is written here
     # is what the room actually is.
     #
-    # These four sum to 1156, which test-budget.sh carries as its budget, and
+    # baton-autopilot's floor then moved for content, and this time the cap
+    # had to move with it: the availability rule said a wave's `spec` must not
+    # be `—`, which admitted a wave whose constitution has no `spec:` key at
+    # all -- every wave of every run written before the field existed. Absent
+    # and `—` are now one refusal, said in the same words in step 0, step 1,
+    # condition 4 and the end-of-run report. Four lines, 339 to 343, and there
+    # was nothing to trade for them: the rule the words carry is the one the
+    # move into the constitution was for. Re-measured with them landed, all
+    # four again: baton 172, baton-autopilot 343, baton-resume 314,
+    # baton-checkpoint 322. Only baton-autopilot's cap moves, to its floor plus
+    # three; the other three are the same numbers as above, standing over
+    # floors that did not move.
+    #
+    # These four sum to 1161, which test-budget.sh carries as its budget, and
     # the assertion after this loop is what makes that a fact rather than a
     # claim. A cap that moves here moves that number too, in the same commit.
     case "$name" in
         baton)            cap=175 ;;
-        baton-autopilot)  cap=341 ;;
+        baton-autopilot)  cap=346 ;;
         baton-resume)     cap=316 ;;
         baton-checkpoint) cap=324 ;;
     esac
@@ -396,8 +409,20 @@ assert_contains "$autopilot" 'nothing in its `consumes` appears in the `produces
 # state.md the agent writes at every checkpoint. It now says the constitution,
 # which `baton-write` refuses outright -- so an agent that wrote its own spec
 # could no longer put the path where the rule looks.
-assert_contains "$autopilot" 'its `spec` in the constitution is not `—`' \
+assert_contains "$autopilot" 'its `spec` in the constitution **names a document**' \
     "a wave with no spec is unavailable, not merely skipped once it has been taken"
+# The needle above used to read "is not `—`", and that phrasing had a hole in
+# it that only shows up on an upgrade: a constitution written before the field
+# moved into it has no `spec:` key on any wave, and absent is not `—`. The
+# rule as written admitted every one of those waves -- the autopilot taking a
+# wave whose document nobody named, which is the loop the move was meant to
+# close, arriving through the one door left open. `/baton:auto`'s own scope
+# rule said "must name a document" and refused them correctly, so the two
+# files disagreed about the same wave. Pinned on the sentence that closes it,
+# not on the positive half above, which a rephrasing could satisfy while
+# saying nothing about an absent key.
+assert_contains "$autopilot" '`spec:` key are one refusal, not two — absent is not permission' \
+    "an absent spec key is refused exactly as a — is, so an upgraded run is not admitted by default"
 # The count and the enumeration rot independently -- the same lesson as
 # "eleven keys" over the key table, and "four edits" over the gate bullet. A
 # list of four under a lead sentence saying three is read as three, and the
