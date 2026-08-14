@@ -158,10 +158,11 @@ does not reach step 6, because it does not reach step 5.
 Resolution is not yours alone. Put the specifics in front of the human: which
 field, what it claims, what the repository shows, what the `Suspect` line says
 about how it was caught. Then name the command that lowers it: `/baton:clear`
-is the only thing that does — `baton-write` refuses a write that lowers a
-flag, the flag does not expire, and no checkpoint clears it for you. Record
-what they decide first: a journal entry with the decision and why, and a
-`baton-write` of `state.md` with the claimed field set to what they said.
+is the only thing that does — `baton-write` refuses any write that does not
+carry the raised flag forward as a positive `true`, the flag does not expire,
+and no checkpoint clears it for you. Record what they decide first: a journal
+entry with the decision and why, and a `baton-write` of `state.md` that keeps
+the flag as it stands, with the claimed field set to what they said.
 
 **5. Take the writer lease.**
 

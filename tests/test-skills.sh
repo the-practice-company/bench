@@ -245,6 +245,15 @@ assert_contains "$resume" 'not finished writing it — `/baton:ratify`' \
 # an agent reading both would try the refused one first.
 assert_not_contains "$resume" 'field set to what they said and `suspect: false`' \
     "resume no longer tells the agent to lower the flag through baton-write"
+# Stated as the guard states it, and not as "refuses a write that lowers a
+# flag": the tool tests for a positive `true` in what arrives, so spelling the
+# flag `false`, leaving the line out, and writing frontmatter it cannot read
+# are one refusal and not three. The step still prescribes a write of its own
+# -- the claimed field, set to what the human said -- and an agent that reads
+# the rule as being about the word `false` drops the flag line from that draft
+# and is refused by a guard it was just told it was obeying.
+assert_contains "$resume" 'carry the raised flag forward as a positive `true`' \
+    "resume states the refusal the way baton-write actually tests for it"
 assert_contains "$resume" "128" "resume skill explains the merge-base exit-128 case"
 assert_contains "$resume" "fatal:" "resume skill explains the merge-base fatal: message"
 assert_contains "$resume" "is an ancestor of \`HEAD\`. The claim holds." "resume skill explains merge-base exit 0"
