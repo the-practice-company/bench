@@ -5,7 +5,12 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CMD="$REPO_ROOT/plugins/baton/commands"
 . "$SCRIPT_DIR/helpers.sh"
 
-for name in init checkpoint status auto continue; do
+# ratify and clear landed on this branch and were added to neither this list
+# nor the README's table -- the same omission in two places, and nothing said
+# so, because a hardcoded list checks only what someone remembered to type
+# into it. The budget below globs, so it counted them from the day they
+# landed; this loop did not.
+for name in init checkpoint status auto continue ratify clear; do
     assert_file_exists "$CMD/$name.md" "command $name exists"
 done
 
@@ -21,12 +26,17 @@ done
 # destination from auto.md, which is loaded every time it runs. This cap is
 # what makes that distinction cost something to ignore.
 #
-# Measured, never derived: 850 is what `wc -l plugins/baton/commands/*.md`
-# reports with both new commands landed (auto 205, init 169, clear 140,
-# continue 128, ratify 103, status 69, checkpoint 36), and 853 is that floor
+# Measured, never derived: 853 is what `wc -l plugins/baton/commands/*.md`
+# reports with both new commands landed (auto 205, init 170, clear 140,
+# continue 128, ratify 103, status 71, checkpoint 36), and 856 is that floor
 # plus room for a line or two. A ceiling arrived at by arithmetic rather than
 # measurement shipped on a previous branch here and was unreachable, which
 # nobody noticed until review.
+#
+# Both numbers here were stale until this commit, in the way that is hardest
+# to see: the floor said 850 while init and status had quietly grown three
+# lines between them, so the budget sat at 853 -- exactly the total, a ceiling
+# with no room to restore a single line. Re-measured rather than nudged.
 #
 # It grew from 620 because the human-never-opens-a-file work added two
 # commands that did not exist: ratify.md and clear.md, the human's two halves
@@ -34,7 +44,7 @@ done
 # is drift, not the pattern continuing. Each is its own file because
 # `disable-model-invocation` is a per-file flag -- the separate file is the
 # barrier, not a presentational choice.
-CMD_BUDGET=853
+CMD_BUDGET=856
 cmd_total=0
 for f in "$CMD"/*.md; do
     n="$(wc -l < "$f" | tr -d ' ')"
@@ -47,6 +57,42 @@ else
     echo "    commands/ is not where prose evicted from skills/ belongs -- that"
     echo "    goes in plugins/baton/README.md, which is not loaded into context."
 fi
+
+# The README's command table, checked against the directory rather than
+# against itself. Both of its counts have now rotted on this branch: "four
+# baton commands" survived the fifth landing, and "Three of the five are
+# human-typed only" survived the sixth and seventh. A number in prose that
+# nothing derives describes whichever release its author last read.
+#
+# Pinned per command rather than as a total, deliberately -- asserting "seven"
+# would be a third literal to update, and the failure it produces names a
+# count rather than the command that is missing from the table.
+README="$REPO_ROOT/plugins/baton/README.md"
+readme="$(cat "$README")"
+for f in "$CMD"/*.md; do
+    name="$(basename "$f" .md)"
+    assert_contains "$readme" "\`/baton:$name" \
+        "the README's Day to day table has a row for /baton:$name"
+
+    # And the row says whose command it is. The flag is the barrier; the
+    # README saying so is how a human knows before typing it.
+    row="$(grep -F "| \`/baton:$name" "$README" || true)"
+    if grep -q '^disable-model-invocation: true' "$f"; then
+        case "$row" in
+            *"Human-typed only"*)
+                pass "the README marks /baton:$name human-typed only, as its frontmatter is" ;;
+            *)
+                fail "the README marks /baton:$name human-typed only, as its frontmatter is" ;;
+        esac
+    else
+        case "$row" in
+            *"Human-typed only"*)
+                fail "the README does not call /baton:$name human-typed only, since the model may invoke it" ;;
+            *)
+                pass "the README does not call /baton:$name human-typed only, since the model may invoke it" ;;
+        esac
+    fi
+done
 
 init="$(cat "$CMD/init.md")"
 assert_contains "$init" "superpowers" "init checks for the companion plugin"

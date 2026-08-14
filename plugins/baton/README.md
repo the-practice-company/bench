@@ -44,7 +44,7 @@ and you want it carried on while you sleep.
 baton does not run the work. superpowers does. baton decides which wave is
 next, records what closed, and keeps that recoverable when the context is
 compacted. So the walkthrough below is mostly the ordinary superpowers flow
-with four baton commands around it.
+with five of baton's seven commands around it.
 
 ### 1. Design it, before baton exists
 
@@ -54,13 +54,13 @@ spec to `docs/superpowers/specs/2026-08-13-usage-billing-design.md`.
 `/baton:init` refuses to start without one. baton decomposes a spec; it does
 not replace the conversation that produces it.
 
-### 2. Set the run up — `/baton:init`
+### 2. Set the run up — `/baton:init`, then `/baton:ratify`
 
-Once per repository, and it is a conversation, not a form. It works out with
-you: the goal, how the work splits into waves, what each depends on, what
-"closed" means for each in EARS, what no wave may break, the command that
-proves the repository works — and, per wave, **which document that wave builds
-to**.
+Once per repository, and it is a conversation, not a form. `/baton:init`
+works out with you: the goal, how the work splits into waves, what each
+depends on, what "closed" means for each in EARS, what no wave may break, the
+command that proves the repository works — and, per wave, **which document
+that wave builds to**.
 
 It also settles one thing once, so nobody has to answer it at 03:40: whether
 this run works in your checkout as it stands, or in an isolated worktree of
@@ -87,8 +87,12 @@ Out comes `docs/baton/constitution.md`:
       lines.
 ```
 
-Then you ratify it by hand — `status: ratified`, `ratified_by`,
-`ratified_at`, `git_anchor`. From that moment the file is read-only to the
+Then you ratify it — `/baton:ratify`. It prints what the constitution says,
+asks whether that is what you want the run held to, and on a yes writes the
+four fields that make it binding: `status: ratified`, `ratified_by`,
+`ratified_at`, `git_anchor`. What you read there comes out of a script rather
+than out of the agent, because someone who approves a summary has approved
+the agent and not the file. From that moment the file is read-only to the
 agent, so the thresholds it is judged against sit outside its reach.
 
 **Ratify before you compact.** Clearing a context filled by the decomposition
@@ -97,10 +101,10 @@ written and committed. But an unratified constitution is a guess about what
 you wanted, so a session that comes back to one will stop and ask, and you
 will have spent a compaction to arrive at the step you were on.
 
-Waves whose spec cell in `state.md` is `—` are not startable. Most waves will
-point at the umbrella spec, or at one section of it. A wave the umbrella
-covers in a single line gets its own `brainstorming` pass — and that is a
-decision you make here, at setup, not at midnight.
+A wave whose `spec` in the constitution reads `—` is not startable. Most
+waves point at the umbrella spec, or at one section of it. A wave the
+umbrella covers in a single line gets its own `brainstorming` pass — and that
+is a decision you make here, at setup, not at midnight.
 
 ### 3. Hand it over — `/baton:auto`
 
@@ -177,27 +181,32 @@ are superpowers' own skills, running exactly as they would without baton.
 
 ```
 /baton:init
+/baton:ratify
 ```
 
-Once per repository. It is a conversation, not a form: it reads an umbrella
-spec from `docs/superpowers/specs/`, works out with you how the work splits
-into waves and what "closed" means for each, and writes
-`docs/baton/constitution.md`. Then it hands the file back for you to ratify —
-change `status: draft` to `status: ratified` and fill `ratified_by`,
-`ratified_at` and `git_anchor` yourself.
+Once per repository. `/baton:init` is a conversation, not a form: it reads an
+umbrella spec from `docs/superpowers/specs/`, works out with you how the work
+splits into waves and what "closed" means for each, and writes
+`docs/baton/constitution.md` as a draft. `/baton:ratify` then shows you what
+that file says — printed from the file, not recounted by the agent — asks
+whether it is what you want the run held to, and on a yes fills in
+`status: ratified`, `ratified_by`, `ratified_at` and `git_anchor`.
 
 That ratification is not paperwork. From that moment the constitution is
 read-only to the agent: `baton-write`, the tool every checkpoint and resume
 uses, refuses that one path unconditionally, so the thresholds the run is
-judged against sit outside the reach of the thing being judged.
+judged against sit outside the reach of the thing being judged. The two
+commands that write it anyway are the two the agent cannot type.
 
 ## Day to day
 
 | Command | What it does |
 |---|---|
 | `/baton:init` | Once: decompose the umbrella spec, write the constitution. Human-typed only. |
+| `/baton:ratify` | Once: show what the constitution says, then sign it. Human-typed only. |
 | `/baton:checkpoint` | Persist run state now — before compacting context by hand. |
 | `/baton:status` | Show where the run stands, deviations first. |
+| `/baton:clear` | Show what stopped the run, then lower that flag. Human-typed only. |
 | `/baton:auto [wave] [--since <ref>]` | Hand the run over: readiness review, then work with no human present. Human-typed only. |
 | `/baton:continue` | Pick an unattended run back up on a fresh session. Human-typed only. |
 
@@ -210,13 +219,22 @@ follow a compaction: day two of a multi-day run begins by `startup` or
 `resume`, with the least surviving context and the most need for state to be
 put back deterministically.
 
-Three of the five are human-typed only. `/baton:init` is the single way
-around `baton-write`'s refusal to touch the constitution, and a refusal
-reachable through a command the agent can invoke on itself would not be a
-refusal at all. `/baton:auto` and `/baton:continue` grant unattended work and
-resume it — the human's calls, not the agent's to make for itself.
-`/baton:checkpoint` and `/baton:status` stay open to the model, because
-neither writes anything the run is judged against.
+Five of the seven are human-typed only, and one property picks out exactly
+those five: each either hands the agent something it cannot help itself to,
+or lifts something that is holding it still. `/baton:init` and `/baton:ratify`
+write the constitution and then sign it — the only two ways around
+`baton-write`'s refusal to touch that path, and a refusal reachable through a
+command the agent can invoke on itself would not be a refusal at all.
+`/baton:clear` is that same shape one file down: `baton-write` refuses any
+`state.md` write that lowers `suspect` or `needs_human`, and this is the one
+thing that lowers them. `/baton:auto` and `/baton:continue` grant unattended
+work and resume it — the human's calls, not the agent's to make for itself.
+
+The barrier in every one of the five is a single line of frontmatter,
+`disable-model-invocation: true`, and it works per file. That is why these
+are five commands and not one command with five modes: the separate file is
+the mechanism, not the filing. `/baton:checkpoint` and `/baton:status` stay
+open to the model, because neither writes anything the run is judged against.
 
 ## Working unattended
 
