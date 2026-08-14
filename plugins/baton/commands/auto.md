@@ -71,12 +71,12 @@ actually be a scope, not a wish:
   all and pass this trivially; where one does and a `blocked` wave's
   `produces` names it, say which wave is blocked and which contract they
   share, and stop.
-- its `spec` cell must name a document — the umbrella spec, a section of it,
-  or the wave's own. `—` means nobody has said what this wave builds to, and
-  the autopilot cannot supply that: the spec comes from
+- its `spec` in the constitution must name a document — the umbrella spec, a
+  section of it, or the wave's own. `—` means nobody has said what this wave
+  builds to, and the autopilot cannot supply that: the spec comes from
   `superpowers:brainstorming`, which needs the human who is about to leave.
-  Say which wave, and that the fix is to fill the cell before handing the run
-  over.
+  Say which wave, and that the fix is to name the document in the constitution
+  before handing the run over.
 
 A numbered wave failing this was already refused above. With no argument, drop
 the spec-less waves from the scope and **name every one you dropped** — a run
@@ -112,10 +112,10 @@ Lay out, wave by wave in execution order:
   stop, not a reordering — say which waves and which dependency. The
   constitution is the human's; picking a different order than the one they
   wrote, silently, is not this command's call to make;
-- **where each spec comes from**: the document named in the wave's `spec`
-  cell, quoted as a path. Every wave in scope has one — a wave without it was
-  refused in step 2, and this line is what lets the human check that the
-  document named is the one they meant;
+- **where each spec comes from**: the document the constitution's `spec` names
+  for that wave, quoted as a path. Every wave in scope has one — a wave
+  without it was refused in step 2, and this line is what lets the human check
+  that the document named is the one they meant;
 - **what closing it means**: the `exit_criteria` quoted from the constitution,
   word for word, not paraphrased;
 - **what will check it**: `verify_cmd`;

@@ -77,11 +77,13 @@ Never change the token format.
 - wave: 1
   name: login
   depends_on: []
+  spec: docs/superpowers/specs/2026-08-03-fixture-auth.md
   exit_criteria:
     - The system shall return a token for a valid user
 - wave: 2
   name: session
   depends_on: [1]
+  spec: docs/superpowers/specs/2026-08-03-fixture-auth.md
   exit_criteria:
     - When a token is renewed, the system shall preserve its subject
 EOF
@@ -111,10 +113,10 @@ needs_human: false
 
 ## Waves
 
-| # | name | status | spec | plan | closed_at_sha | gate |
-|---|------|--------|------|------|---------------|------|
-| 1 | login | done | — | — | $wave1_sha | — |
-| 2 | session | doing | — | — | — | — |
+| # | name | status | plan | closed_at_sha | gate |
+|---|------|--------|------|---------------|------|
+| 1 | login | done | — | $wave1_sha | — |
+| 2 | session | doing | — | — | — |
 
 **Current wave:** 2 — session
 

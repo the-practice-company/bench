@@ -246,19 +246,18 @@ closed until all four are in:
 - `closed_at_sha` → this run's `work_sha` from `baton-observe`, not its `sha`,
   for the reason step 3 gives;
 - **Current wave** → whatever is now in progress;
-- the `gate` column → `pass` or `auto`, per the table below.
+- the `gate` column → `auto` or `—`, per the table below.
 
-The `gate` column takes one of three values:
+The `gate` column takes one of two values:
 
 | Value | What it says |
 |---|---|
-| `—` | Nothing produced a verdict. |
+| `—` | Nothing produced a verdict. A wave closed on a human's confirmation and no autopilot stays `—`: the confirmation happened in the conversation, and nothing was filed. |
 | `auto` | Closed under the autopilot: `baton-gate`'s evidence was green and you walked the criteria. The verdict is filed in `docs/baton/gates/`. |
-| `pass` | A human confirmed it, or a future `baton-verify` did. |
 
-Closing under the autopilot writes `auto`, not `pass`: `pass` claims a human saw
-this, and turning `auto` into `pass` is the morning's work. The row above the one
-you are filling in carries the previous run's value, not an instruction.
+The row above the one you are filling in carries the previous run's value, not
+an instruction — copying it is how a wave closed by hand acquires a verdict
+nothing produced.
 
 `closed_at_sha` is the one claim here checked mechanically: `baton-resume` and
 step 3 above both run `git merge-base --is-ancestor` against it for every wave
@@ -282,6 +281,8 @@ Do not retry blindly; the response differs by exit code.
 | an unresolved merge, or an unresolved rebase, is in progress | A partial commit of one path is impossible mid-merge or mid-rebase. Finish or abort it, then checkpoint again. |
 | the path is excluded by `.gitignore` | The file could never be committed, so writing it would leave state `git status` never shows. Fix the ignore rule or the path. |
 | empty-or-whitespace-only content over existing committed state | Your draft was empty or nothing but whitespace — a single newline counts, and that is what a failed command substitution or an empty heredoc usually produces. Rebuild it from the file you read in step 1. |
+| `<flag> is set in HEAD`, or refusing to clear `suspect` or `needs_human` | The draft you piped in does not carry a raised flag forward as a positive `true`, and spelling it `false`, dropping the line, and frontmatter this tool cannot read are one refusal rather than three. Put the flag back as it stands and write again — lowering it is `/baton:clear`'s, and not yours. |
+| it has no frontmatter block this tool can read | Your draft, not the file on disk. The message names which of four shapes it is — nothing arrived at all, line 1 is not a bare `---`, nothing closes the block, or the block is empty — and each carries its own repair. Rebuild from the state you read in step 1 rather than patching blind. |
 | does not resolve to a path inside the repository | Should never fire from this skill's own calls: `docs/baton/state.md` and the journal paths `baton-journal` hands back are always repo-root-relative. Something upstream built the wrong path. |
 | refusing to write `docs/baton/constitution.md` | This skill only ever writes `state.md` and journal entries, so you targeted the wrong path. The constitution is never a checkpoint target. |
 | over the 60-line cap | Move the excess detail into a journal entry (`baton-journal`), leave `state.md` holding only a pointer to it, and write again — except an autopilot attempt counter, which stays on the `In flight` line whatever else moves out (see step 4). |

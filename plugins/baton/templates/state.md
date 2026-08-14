@@ -23,15 +23,15 @@ autopilot_grant: —
 
 ## Waves
 
-| # | name | status | spec | plan | closed_at_sha | gate |
-|---|------|--------|------|------|---------------|------|
-| 1 | REPLACE-WITH-WAVE-NAME | todo | REPLACE-WITH-SPEC-DOC | — | — | — |
+| # | name | status | plan | closed_at_sha | gate |
+|---|------|--------|------|---------------|------|
+| 1 | REPLACE-WITH-WAVE-NAME | todo | — | — | — |
 
 **Status:** `todo | doing | done | blocked`.
 `blocked` waits on a dependency; `needs_human: true` (frontmatter) stops the whole run.
 
-**Gate:** `—` nothing produced a verdict; `auto` closed under the autopilot,
-verdict in `docs/baton/gates/`; `pass` a human confirmed it.
+**Gate:** `—` nothing produced a verdict; `auto` closed under the autopilot —
+verdict in `docs/baton/gates/`, and nobody but the agent has looked at it.
 
 **Current wave:** 1 — REPLACE-WITH-WAVE-NAME
 

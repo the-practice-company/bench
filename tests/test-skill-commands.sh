@@ -16,6 +16,42 @@ PLUGIN="$REPO_ROOT/plugins/baton"
 LOCK="$PLUGIN/scripts/baton-lock"
 . "$SCRIPT_DIR/helpers.sh"
 
+# --- readers for the two parts of a doc that mean different things ---
+# A needle matched against a whole command file is matched against its prose
+# too, and prose discusses the things it does. Both readers below exist because
+# that difference was not academic: the two assertions at the bottom of this
+# file were mutation-tested against ratify.md, and both survived. Deleting
+# `disable-model-invocation: true` from the frontmatter left the barrier
+# assertion green off the sentence further down that names the flag while
+# explaining it; replacing the digest call with an `echo` left the digest
+# assertion green off a prose mention, which was the only place the literal
+# `baton-digest constitution` ever appeared -- the real call has a quote
+# between the script and its argument, so that needle had never once matched
+# the thing it was named after.
+
+# The frontmatter block alone: line 1's --- up to the next one. A file whose
+# first line is not --- yields nothing, which is the correct answer for the
+# assertions below -- a flag Claude Code will not read is not a flag set.
+frontmatter_of_doc() {
+    awk '
+        NR == 1 && $0 == "---" { infm = 1; next }
+        infm && $0 == "---"    { exit }
+        infm
+    ' "$1"
+}
+
+# The lines inside ```bash fences: what the agent actually runs, as opposed to
+# what the file says about it. The bare-name guard further down parses exactly
+# this and needs a file:line prefix to report with, so the prefix is a
+# parameter rather than a second copy of the parser.
+bash_lines_of() {
+    awk -v prefix="${2:-}" '
+        /^```bash$/ { inblock = 1; next }
+        /^```/      { inblock = 0; next }
+        inblock     { print (prefix == "" ? "" : prefix ":" FNR ": ") $0 }
+    ' "$1"
+}
+
 # The one place the session-id expression is written down in this suite.
 # The docs must match it (below), and the acquire test further down runs the
 # docs' own copy of it -- so the name in the plugin and the name the tests
@@ -29,6 +65,8 @@ commands/checkpoint.md
 commands/status.md
 commands/auto.md
 commands/continue.md
+commands/ratify.md
+commands/clear.md
 skills/baton/SKILL.md
 skills/baton-resume/SKILL.md
 skills/baton-checkpoint/SKILL.md
@@ -149,12 +187,8 @@ rm -f "$referenced"
 # extended to the files that call it.
 bare="$(
     for rel in $DOC_FILES; do
-        awk -v rel="$rel" '
-            /^```bash$/ { inblock = 1; next }
-            /^```/      { inblock = 0; next }
-            inblock     { print rel ":" FNR ": " $0 }
-        ' "$PLUGIN/$rel"
-    done | sed 's#scripts/baton-[a-z]*##g' | grep -E 'baton-(lock|observe|write|journal|gate)' || true
+        bash_lines_of "$PLUGIN/$rel" "$rel"
+    done | sed 's#scripts/baton-[a-z]*##g' | grep -E 'baton-(lock|observe|write|journal|gate|digest)' || true
 )"
 if [ -n "$bare" ]; then
     fail "no bash block invokes a baton script by bare name (it is not on PATH)"
@@ -225,7 +259,8 @@ set -u
 # The scripted autopilot test pins the fixture's premise and says so itself:
 # what an agent does with that fixture is the runbook's job, run by a human.
 # Without a scenario there, the fixture is built and checked by nobody.
-runbook="$(cat "$REPO_ROOT/tests/fixtures/cold-start/RUNBOOK.md")"
+RUNBOOK="$REPO_ROOT/tests/fixtures/cold-start/RUNBOOK.md"
+runbook="$(cat "$RUNBOOK")"
 # The heading, not the bare words: "Scenario 4" alone appears in the bullet
 # list and in "Recording the result" too, so deleting the entire section
 # would leave that assertion green off a mention elsewhere in the file.
@@ -233,10 +268,70 @@ assert_contains "$runbook" "## Scenario 4: autopilot" "the runbook has a scenari
 assert_contains "$runbook" "build-autopilot.sh" "scenario 4 names the fixture it runs against"
 assert_contains "$runbook" "/baton:continue" "scenario 4 exercises the fresh-session pickup"
 
+# --- and the barrier, from the side no script watches ---
+# baton-write refuses the write and test-write.sh pins the refusal; the digest
+# prints verify_cmd verbatim and test-digest.sh pins that. Neither can watch an
+# agent go around a tool that said no, or a human miss a substitution printed
+# in front of them. Same needle shape as above -- the heading, because both
+# scenarios are named in the contents list too, and the fixture path, because
+# it is the one string unique to each Setup (both build from a builder another
+# scenario already names).
+assert_contains "$runbook" "## Scenario 6: the stop the run cannot lift" \
+    "the runbook has a scenario for a run that may not lift its own stop"
+assert_contains "$runbook" "/tmp/baton-stopped" "scenario 6 names the fixture it builds"
+assert_contains "$runbook" '**It names `/baton:clear`.**' \
+    "scenario 6 requires the agent to name the command it is barred from running"
+
+assert_contains "$runbook" "## Scenario 7: ratification without opening a file" \
+    "the runbook has a scenario for ratifying entirely in chat"
+assert_contains "$runbook" "/tmp/baton-ratify" "scenario 7 names the fixture it builds"
+assert_contains "$runbook" '**The digest was enough to catch the substitution.**' \
+    "scenario 7 turns on a human catching a substituted verify_cmd in the digest"
+
+# --- the header's count, the contents list and the sections agree ---
+# Three places that have to say the same thing, and the way they came apart
+# before was two of them being checked and the third left to a reader's eye: a
+# section whose contents line said something else, with the assertion pinned to
+# the contents line and green over a section that was not there. Derived from
+# the headings rather than pinned to a number, so the eighth scenario is
+# checked on the day it lands rather than the day someone remembers this.
+headings="$(grep '^## Scenario ' "$RUNBOOK" || true)"
+scenario_count="$(grep -c '^## Scenario ' "$RUNBOOK" || true)"
+
+while IFS= read -r heading; do
+    [ -n "$heading" ] || continue
+    title="${heading#\#\# }"
+    assert_contains "$runbook" "- **$title**" \
+        "the contents list names \"$title\" exactly as its section heading does"
+done <<EOF
+$headings
+EOF
+
+# The header counts in words, so the check needs the word. A count with no
+# entry in this table fails rather than skipping it: an unanticipated number of
+# scenarios is precisely the case where the header was left behind.
+case "$scenario_count" in
+    5) count_word="Five" ;;
+    6) count_word="Six" ;;
+    7) count_word="Seven" ;;
+    8) count_word="Eight" ;;
+    9) count_word="Nine" ;;
+    *) count_word="" ;;
+esac
+if [ -z "$count_word" ]; then
+    fail "the runbook's $scenario_count scenarios have a word in the table above"
+else
+    assert_contains "$runbook" "$count_word scenarios follow" \
+        "the runbook's header counts the sections the file actually has"
+    lower_word="$(printf '%s' "$count_word" | tr 'A-Z' 'a-z')"
+    assert_contains "$runbook" "Run all $lower_word by hand before each release" \
+        "the line telling the human to run them all counts them the same way"
+fi
+
 # --- auto refuses a spec-less wave ---
 auto_cmd="$(cat "$PLUGIN/commands/auto.md")"
 assert_not_contains "$auto_cmd" "I will derive it from the constitution" "the readiness review no longer offers to write the spec itself"
-assert_contains "$auto_cmd" 'its `spec` cell must name a document' "the scope rules refuse a wave with no spec"
+assert_contains "$auto_cmd" 'its `spec` in the constitution must name a document' "the scope rules refuse a wave with no spec"
 assert_contains "$auto_cmd" "If that leaves no waves at all" \
     "the scope rules say what happens when dropping spec-less waves empties the scope"
 # The availability list grew to four when the spec rule went in, and this
@@ -252,5 +347,102 @@ init_cmd="$(cat "$PLUGIN/commands/init.md")"
 assert_contains "$init_cmd" "Which document each wave builds to" "init settles the spec source per wave"
 assert_contains "$init_cmd" "Where the run works" "init settles the workspace preference"
 assert_contains "$init_cmd" "before you compact" "init tells the human to ratify before compacting"
+# Step 6 used to tell the human to open the constitution and change four fields
+# by hand. That is not a missing pointer but an instruction to do the thing
+# `/baton:ratify` exists to replace -- and a hand-filled `git_anchor` anchors
+# the run to whatever the human typed rather than to the commit they read.
+# Pinned to the hand-off, and the old wording pinned as forbidden: an edit that
+# restores the instruction while keeping the command name would satisfy a
+# needle that only looked for `/baton:ratify`.
+assert_contains "$init_cmd" 'Ask the human to type `/baton:ratify`' \
+    "init hands the constitution to the command that signs it, not to a text editor"
+assert_not_contains "$init_cmd" 'change `status: draft`' \
+    "init no longer walks the human through editing the four fields themselves"
+
+# --- the two commands the model may not invoke ---
+# The barrier is a frontmatter flag, so it is checked in the frontmatter: a
+# file that discusses `disable-model-invocation: true` in prose while carrying
+# it nowhere Claude Code reads is a command the model can invoke, and it is
+# the shape a careless edit produces.
+for rel in commands/ratify.md commands/clear.md; do
+    name="${rel#commands/}"; name="${name%.md}"
+    fm="$(frontmatter_of_doc "$PLUGIN/$rel")"
+    assert_contains "$fm" "disable-model-invocation: true" \
+        "$name is human-typed only -- that flag is the entire barrier"
+done
+
+# And the digest is checked where it is run. The needle carries the closing
+# quote of the path, so it matches the invocation and cannot be satisfied by a
+# sentence naming the script: `"${CLAUDE_PLUGIN_ROOT}/scripts/baton-digest"
+# <object>` is the only way to write a call that matches.
+ratify_bash="$(bash_lines_of "$PLUGIN/commands/ratify.md")"
+assert_contains "$ratify_bash" '/scripts/baton-digest" constitution' \
+    "ratify shows the digest the script prints, not one it composes"
+
+# --- ratify is a signature, and only a human can sign ---
+ratify_cmd="$(cat "$PLUGIN/commands/ratify.md")"
+# The two values the command does not get to invent. Pinned to the commands
+# themselves rather than to the field names: a ratify.md that names
+# `ratified_by` in prose while filling it from anywhere it likes would keep a
+# field-name assertion green, and where those two values come from is the
+# whole of what "the human signed this" means.
+assert_contains "$ratify_cmd" "git config user.name" \
+    "ratified_by is read from git, not composed"
+assert_contains "$ratify_cmd" "git rev-parse HEAD" \
+    "git_anchor is the commit the human approved against, read from the repository"
+
+# --- clear is the other half of the granted-flag rule ---
+clear_bash="$(bash_lines_of "$PLUGIN/commands/clear.md")"
+assert_contains "$clear_bash" '/scripts/baton-digest" stop' \
+    "clear shows why the run stopped before offering to un-stop it"
+
+clear_cmd="$(cat "$PLUGIN/commands/clear.md")"
+# The two below are not stylistic. baton-write's granted-flag guard reads the
+# previous value out of HEAD:docs/baton/state.md with a parser that anchors on
+# line 1, so a state.md in HEAD that parser cannot read is a guard that finds no
+# flag set and refuses nothing, for every write after it. /baton:clear is the
+# only writer left that can put such a file in HEAD -- it writes with plain git,
+# and plain git checks nothing. The requirement that its write stay readable is
+# therefore load-bearing, and pinned here so deleting it costs something.
+#
+# Pinned to the shape the write has to keep rather than to "frontmatter", which
+# the command has half a dozen other reasons to say.
+assert_contains "$clear_cmd" "opening on the very first line" \
+    "clear requires the frontmatter it writes to stay where baton-write's guard looks"
+assert_contains "$clear_cmd" "both flags present as an explicit" \
+    "clear keeps the flag it lowers as a readable false, rather than deleting the line"
+
+# --- the report a human reads names the command that acts on it ---
+# /baton:status is the one thing a human types before they know anything about
+# the run, so a stopped run reported there without the words that un-stop it
+# sends them to the README to look. `baton-digest` already obeys this where it
+# prints a raised flag, and test-digest.sh pins it there; this is the same rule
+# in the command that summarises the run rather than the state file.
+#
+# Pinned to the flag condition and the command together. A bare `/baton:clear`
+# would be a weaker assertion here than it looks: the command file has no other
+# reason to name it today, but the first sentence added about clearing a flag
+# anywhere in the file would keep it green with item 1 stripped back.
+status_cmd="$(cat "$PLUGIN/commands/status.md")"
+assert_contains "$status_cmd" 'With either flag up, name `/baton:clear`' \
+    "status reports a raised flag with the command that lowers it"
+
+# And the same rule where the flag is not merely read back but raised: an
+# eighth place of this shape, found after the seven were done. /baton:continue
+# looked like a ninth and is not -- it relays what `baton-resume` reported, and
+# resume's step 4 names `/baton:clear` inside the text being relayed. This
+# command has no such upstream: the `suspect` it reports is raised by its own
+# reconciliation, a step or two earlier in the same session, and this file is
+# the only place that stop is described to the human. Told that a claim
+# diverged and not what lowers the flag, the human asks the agent to lower it,
+# and the agent spends a refusal finding out that it cannot.
+#
+# Pinned to the flag and the command in one clause, as the other seven are.
+# checkpoint.md has no other reason to say `/baton:clear` today, so a bare
+# needle would be carried by the first sentence anyone adds about clearing a
+# flag anywhere in the file, while this report went back to naming nothing.
+checkpoint_cmd="$(cat "$PLUGIN/commands/checkpoint.md")"
+assert_contains "$checkpoint_cmd" '`suspect: true` if reconciliation set it, and name `/baton:clear`' \
+    "the checkpoint report names the command that lowers the flag it leads with"
 
 finish

@@ -44,7 +44,7 @@ and you want it carried on while you sleep.
 baton does not run the work. superpowers does. baton decides which wave is
 next, records what closed, and keeps that recoverable when the context is
 compacted. So the walkthrough below is mostly the ordinary superpowers flow
-with four baton commands around it.
+with five of baton's seven commands around it.
 
 ### 1. Design it, before baton exists
 
@@ -54,13 +54,13 @@ spec to `docs/superpowers/specs/2026-08-13-usage-billing-design.md`.
 `/baton:init` refuses to start without one. baton decomposes a spec; it does
 not replace the conversation that produces it.
 
-### 2. Set the run up — `/baton:init`
+### 2. Set the run up — `/baton:init`, then `/baton:ratify`
 
-Once per repository, and it is a conversation, not a form. It works out with
-you: the goal, how the work splits into waves, what each depends on, what
-"closed" means for each in EARS, what no wave may break, the command that
-proves the repository works — and, per wave, **which document that wave builds
-to**.
+Once per repository, and it is a conversation, not a form. `/baton:init`
+works out with you: the goal, how the work splits into waves, what each
+depends on, what "closed" means for each in EARS, what no wave may break, the
+command that proves the repository works — and, per wave, **which document
+that wave builds to**.
 
 It also settles one thing once, so nobody has to answer it at 03:40: whether
 this run works in your checkout as it stands, or in an isolated worktree of
@@ -87,8 +87,12 @@ Out comes `docs/baton/constitution.md`:
       lines.
 ```
 
-Then you ratify it by hand — `status: ratified`, `ratified_by`,
-`ratified_at`, `git_anchor`. From that moment the file is read-only to the
+Then you ratify it — `/baton:ratify`. It prints what the constitution says,
+asks whether that is what you want the run held to, and on a yes writes the
+four fields that make it binding: `status: ratified`, `ratified_by`,
+`ratified_at`, `git_anchor`. What you read there comes out of a script rather
+than out of the agent, because someone who approves a summary has approved
+the agent and not the file. From that moment the file is read-only to the
 agent, so the thresholds it is judged against sit outside its reach.
 
 **Ratify before you compact.** Clearing a context filled by the decomposition
@@ -97,10 +101,10 @@ written and committed. But an unratified constitution is a guess about what
 you wanted, so a session that comes back to one will stop and ask, and you
 will have spent a compaction to arrive at the step you were on.
 
-Waves whose spec cell in `state.md` is `—` are not startable. Most waves will
-point at the umbrella spec, or at one section of it. A wave the umbrella
-covers in a single line gets its own `brainstorming` pass — and that is a
-decision you make here, at setup, not at midnight.
+A wave whose `spec` in the constitution reads `—` is not startable. Most
+waves point at the umbrella spec, or at one section of it. A wave the
+umbrella covers in a single line gets its own `brainstorming` pass — and that
+is a decision you make here, at setup, not at midnight.
 
 ### 3. Hand it over — `/baton:auto`
 
@@ -130,8 +134,18 @@ entry saying what stopped it, and the run moves on to one that can.
 ### 5. In the morning — `/baton:status`
 
 Deviations first: what closed, what blocked, which decisions want your review.
-Waves closed overnight read `auto` in the gate column. Turning `auto` into
-`pass` is your work — `pass` means a second party looked.
+Waves closed overnight read `auto` in the gate column, with the verdict file
+named beside each one.
+
+Nothing there is waiting to be countersigned. A run only waits on you in three
+ways, and `/baton:status` leads with all three: `suspect: true` or
+`needs_human: true` in the frontmatter, which stop it outright and which
+`/baton:clear` lowers once you have looked; a wave sitting at `blocked`, which
+waits on whatever its journal entry names, not on a mark from you; and an
+unratified constitution, which `/baton:ratify` settles. Silence on all three
+means the run is not asking for anything, and reading the verdicts is
+something you do because you want to, not because a column is waiting for
+your initials.
 
 ### 6. The next night — `/baton:continue`
 
@@ -167,27 +181,32 @@ are superpowers' own skills, running exactly as they would without baton.
 
 ```
 /baton:init
+/baton:ratify
 ```
 
-Once per repository. It is a conversation, not a form: it reads an umbrella
-spec from `docs/superpowers/specs/`, works out with you how the work splits
-into waves and what "closed" means for each, and writes
-`docs/baton/constitution.md`. Then it hands the file back for you to ratify —
-change `status: draft` to `status: ratified` and fill `ratified_by`,
-`ratified_at` and `git_anchor` yourself.
+Once per repository. `/baton:init` is a conversation, not a form: it reads an
+umbrella spec from `docs/superpowers/specs/`, works out with you how the work
+splits into waves and what "closed" means for each, and writes
+`docs/baton/constitution.md` as a draft. `/baton:ratify` then shows you what
+that file says — printed from the file, not recounted by the agent — asks
+whether it is what you want the run held to, and on a yes fills in
+`status: ratified`, `ratified_by`, `ratified_at` and `git_anchor`.
 
 That ratification is not paperwork. From that moment the constitution is
 read-only to the agent: `baton-write`, the tool every checkpoint and resume
 uses, refuses that one path unconditionally, so the thresholds the run is
-judged against sit outside the reach of the thing being judged.
+judged against sit outside the reach of the thing being judged. The two
+commands that write it anyway are the two the agent cannot type.
 
 ## Day to day
 
 | Command | What it does |
 |---|---|
 | `/baton:init` | Once: decompose the umbrella spec, write the constitution. Human-typed only. |
+| `/baton:ratify` | Once: show what the constitution says, then sign it. Human-typed only. |
 | `/baton:checkpoint` | Persist run state now — before compacting context by hand. |
 | `/baton:status` | Show where the run stands, deviations first. |
+| `/baton:clear` | Show what stopped the run, then lower that flag. Human-typed only. |
 | `/baton:auto [wave] [--since <ref>]` | Hand the run over: readiness review, then work with no human present. Human-typed only. |
 | `/baton:continue` | Pick an unattended run back up on a fresh session. Human-typed only. |
 
@@ -200,13 +219,26 @@ follow a compaction: day two of a multi-day run begins by `startup` or
 `resume`, with the least surviving context and the most need for state to be
 put back deterministically.
 
-Three of the five are human-typed only. `/baton:init` is the single way
-around `baton-write`'s refusal to touch the constitution, and a refusal
-reachable through a command the agent can invoke on itself would not be a
-refusal at all. `/baton:auto` and `/baton:continue` grant unattended work and
-resume it — the human's calls, not the agent's to make for itself.
-`/baton:checkpoint` and `/baton:status` stay open to the model, because
-neither writes anything the run is judged against.
+Five of the seven are human-typed only, and one property picks out exactly
+those five: each either hands the agent something it cannot help itself to,
+or lifts something that is holding it still. `/baton:init` and `/baton:ratify`
+write the constitution and then sign it — the only two ways around
+`baton-write`'s refusal to touch that path, and a refusal reachable through a
+command the agent can invoke on itself would not be a refusal at all.
+`/baton:clear` is that same shape one file down: `baton-write` refuses any
+`state.md` write that does not carry a `suspect` or `needs_human` already set
+in the committed file forward as a positive `true` — spelling it `false`,
+leaving the line out, and frontmatter the tool cannot read are one refusal
+rather than three, since what it tests for is the flag still being there — and
+this is the one thing that lowers them. `/baton:auto` and `/baton:continue`
+grant unattended work and resume it — the human's calls, not the agent's to
+make for itself.
+
+The barrier in every one of the five is a single line of frontmatter,
+`disable-model-invocation: true`, and it works per file. That is why these
+are five commands and not one command with five modes: the separate file is
+the mechanism, not the filing. `/baton:checkpoint` and `/baton:status` stay
+open to the model, because neither writes anything the run is judged against.
 
 ## Working unattended
 
@@ -218,8 +250,8 @@ Each wave is gated before it closes: `baton-gate` runs the constitution's
 `verify_cmd` and scans what the wave touched for placeholder markers, and the
 agent walks the exit criteria one at a time against the repository. Both
 halves are filed as a verdict under `docs/baton/gates/`. A wave closed this
-way reads `auto` in the gate column, never `pass` — `pass` says a human
-confirmed it, and turning `auto` into `pass` is the morning's work.
+way reads `auto` in the gate column — the column's way of saying that nobody
+but the agent that did the work has looked at it.
 
 `/baton:continue` is the one word that restarts an unattended run on a fresh
 session, deliberately not automatic: a session started to check one thing has
@@ -284,12 +316,16 @@ session rather than the run, and `/baton:init` adds it to `.gitignore`.
 
 **There is no second party yet.** `baton-gate` gathers the mechanical
 evidence and the agent walks the exit criteria, but the verdict is written by
-the same agent that did the work. That is exactly why an unattended close
-reads `auto` and not `pass`. An independent `baton-verify` is not built.
+the same agent that did the work. That is exactly what `auto` in the gate
+column records, and why the column has no value meaning "a human checked
+this": an independent `baton-verify` is not built, and a mark nothing reads
+is not a second party looking.
 
 A wave can still close the way it always could, with no autopilot involved:
 every exit criterion checked one by one against the repository, and a human
-confirms it before the wave moves to `done`.
+confirms it before the wave moves to `done`. That confirmation lives in the
+conversation and in the commit, not in a column — such a wave's gate stays
+`—`.
 
 ## Requirements
 

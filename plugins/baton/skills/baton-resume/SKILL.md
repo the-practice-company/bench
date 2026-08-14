@@ -53,19 +53,21 @@ Create nothing: not the directory, not a state file, not a constitution.
 **1. Read both files.** Pin the working directory to the repository root with
 `cd "$(git rev-parse --show-toplevel)"`; every path here resolves against it.
 Then read `docs/baton/constitution.md` first, `docs/baton/state.md` second.
-Four things from the constitution, none optional: the goal, your operating
-mode, the non-negotiables, and `workspace`. The operating mode is who you are
-for the rest of the session, and step 8 means it literally: orchestrator means
-you delegate rather than implement here. `workspace` — `in-place` or
-`worktree` — is the consent `superpowers:using-git-worktrees` would stop to
-ask for: state it to that skill rather than letting it ask, since under the
-autopilot nobody is there to answer.
+Five things from the constitution, none optional: the goal, your operating
+mode, the non-negotiables, `workspace`, and each wave's `spec`. The operating
+mode is who you are for the rest of the session, and step 8 means it
+literally: orchestrator means you delegate rather than implement here. A
+wave's `spec` is the document it builds to; state.md carries no column for
+it, so a spec you wrote is one nothing downstream would read. `workspace` —
+`in-place` or `worktree` — is the consent `superpowers:using-git-worktrees`
+would stop to ask for: state it to that skill rather than letting it ask,
+since under the autopilot nobody is there to answer.
 
 Check `status` in its frontmatter before acting on any of it: anything other
-than `ratified` means the human has not finished writing it — stop and ask for
-ratification rather than guessing at intent. A `REPLACE-WITH` placeholder
-means the same, but match a *frontmatter field whose value begins with the
-token*, not the string anywhere in the file.
+than `ratified` means the human has not finished writing it — `/baton:ratify`
+is what finishes it, so stop and ask for that rather than guessing at intent.
+A `REPLACE-WITH` placeholder means the same, but match a *frontmatter field
+whose value begins with the token*, not the string anywhere in the file.
 
 **2. Verify rather than trust.**
 
@@ -155,10 +157,12 @@ does not reach step 6, because it does not reach step 5.
 
 Resolution is not yours alone. Put the specifics in front of the human: which
 field, what it claims, what the repository shows, what the `Suspect` line says
-about how it was caught. Then record what they decide: a journal entry with
-the decision and why, then a `baton-write` of `state.md` with the claimed
-field set to what they said and `suspect: false`. Nothing else clears it: the
-flag does not expire, and no checkpoint clears it for you.
+about how it was caught. Then name the command that lowers it: `/baton:clear`
+is the only thing that does — `baton-write` refuses any write that does not
+carry the raised flag forward as a positive `true`, the flag does not expire,
+and no checkpoint clears it for you. Record what they decide first: a journal
+entry with the decision and why, and a `baton-write` of `state.md` that keeps
+the flag as it stands, with the claimed field set to what they said.
 
 **5. Take the writer lease.**
 

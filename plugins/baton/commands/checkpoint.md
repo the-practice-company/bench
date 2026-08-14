@@ -31,6 +31,8 @@ When it finishes, tell the human the following, and nothing more:
 2. The `Next action` line as written, so they can see what the next session
    will pick up and correct it now if it is wrong.
 
-If `suspect: true` was set during reconciliation, lead with that. A divergence
-between what state claims and what the repository shows is the one thing they
-need to see before they decide anything else.
+Lead with `suspect: true` if reconciliation set it, and name `/baton:clear`
+with it: only a human lowers that flag, and every resume after this one stops
+on it until one does. A divergence between what state claims and what the
+repository shows is the one thing they need to see before they decide
+anything else.

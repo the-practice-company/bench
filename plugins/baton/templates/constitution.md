@@ -51,6 +51,7 @@ current request while quietly violating the original brief.
   name: REPLACE-WITH-WAVE-NAME
   depends_on: []
   parallel_with: []
+  spec: REPLACE-WITH-SPEC-DOC
   exit_criteria:
     - The system shall REPLACE-WITH-VERIFIABLE-BEHAVIOUR
 
@@ -58,9 +59,18 @@ current request while quietly violating the original brief.
   name: REPLACE-WITH-WAVE-NAME
   depends_on: [1]
   parallel_with: []
+  spec: REPLACE-WITH-SPEC-DOC
   exit_criteria:
     - When REPLACE-WITH-TRIGGER, the system shall REPLACE-WITH-BEHAVIOUR
 ```
+
+`spec` is the document the wave builds to: the umbrella spec, one section of
+it, or a spec written for that wave alone. It is read before the exit
+criteria, and it is written here rather than in state.md for the same reason
+`verify_cmd` is — `baton-write` refuses this path, so the agent cannot name
+the document its own work will be judged against. `—` means nobody has said
+yet, and the autopilot will not take such a wave: what it needs is
+`superpowers:brainstorming`, which needs a human.
 
 Exit criteria use EARS. Five patterns, "shall" is mandatory:
 

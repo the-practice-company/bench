@@ -19,8 +19,10 @@
 #       git will not track (ignored, or outside the repository),
 #       docs/baton/constitution.md (the agent never writes the
 #       constitution -- see below), docs/baton/state.md over the 60-line
-#       cap, or empty-or-whitespace-only stdin over existing non-empty
-#       committed content
+#       cap, empty-or-whitespace-only stdin over existing non-empty
+#       committed content, a docs/baton/state.md whose frontmatter this
+#       tool cannot read, or one that fails to carry a suspect or
+#       needs_human already set in HEAD forward as true (see below)
 #   5   a git mutation failed after the file was written; the tree has
 #       been rolled back to its state before this run, or the commit
 #       landed but does not contain what this run wrote (see below)
@@ -247,6 +249,97 @@ strip_timestamp() {
     grep -v '^updated_at:' || true
 }
 
+# The frontmatter block's lines, carriage returns already off, and only if
+# the block was closed. Reads stdin rather than a filename, so it composes
+# with `git show` the way strip_timestamp above does.
+#
+# This is baton-gate's reader (see its own comment, which argues the first
+# rule at length) and baton-digest's frontmatter_of, a third time. There is no
+# shared source to put it in, so the three are duplicated on purpose and must
+# stay in step: a difference between them is a difference of opinion about
+# what a file says.
+#
+# The carriage return comes off before the line-1 comparison, not after,
+# because that is the only place it can come off in time: a file a Windows
+# editor writes carries CRLF on every line, the opening --- included, and
+# `$0 == "---"` is an exact comparison, so "---\r" never opens the block and
+# every field reads back empty. Here that costs more than in either sibling.
+# An empty read is exactly what the guard below calls "the flag is not here",
+# so a needs_human raised from a CRLF editor was one baton-digest printed as
+# a stopped run and baton-write could not see -- and the run then cleared its
+# own stop, at exit 0, with no refusal anywhere. Reproduced in three steps.
+#
+# And the block has to be closed. An unterminated --- otherwise redefines
+# "frontmatter" as "everything after line 1", which promotes any body line
+# spelled like a field into one -- the malformed shape baton-gate refuses.
+frontmatter_block() {
+    awk '
+        { sub(/\r$/, "") }
+        NR==1 && $0=="---" { infm=1; next }
+        infm && $0=="---"  { closed=1; exit }
+        infm               { buf = buf $0 "\n" }
+        END                { if (closed) printf "%s", buf }
+    '
+}
+
+# Reads a frontmatter field's value from stdin. Scoped to the block above
+# deliberately, though not for the reason first given here: `index($0, field
+# ":") == 1` is column-anchored and case-sensitive, so state.md's
+# `- **Suspect:**` prose line never matched it, scoped or not. What the
+# scoping actually keeps out is a body line spelled exactly `suspect:` at
+# column 1 -- prose an agent writing its own state file can produce without
+# meaning anything by it, and which would then be read as the flag.
+#
+# The unquoting is baton-digest's field reader and baton-gate's, to the rule:
+# one layer, and only a matched pair, so a value that opens a quote it never
+# closes keeps both characters and reads as neither true nor false. Without
+# it this was the third reader holding the only dissenting opinion --
+# `suspect: "true"` said `true` to the other two and `"true"` here -- and the
+# disagreement ran the one direction that loses a stop, because the reader
+# that could not see the flag was the guard. Raise it quoted (allowed:
+# raising always is), and baton-digest and /baton:status both report the run
+# stopped. Clear it plainly at the next checkpoint and the guard below finds
+# nothing set in HEAD to carry forward, so it refuses nothing: exit 0, flag
+# down in the log, the run unstopped by the run, and no reader anywhere
+# printing a word about it. Reproduced in three steps. Quoted frontmatter is
+# not an exotic shape here -- the constitution's verify_cmd is conventionally
+# written that way -- so an agent regenerating state.md wholesale can spell
+# it so without meaning anything by it.
+#
+# Read, then, rather than refused. "A flag must be a bare true or false"
+# would close the same hole, and it is the rule /baton:clear's own
+# verification awk already holds itself to -- the human-typed command being
+# stricter than the guard that watches the agent. Two reasons it is not the
+# rule here. First, refusing the shape refuses a RAISE spelled that way, and
+# an agent whose stop is turned away is stopped only if it reads the exit
+# code, where an agent whose stop is read is stopped whatever it does next;
+# raising is the direction that must never get harder. Second, baton-write
+# does not own this file's spelling. /baton:clear writes state.md with plain
+# git and a human may edit it by hand, so "only bare flags reach HEAD" is not
+# an invariant this tool can maintain -- only one it could assume, and
+# assuming things about HEAD's frontmatter is precisely what the guard
+# further down stopped doing after the last bypass of this class.
+#
+# What has to hold, and what the unquoting restores, is one-directional: any
+# value another reader calls a raised flag, this reader must call one too.
+# Stricter than its siblings is safe -- a guard engaging where baton-digest
+# sees nothing refuses a write nobody needed to make. Laxer is a bypass,
+# every time.
+frontmatter_flag() {
+    frontmatter_block | awk -v field="$1" '
+        index($0, field ":") == 1 {
+            sub("^" field ": *", "")
+            gsub(/[ \t]/, "")
+            quote = substr($0, 1, 1)
+            if (length($0) >= 2 && (quote == "\"" || quote == "\047") &&
+                substr($0, length($0), 1) == quote)
+                $0 = substr($0, 2, length($0) - 2)
+            print
+            exit
+        }
+    '
+}
+
 target_in_head=0
 if git cat-file -e "HEAD:$target" 2>/dev/null; then
     target_in_head=1
@@ -277,6 +370,146 @@ if is_whitespace_only "$tmp" && [ "$target_in_head" -eq 1 ]; then
         echo "baton-write: refusing to write empty-or-whitespace-only content over existing committed state at $target" >&2
         exit 3
     fi
+fi
+
+# Granted fields move one way only. The model skill states it as a rule --
+# "raising suspect or needs_human is always yours; clearing either is the
+# human's" -- and until now that was all it was. An agent that can clear
+# needs_human has no stop: the flag exists to halt the run, and the run is
+# what would be clearing it. /baton:clear writes this field directly, with
+# plain git, for the same reason /baton:init writes the constitution that
+# way: this refusal is why it has to.
+#
+# Refused on the transition, not on the value: writing false over false is
+# an ordinary checkpoint of a run that was never stopped, and true over
+# true is an ordinary checkpoint of one that is stopped -- the flag is
+# un-clearable, not un-writable. But the test is "does this write still say
+# true", not "does it say false". `false` is only the honest spelling of a
+# clearing, and the agent controls every byte of what it pipes in: leaving
+# the field out clears the flag just as thoroughly (empty is not false, so
+# the old test never fired), and so does a document whose frontmatter cannot
+# be read at all. Both were accepted, exit 0, flag gone from HEAD. A flag
+# this tool cannot read in what was written is not a flag still set, so
+# anything short of a positive `true` is refused.
+#
+# `was` is only worth reading because HEAD's frontmatter is readable, which
+# this does not assume -- the guard below is what makes it true.
+#
+# After the whitespace-only refusal, and it has to be: empty stdin over a
+# state.md with a flag up is the failed-command-substitution caller bug that
+# guard exists to name, and this one would answer it by telling the caller to
+# keep a line in a document they never managed to write at all.
+if [ "$target" = "docs/baton/state.md" ] && [ "$target_in_head" -eq 1 ]; then
+    for flag in suspect needs_human; do
+        was="$(git show "HEAD:$target" | frontmatter_flag "$flag")"
+        [ "$was" = "true" ] || continue
+        now="$(frontmatter_flag "$flag" < "$tmp")"
+        # Two branches for two diagnostics, not two rules. The rule is the
+        # `!= true` below; `= false` is the sub-case that earns its own
+        # sentence, because a writer who spelled the clearing out needs to be
+        # told whose it is, not told to keep a line they deleted deliberately.
+        # Collapsing them keeps the rule and loses the message.
+        if [ "$now" = "false" ]; then
+            echo "baton-write: refusing to clear $flag: it is set, and clearing it is the human's -- see /baton:clear. Raising it is always yours; lowering it is not." >&2
+            exit 3
+        fi
+        if [ "$now" != "true" ]; then
+            echo "baton-write: refusing to write $target: $flag is set in HEAD, and this write does not say '$flag: true' -- a flag that cannot be read in what was written is not a flag still set. Keep the line in the frontmatter block, which has to open on line 1. Clearing $flag is the human's -- see /baton:clear." >&2
+            exit 3
+        fi
+    done
+fi
+
+# Which of the shapes frontmatter_block reads back as nothing this document
+# is, so the refusal below can name the one repair its reader needs instead of
+# reciting every shape it turns away. Four names, against one rule for reading
+# -- so the pairing is worth stating plainly. frontmatter_block decides
+# everything: it alone says whether a write is refused, and this runs only once
+# it already has. Nothing here can accept a document that reader turned away,
+# or turn away one it read. What this does is duplicate two of that reader's
+# rules -- the line-1 anchor and the closing --- -- to sort the refusals it
+# already made, and so it has to stay in step with it. A shape named here that
+# frontmatter_block reads differently is a message describing a document nobody
+# has, which is the whole defect being repaired.
+#
+#   unwritten  nothing arrived: empty, or whitespace only. Not a shape of
+#              frontmatter at all but the absence of a document, so it is
+#              is_whitespace_only that decides it -- the same predicate, and
+#              the same definition of "empty", the empty-stdin guard above
+#              refuses on. That guard only speaks when HEAD already holds
+#              content, so on a run's first checkpoint the caller bug it
+#              exists to name arrives down here instead, and has to be named
+#              here too rather than told to go and look at line 1.
+#   unopened   line 1 is not a bare ---, so no block ever opens. A block
+#              starting any lower down is body text and is not read.
+#   unclosed   opens on line 1, and nothing closes it.
+#   empty      opens on line 1, is closed, and holds nothing but blank lines.
+#
+# `empty` is the shape that made the naming worth doing. A block that opens on
+# line 1 and closes on line 2 is refused correctly, there being no flag in it
+# to read -- but it is not a document missing "one opening with --- on line 1,
+# closed by a later ---", which is what the single message used to tell its
+# reader to go and check. Both were already true, so the reader checked both,
+# found both, and went hunting for a defect the file does not have; baton-gate
+# carries the same scar in unquote's comment.
+#
+# Takes a path rather than stdin, unlike the readers above: it has to read the
+# document twice over -- once through is_whitespace_only, which takes a path
+# for the same reason -- and it is only ever asked about $tmp. The awk's own
+# NR==0 answer cannot be reached from here, a file with no lines in it being
+# whitespace-only by definition; it is left in so the awk is not quietly wrong
+# when read on its own.
+frontmatter_shape() {
+    if is_whitespace_only "$1"; then
+        printf '%s\n' unwritten
+        return
+    fi
+    awk '
+        { sub(/\r$/, "") }
+        NR==1 && $0!="---" { shape="unopened"; exit }
+        NR>1  && $0=="---" { shape="empty";    exit }
+        END { if (shape == "") shape = (NR == 0 ? "unopened" : "unclosed"); print shape }
+    ' "$1"
+}
+
+# The same rule about the document rather than the transition, and refused
+# whatever HEAD says -- which is the part the guard above cannot do from where
+# it stands. It only engages once a flag is up, so the way past it was to go
+# first: land a state.md this tool cannot read while both flags are still
+# false, where nothing is set and nothing fires, and from then on `was` reads
+# empty out of an unreadable HEAD and every write is free. Reproduced in three
+# steps, all of them exit 0, ending with needs_human back to false in the log.
+#
+# Conditioned on nothing, therefore, so that "HEAD's frontmatter is readable"
+# stops being an assumption the guard above makes and becomes something this
+# tool maintains -- true of every state.md baton-write has committed, the
+# first one included. baton-digest refuses an unreadable state.md on the read
+# side for the same reason, rather than printing it as a run waiting for
+# nobody.
+#
+# A HEAD that is already unreadable can still be written over, by a readable
+# document and only by one. That is the repair path, and it has to exist:
+# baton-write is the only writer the agent has, and refusing there would leave
+# a run with no way back. Nothing is lost by allowing it, either -- a flag
+# inside an unreadable frontmatter was never a stop anyone could see, and
+# baton-digest refuses that file outright, which halts the run harder than
+# needs_human does.
+if [ "$target" = "docs/baton/state.md" ] && [ -z "$(frontmatter_block < "$tmp")" ]; then
+    case "$(frontmatter_shape "$tmp")" in
+        unwritten)
+            echo "baton-write: refusing to write $target: what arrived on stdin is empty, or nothing but whitespace -- there is no frontmatter block to read here because there is no document at all. That is a caller bug rather than a file: a command substitution that failed, or a heredoc that came out empty, is exactly this shape. state.md wants suspect and needs_human inside a block opening with --- on line 1, closed by a later ---; write the document, then this tool will read it." >&2
+            ;;
+        unopened)
+            echo "baton-write: refusing to write $target: it has no frontmatter block this tool can read -- line 1 is not a bare ---, so nothing opens one, and a block that starts any lower down is body text. Open it on line 1 and close it with a later ---. suspect and needs_human live there, and flags that cannot be read are a stop nobody can see, this tool included." >&2
+            ;;
+        unclosed)
+            echo "baton-write: refusing to write $target: it has no frontmatter block this tool can read -- the block opens with --- on line 1 and nothing closes it. Add a bare --- after the fields; until one is there this tool reads no frontmatter at all, rather than reading the rest of the document as frontmatter. suspect and needs_human live there, and flags that cannot be read are a stop nobody can see, this tool included." >&2
+            ;;
+        *)
+            echo "baton-write: refusing to write $target: its frontmatter block is empty -- it opens with --- on line 1 and it is closed, so the shape of it is right, but there is nothing between those two lines except blank space and no field in it for this tool to read. Write suspect: and needs_human: inside the block -- flags that cannot be read are a stop nobody can see, this tool included." >&2
+            ;;
+    esac
+    exit 3
 fi
 
 # The idle short-circuit only fires when the working tree already matches

@@ -44,10 +44,11 @@ One question at a time. Cover, in this order:
   cannot be checked: "the API is solid" is not a criterion.
 - **Which document each wave builds to.** Per wave: does the umbrella spec
   cover it closely enough, does one section of it, or does this wave need its
-  own spec from `superpowers:brainstorming`? Whatever they answer goes in the
-  wave's `spec` cell. Ask it here, wave by wave, because the alternative is
-  asking it the evening someone hands the run over — and a wave whose cell is
-  empty then is a wave the autopilot will not take.
+  own spec from `superpowers:brainstorming`? Whatever they answer becomes the
+  wave's `spec:` in the constitution, beside its exit criteria — the agent
+  cannot write that file, so the answer stays theirs. Ask it here, wave by
+  wave, because the alternative is asking it the evening someone hands the run
+  over — and a wave with no spec then is a wave the autopilot will not take.
 - **Non-negotiables.** What must no wave break.
 - **Operating mode.** Confirm the default (orchestrator delegating to
   subagents and workflows) or take what they want instead.
@@ -99,8 +100,8 @@ fields and sections required, then compose the filled document from the
 conversation and write it to a scratch file of your own —
 `.baton/init-constitution.md` and `.baton/init-state.md` — rather than the
 template path. Every `REPLACE-` marker must be gone except `ratified_by`,
-`ratified_at` and `git_anchor`: those three are the human's to fill at
-ratification in step 6, not the agent's to invent.
+`ratified_at` and `git_anchor`: those three are filled at ratification in step
+6, by `/baton:ratify` on the human's word and never by you.
 
 Scratch goes in `.baton/`, not `/tmp`. `/tmp/constitution.md` is a fixed name
 in a directory shared by everything on the machine, so two runs initialising at
@@ -135,13 +136,13 @@ git add docs/baton/constitution.md
 git commit -q -m "baton: constitution for <run>"
 ```
 
-That `cp` is the one hole in the refusal, which is why this command carries
-`disable-model-invocation: true` in its frontmatter. A refusal the agent can
-route around by calling `/baton:init` on itself mid-run is not a refusal, so
-the door is closed at the only place it can be: this command is invokable by
-the human typing it, and by nothing else. `/baton:checkpoint` and
-`/baton:status` stay open to the model — they write nothing the agent is
-judged by.
+That `cp` is one of the refusal's two holes — `/baton:ratify` is the other —
+which is why both carry `disable-model-invocation: true` in their
+frontmatter. A refusal the agent can route around by calling `/baton:init`
+on itself mid-run is not a refusal, so the door is closed at the only place
+it can be: both are invokable by the human typing them, and by nothing else.
+`/baton:checkpoint` and `/baton:status` stay open to the model — they write
+nothing the agent is judged by.
 
 Then write the initial state through `baton-write` so it lands atomically and
 gets committed, the same way every checkpoint after it will:
@@ -152,8 +153,8 @@ gets committed, the same way every checkpoint after it will:
 
 ## 6. Hand it back for ratification
 
-Ask the human to read `docs/baton/constitution.md` and change `status: draft`
-to `status: ratified`, filling `ratified_by`, `ratified_at` and `git_anchor`.
+Ask the human to type `/baton:ratify`. It shows them the constitution, asks,
+then writes `status: ratified`, `ratified_by`, `ratified_at` and `git_anchor`.
 
 Say why it matters rather than treating it as paperwork: from this point the
 agent reads the constitution and never writes it — `baton-write` refuses the

@@ -26,7 +26,10 @@ assert_contains "$next" "src/session.js" "next action names the exact file to to
 
 # No gate is built yet, so no row may carry a gate verdict. This is not
 # cosmetic: state.md is the one worked example an agent has in front of it
-# when it fills in a row of its own, and a seeded `pass` is what it copies.
+# when it fills in a row of its own, and a seeded value is what it copies.
+# `pass` was the value it copied in the v0.1.0 runbook run, and it has since
+# been deleted from the column altogether -- so this now guards against a
+# fixture reviving a value the plugin no longer defines.
 assert_not_contains "$state" "| pass |" "no fixture wave claims a verdict no gate produced"
 
 # The fixture looks like a repository /baton:init ran in, and that includes

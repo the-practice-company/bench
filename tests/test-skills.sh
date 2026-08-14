@@ -46,13 +46,39 @@ for name in baton baton-checkpoint baton-resume baton-autopilot; do
     # argument to cut and had nothing left to find, which is the signal a cap is
     # doing its job rather than the signal to shave the nearest sentence.
     #
-    # These four sum to 1148, which test-budget.sh carries as its budget, and
+    # Two of them moved again for the no-dead-ends rule: no place where the run
+    # waits on a human may report that without naming the command that resolves
+    # it, which is a clause on baton-autopilot's exit-3 stop, a sentence in its
+    # end-of-run report, and one line in baton-resume's step 4. There was
+    # nothing left to trade for them -- the alternative was cutting a
+    # neighbouring sentence, which on the previous branch produced an
+    # oscillation where the same sentence was deleted and restored twice.
+    # Re-measured with those landed: baton-autopilot 338, baton-resume 313,
+    # hence 341 and 316. The other two caps are untouched and their floors are
+    # not re-derived here -- a cap nobody had a reason to move is a cap nobody
+    # measured today, and a number carried over from a measurement is not one.
+    #
+    # Those two floors were right the day they were written and stopped being
+    # right further down the same branch: ea7783d and 68868b8 each added a line
+    # to the file they touched, and b064ed1 took baton-checkpoint from 320 to
+    # 322, past the 321 called its floor above. Measured again here, all four
+    # and not just the ones with a reason to move: baton 172, baton-autopilot
+    # 339, baton-resume 314, baton-checkpoint 322. Every cap below still holds
+    # over its file, so none of them moves in this commit -- but three of them
+    # now stand at floor plus two rather than the plus three the paragraph
+    # above describes, each having lost a line to the file growing under it.
+    # Buying that line back moves three caps and test-budget.sh's BUDGET
+    # together, which is a decision about what the layer may cost per run
+    # rather than a measurement, so it is not taken here. What is written here
+    # is what the room actually is.
+    #
+    # These four sum to 1156, which test-budget.sh carries as its budget, and
     # the assertion after this loop is what makes that a fact rather than a
     # claim. A cap that moves here moves that number too, in the same commit.
     case "$name" in
         baton)            cap=175 ;;
-        baton-autopilot)  cap=336 ;;
-        baton-resume)     cap=313 ;;
+        baton-autopilot)  cap=341 ;;
+        baton-resume)     cap=316 ;;
         baton-checkpoint) cap=324 ;;
     esac
     cap_total=$((cap_total + cap))
@@ -91,25 +117,64 @@ assert_contains "$core" "git log" "core skill names git history as the event log
 assert_contains "$core" "Granted fields" "core skill classifies the autopilot flag as a third kind of field"
 assert_contains "$core" "toward more human involvement" \
     "core skill states which direction the agent may move a granted field"
+# This is the canonical statement of the rule, and it named a command for one
+# half of it only: the autopilot direction sent the reader to /baton:auto,
+# while "clearing either is the human's" named nothing -- in the one paragraph
+# an agent consults to learn who may move these fields. A runbook scenario now
+# pins that a session finding needs_human names /baton:clear, and baton-resume
+# step 4 is the other place it can come from; both are worth having, since a
+# compacted session carries this file and need not be at step 4 when it meets
+# the flag. Pinned to the clause: the file has other reasons to say the word.
+assert_contains "$core" 'clearing either is the human'"'"'s, through `/baton:clear`' \
+    "the granted-fields rule names the command for the flag half, as it already does for the autopilot half"
 # NOT `assert_contains "$core" "auto"`: `auto` is a substring of `autopilot`,
-# which this same change introduces, so the bare word goes green off the
-# granted-fields bullet and stays green with the gate paragraph deleted
-# outright. Pinned to the sentence carrying the distinction instead.
-assert_contains "$core" '`pass` is a second party saying so' \
-    "core skill distinguishes the gate column's auto from its pass"
-# An auto verdict is a claim -- more of one than pass, since no human checked
-# it. Left off the claimed list, it reads as repairable, which is the exact
-# act the divergence policy exists to forbid.
-assert_contains "$core" 'a gate marked `auto` or `pass`' \
+# so the bare word goes green off the granted-fields bullet and stays green
+# with the gate paragraph deleted outright. Pinned to the clause that says
+# whose claim an `auto` verdict is instead.
+assert_contains "$core" 'by the same agent that did the work' \
+    "core skill says an auto verdict is the working agent's own claim"
+# This guard used to pin "`pass` is a second party saying so", and it now
+# watches for that second party's absence. The value went because nothing read
+# it: no script, no hook. A mark that changes nothing, is written by hand once
+# per wave, and has been written falsely once is not a review -- and the value
+# an agent cannot name is the one it cannot claim.
+assert_not_contains "$core" '`pass`' \
+    "the core skill offers no second-party gate value to claim"
+# An auto verdict is a claim: nobody but the agent that did the work has
+# checked it. Left off the claimed list, it reads as repairable, which is the
+# exact act the divergence policy exists to forbid.
+assert_contains "$core" 'a gate marked `auto`' \
     "core skill counts an auto verdict among the claims it may never repair"
 
 checkpoint="$(cat "$SKILLS/baton-checkpoint/SKILL.md")"
 assert_contains "$checkpoint" "60 lines" "checkpoint skill states the state.md line cap"
+# The exit-3 message table is what an agent reads when a checkpoint is
+# refused, and it is read by looking up the message. Two families of refusal
+# were missing from it -- the granted-flag guard, and the four shapes of
+# frontmatter baton-write cannot read -- both added to that tool after this
+# table was written. A reader who does not find their message in a table whose
+# whole purpose is that lookup concludes theirs is not an exit 3 at all, which
+# is worse than the table's absence: it answers, wrongly.
+#
+# Pinned twice per row, because the trigger and the instruction rot
+# separately: a row whose key no longer matches the message is unfindable, and
+# a row found but silent about `/baton:clear` sends the agent to retry the one
+# write no retry can land.
+assert_contains "$checkpoint" 'is set in HEAD`, or refusing to clear' \
+    "the exit-3 table has a row for the granted-flag refusal, keyed on what the tool prints"
+assert_contains "$checkpoint" 'lowering it is `/baton:clear`'"'"'s, and not yours' \
+    "that row sends the agent to the human's command instead of to a retry"
+# The count and the enumeration in one needle, the same lesson as "eleven
+# keys" and "four edits": a row saying four while naming two is read as two,
+# and the shape an agent does not find named is the one it decides it does not
+# have.
+assert_contains "$checkpoint" 'four shapes it is — nothing arrived at all, line 1 is not a bare' \
+    "the unreadable-frontmatter row names the shapes it counts"
 # Closing a wave enumerates the edits it takes. Leaving the gate column out of
 # that list is not neutral: the row above the one being written already
 # carries a value, so an agent with nothing else to go on copies it, and
 # writes a verdict no gate produced.
-assert_contains "$checkpoint" 'The `gate` column takes one of three values' \
+assert_contains "$checkpoint" 'The `gate` column takes one of two values' \
     "checkpoint skill says what the gate column holds and who fills it"
 # There are now two ways a wave closes, and the dangerous misreading is not
 # that an agent misses the second one -- it is that it applies the second one
@@ -122,8 +187,21 @@ assert_contains "$checkpoint" 'While `autopilot` reads `off`' \
 # the assertions above pin only the first path's opener and the word autopilot.
 assert_contains "$checkpoint" 'While `autopilot` names a scope' \
     "checkpoint describes the second closing path, not just the flag that selects it"
-assert_contains "$checkpoint" '`auto`, not `pass`' \
-    "checkpoint says which value the autopilot path writes into the gate column"
+# The sentence this replaces said the autopilot path writes `auto` and not
+# `pass`, and carried a second rule in its second half: the row above the one
+# you are filling in is the previous wave's value, not an instruction. That is
+# the rule the v0.1.0 runbook run actually broke -- the agent copied the row
+# above -- and it outlives the value that was copied, so it is what is pinned.
+assert_contains "$checkpoint" "carries the previous run's value" \
+    "checkpoint tells the agent not to copy the gate cell from the row above"
+assert_not_contains "$checkpoint" '`pass`' \
+    "the checkpoint skill offers no third gate value to write"
+# `pass` was where a wave closed with a human's confirmation and no autopilot
+# landed. Delete the value and say nothing else and that path has no cell to
+# write, leaving `auto` as the only value the table names -- and the row above
+# already carries it.
+assert_contains "$checkpoint" 'and no autopilot stays `—`' \
+    "the table says where a wave closed by hand lands, now that pass is gone"
 # Raised in task 6: the autopilot skill requires a blocked entry when a wave
 # cannot close, and step 5 is the only place any entry's shape is written down.
 assert_contains "$checkpoint" 'type: blocked' \
@@ -161,7 +239,7 @@ assert_contains "$checkpoint" "four edits to this checkpoint's draft" \
 # that keeps "four edits" and deletes the gate bullet leaves three bullets under
 # a count of four, and the suite stays green -- which is the exact failure the
 # four-edits change was made to prevent.
-assert_contains "$checkpoint" 'the `gate` column → `pass` or `auto`' \
+assert_contains "$checkpoint" 'the `gate` column → `auto` or `—`' \
     "the fourth edit is actually enumerated, not just counted"
 # Likewise the three-value table: its lead sentence is pinned above, so
 # deleting every row beneath it survived.
@@ -194,6 +272,34 @@ assert_contains "$resume" 'leave `needs_human` alone' \
 # that found nothing wrong.
 assert_contains "$resume" "baton: resume found a divergence" \
     "resume skill gives the suspect-raising write its own commit message"
+# Step 4 is where a resume meets a flag someone else raised, and it is the one
+# stop a human is guaranteed to read: the session halts there and reports.
+# It used to end by telling the agent to write `suspect: false` itself, which
+# `baton-write` now refuses outright -- so the instruction cost a refusal and
+# still left the human without the command. Pinned to the naming clause, not to
+# `/baton:clear`, which a later mention anywhere in the file would satisfy.
+assert_contains "$resume" 'Then name the command that lowers it: `/baton:clear`' \
+    "the flag found on disk is reported with the command that lowers it"
+# A sixth place of the same shape, found while doing the five the plan lists:
+# step 1 stops on a constitution nobody ratified and used to say "ask for
+# ratification", which is the wait without the words. It is the first stop a
+# fresh session can hit, so it is the likeliest of all of them to be read by
+# someone who has not seen this plugin before.
+assert_contains "$resume" 'not finished writing it — `/baton:ratify`' \
+    "the unratified-constitution stop names the command that ratifies"
+# And the write that no longer works is gone rather than merely supplemented:
+# an agent reading both would try the refused one first.
+assert_not_contains "$resume" 'field set to what they said and `suspect: false`' \
+    "resume no longer tells the agent to lower the flag through baton-write"
+# Stated as the guard states it, and not as "refuses a write that lowers a
+# flag": the tool tests for a positive `true` in what arrives, so spelling the
+# flag `false`, leaving the line out, and writing frontmatter it cannot read
+# are one refusal and not three. The step still prescribes a write of its own
+# -- the claimed field, set to what the human said -- and an agent that reads
+# the rule as being about the word `false` drops the flag line from that draft
+# and is refused by a guard it was just told it was obeying.
+assert_contains "$resume" 'carry the raised flag forward as a positive `true`' \
+    "resume states the refusal the way baton-write actually tests for it"
 assert_contains "$resume" "128" "resume skill explains the merge-base exit-128 case"
 assert_contains "$resume" "fatal:" "resume skill explains the merge-base fatal: message"
 assert_contains "$resume" "is an ancestor of \`HEAD\`. The claim holds." "resume skill explains merge-base exit 0"
@@ -284,7 +390,13 @@ assert_contains "$autopilot" 'nothing in its `consumes` appears in the `produces
 # list still calls available is a wave the loop can take, skip, and take
 # again, with "if no wave is available" never becoming true. So the refusal
 # has to live HERE, not only in step 1.
-assert_contains "$autopilot" 'its `spec` cell is not `—`' \
+#
+# The needle names where the field is read from, and it is chosen so the old
+# text cannot satisfy it: the rule used to say "cell", meaning a column of
+# state.md the agent writes at every checkpoint. It now says the constitution,
+# which `baton-write` refuses outright -- so an agent that wrote its own spec
+# could no longer put the path where the rule looks.
+assert_contains "$autopilot" 'its `spec` in the constitution is not `—`' \
     "a wave with no spec is unavailable, not merely skipped once it has been taken"
 # The count and the enumeration rot independently -- the same lesson as
 # "eleven keys" over the key table, and "four edits" over the gate bullet. A
@@ -307,6 +419,15 @@ assert_contains "$autopilot" "And between attempts, not only between waves" \
     "autopilot checkpoints per attempt, so the ceiling survives a compaction"
 
 # What autonomy never covers.
+# The end-of-run report is not the only place this skill stops on the flag:
+# the unattributable dirty path and every bullet below raise it MID-RUN, and
+# when one of those fires the end-of-run report is never written at all. So the
+# place already fixed cannot cover them, and a human meeting one of these gets
+# the flag, no command, and no later report that would have named one. Stated
+# once at the section lead rather than six times: the rule is the same rule,
+# and six copies of it is how a section gets tidied back down to five.
+assert_contains "$autopilot" '`needs_human` — here or above — names `/baton:clear`' \
+    "every stop that raises the flag names the command that lowers it, not only the last one"
 assert_contains "$autopilot" "contradicts the constitution" "autopilot skill stops on a constitution contradiction"
 # Both of the next two are pinned to the whole clause rather than to the bare
 # word. "suspect" appears in the Red Flags and in the divergence prose alike,
@@ -432,6 +553,15 @@ assert_contains "$autopilot" "if anything is \`blocked\`" \
     "the flag is raised where the run actually ends, and only if a wave was parked"
 assert_contains "$autopilot" "Name every blocked wave in that report" \
     "a run that parked a wave and finished the rest does not read as a clean night"
+# The end-of-run report is written at 03:40 and read in the morning, and it is
+# the only place the raised flag is explained to anyone. A report that says the
+# run stopped without saying what un-stops it sends the human to the README --
+# and `baton-write` refuses the write that would lower it, so guessing costs
+# them a refusal too. Pinned to the flag and the command on one line: both
+# `needs_human` and `/baton:clear` appear elsewhere in this file, so either
+# alone would go green with this sentence deleted.
+assert_contains "$autopilot" 'If you raised `needs_human`, name `/baton:clear` too' \
+    "the end-of-run report names the command that lowers the flag it raised"
 assert_contains "$autopilot" "cannot account for as this wave" \
     "autopilot skill stops on an uncommitted path it cannot attribute to the wave"
 # The commit-and-regate branch is explicitly exempt from the three-attempt
@@ -458,6 +588,15 @@ assert_contains "$autopilot" "Absence is not symmetric" \
 # the flag, and stays green with this clause deleted. Pinned to the clause.
 assert_contains "$autopilot" '`3` also takes `needs_human: true`' \
     "exit 3 raises the run-level flag, not just a stop"
+# And exit 3's commonest cause is a constitution nobody ratified -- which the
+# agent cannot fix, since `baton-write` refuses that path, and which the human
+# fixes with one command they have to be told the name of. Named conditionally,
+# because exit 3 is a family: the script's message says which member, and only
+# the unratified one is `/baton:ratify`'s. Pinned to the flag beside the
+# command, since the file names `/baton:ratify` nowhere else and `needs_human:
+# true` half a dozen times.
+assert_contains "$autopilot" 'takes `needs_human: true` — say `/baton:ratify`' \
+    "the exit-3 stop names the command that ratifies, beside the flag it raises"
 # The parent's exit-4 row forbade this and the compression dropped it with the
 # row. Exit 4 is the gate saying it could not run verify_cmd -- the one moment
 # an agent has both a reason and an obvious way to run something else, and the
@@ -521,13 +660,29 @@ assert_contains "$autopilot" "superpowers:finishing-a-development-branch" \
 assert_contains "$resume" "Write nothing, not even" \
     "the branch stop writes no flag into a state.md it cannot establish is this run's"
 
-# Step 1 skips a wave whose spec cell is `—` rather than deriving one, and a
+# Step 1 skips a wave whose spec is `—` rather than deriving one, and a
 # skipped wave stays `todo` -- so nothing on disk records that it was passed
 # over. The end-of-run report is the only place it can appear, and the run it
 # appears in is the one that most wants a human: what the wave needs is a
 # brainstorming session.
 assert_contains "$autopilot" "skipped for want of a spec" \
-    "a wave skipped for an empty spec cell is named in the end-of-run report"
+    "a wave skipped for an empty spec is named in the end-of-run report"
+
+# Where step 1 reads the document from, which is the whole of this change. The
+# refusal above ("Never derive that document yourself") was already there and
+# stayed green while the path came off a state.md column the agent writes at
+# every checkpoint: it could write its own spec, put the path in the cell, and
+# take the wave at the next checkpoint -- the self-judging loop rebuilt one
+# level up. Naming the constitution is what closes that, because `baton-write`
+# refuses that path, so this needle cannot pass off the old wording.
+assert_contains "$autopilot" "The wave's \`spec\` in the constitution names" \
+    "the autopilot reads a wave's spec from the file it cannot write"
+
+# The same failure the workspace preference had: step 1 enumerates what it
+# takes from the constitution, and a field missing from that list is a field
+# the resumed session never loads. Found only by final review last time.
+assert_contains "$resume" "each wave's \`spec\`" \
+    "resume step 1 takes the per-wave spec off the constitution with the rest"
 
 # The workspace preference was a field nothing read: /baton:init collected it,
 # the constitution declared it, baton/SKILL.md called using-git-worktrees

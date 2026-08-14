@@ -6,8 +6,8 @@
 # continue without asking -- is RUNBOOK.md's fourth scenario, run by a
 # human. What is checked here is the premise: that the fixture really does
 # contain one available wave and one that is excluded only by the
-# consumes/produces rule, not also by an empty spec cell -- availability has
-# a fourth rule now (a `spec` cell that is not `—`), and this fixture's whole
+# consumes/produces rule, not also by a missing spec -- availability has
+# a fourth rule now (a `spec` that is not `—`), and this fixture's whole
 # point collapses if it silently leaves that rule unmet, the way a spec-less
 # fixture briefly did on this branch. So it cannot rot into a fixture where
 # the easy rule suffices, or one where no wave is available at all.
@@ -19,7 +19,8 @@
 # alone suffices, silently, with every assertion still green. Extracting
 # wave 2's own produces: and wave 3's own consumes: is what makes the
 # fixture's shape, not just its vocabulary, load-bearing. The same applies to
-# each wave's own spec cell, read from its own table row below.
+# each wave's own spec, which is read from its own block in the constitution:
+# the field moved there, and state.md no longer carries a spec column at all.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -73,26 +74,26 @@ assert_contains "$grant_entry" "base: —" \
 # nothing produced, is exactly what these two catch.
 row1="$(wave_row 1)"
 assert_equals "$(row_field "$row1" 3)" "done" "wave 1's status is done"
-assert_equals "$(row_field "$row1" 7)" "auto" "wave 1's gate reads auto, matching the verdict file below"
+assert_equals "$(row_field "$row1" 6)" "auto" "wave 1's gate reads auto, matching the verdict file below"
 
 # Rule 4 does not gate a done or blocked wave's availability -- only a todo
 # wave's -- but a done wave that already closed, or a blocked wave that
 # reached three attempts, could not have been started under this rule with
-# an empty spec cell either. A fixture that left either — would model a
+# an empty spec either. A fixture that left either — would model a
 # state the autopilot could never actually have reached, not just a state
 # this test fails to check.
-spec1="$(row_field "$row1" 4)"
+spec1="$(wave_field 1 spec)"
 if [ -n "$spec1" ] && [ "$spec1" != "—" ]; then
-    pass "wave 1 has a real spec cell -- consistent with a wave that was actually started"
+    pass "wave 1 has a real spec -- consistent with a wave that was actually started"
 else
-    fail "wave 1 has a real spec cell -- consistent with a wave that was actually started"
-    echo "    spec cell: $spec1"
+    fail "wave 1 has a real spec -- consistent with a wave that was actually started"
+    echo "    spec: $spec1"
 fi
 
 # gate: auto is a claim; the verdict file is the evidence for it. A row
 # that says auto with no file behind it is a claim /baton:status and a
 # resuming agent both have nothing to check it against.
-wave1_sha="$(row_field "$row1" 6)"
+wave1_sha="$(row_field "$row1" 5)"
 gate_file="docs/baton/gates/wave-1-attempt-1-${wave1_sha}.md"
 assert_file_exists "$gate_file" "wave 1's auto-gate verdict file exists, named after its own closed_at_sha"
 gate_content="$(cat "$gate_file" 2>/dev/null || true)"
@@ -109,12 +110,12 @@ row2="$(wave_row 2)"
 assert_equals "$(row_field "$row2" 3)" "blocked" "wave 2's status is blocked"
 assert_contains "$state" "needs_human: false" \
     "needs_human stays false -- wave 4 remains available, so the run is not the run-level stop this flag is for"
-spec2="$(row_field "$row2" 4)"
+spec2="$(wave_field 2 spec)"
 if [ -n "$spec2" ] && [ "$spec2" != "—" ]; then
-    pass "wave 2 has a real spec cell -- it reached three attempts, which rule 4 could not have allowed with an empty one"
+    pass "wave 2 has a real spec -- it reached three attempts, which rule 4 could not have allowed with an empty one"
 else
-    fail "wave 2 has a real spec cell -- it reached three attempts, which rule 4 could not have allowed with an empty one"
-    echo "    spec cell: $spec2"
+    fail "wave 2 has a real spec -- it reached three attempts, which rule 4 could not have allowed with an empty one"
+    echo "    spec: $spec2"
 fi
 assert_file_exists "docs/baton/journal/0002-wave2-blocked.md" "the pat on wave 2 is journaled"
 blocked_entry="$(cat docs/baton/journal/0002-wave2-blocked.md)"
@@ -144,21 +145,21 @@ assert_equals "$consumes3" "[session-contract]" \
 deps3="$(wave_field 3 depends_on)"
 assert_equals "$deps3" "[1]" "wave 3 does not depend on the blocked wave in the graph -- only through the contract"
 
-# Rule 4: wave 3 has a real spec cell too, so it is excluded for the
+# Rule 4: wave 3 has a real spec too, so it is excluded for the
 # contract alone, not for a missing spec as well. A wave failing two rules
 # at once no longer tells a reader which one this fixture is pinning.
-spec3="$(row_field "$row3" 4)"
+spec3="$(wave_field 3 spec)"
 if [ -n "$spec3" ] && [ "$spec3" != "—" ]; then
-    pass "wave 3 has a real spec cell -- it is unavailable for the contract alone, not for a missing spec too"
+    pass "wave 3 has a real spec -- it is unavailable for the contract alone, not for a missing spec too"
 else
-    fail "wave 3 has a real spec cell -- it is unavailable for the contract alone, not for a missing spec too"
-    echo "    spec cell: $spec3"
+    fail "wave 3 has a real spec -- it is unavailable for the contract alone, not for a missing spec too"
+    echo "    spec: $spec3"
 fi
 
 # Wave 4: the one genuinely available wave -- nothing blocked upstream in
 # its depends_on, no contract of its own tying it to the blocked wave, and a
-# real spec cell of its own. Without a real check of each, a mutation that
-# gives it consumes: [session-contract], or resets its spec cell to —,
+# real spec of its own. Without a real check of each, a mutation that
+# gives it consumes: [session-contract], or resets its spec to —,
 # would leave no wave available at all and this test would not notice.
 row4="$(wave_row 4)"
 assert_equals "$(row_field "$row4" 3)" "todo" "wave 4's status is todo"
@@ -167,14 +168,14 @@ assert_equals "$deps4" "[1]" "wave 4 depends only on the closed wave"
 consumes4="$(wave_field 4 consumes)"
 assert_equals "$consumes4" "" "wave 4 consumes nothing -- no contract ties it to the blocked wave either"
 
-# Rule 4: wave 4's spec cell is real, so it is genuinely available under
+# Rule 4: wave 4's spec is real, so it is genuinely available under
 # all four rules, not just the first three.
-spec4="$(row_field "$row4" 4)"
+spec4="$(wave_field 4 spec)"
 if [ -n "$spec4" ] && [ "$spec4" != "—" ]; then
-    pass "wave 4 has a real spec cell -- available under all four rules, not just the first three"
+    pass "wave 4 has a real spec -- available under all four rules, not just the first three"
 else
-    fail "wave 4 has a real spec cell -- available under all four rules, not just the first three"
-    echo "    spec cell: $spec4"
+    fail "wave 4 has a real spec -- available under all four rules, not just the first three"
+    echo "    spec: $spec4"
 fi
 
 # Next action states that a decision is needed without making it: no wave
@@ -186,8 +187,10 @@ assert_not_contains "$next" "wave 4" "Next action does not name which wave to ta
 assert_not_contains "$next" "wave 3" "Next action does not single out wave 3 either"
 assert_not_contains "$next" "session-contract" "Next action does not name the contract that excludes wave 3"
 
-# No wave claims a verdict nothing produced.
-assert_not_contains "$state" "| pass |" "no autopilot-fixture wave claims a human confirmation"
+# No wave claims a verdict nothing produced. `pass` is no longer a value the
+# gate column takes at all, which makes this a guard against a fixture
+# reviving one the plugin no longer defines.
+assert_not_contains "$state" "| pass |" "no autopilot-fixture wave claims a verdict no gate produced"
 
 assert_contains "$(cat .gitignore 2>/dev/null || true)" ".baton/" \
     "the autopilot fixture gitignores .baton/ the way /baton:init leaves it"
