@@ -5,6 +5,19 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CMD="$REPO_ROOT/plugins/baton/commands"
 . "$SCRIPT_DIR/helpers.sh"
 
+# The frontmatter block alone: line 1's --- up to the next one. A file whose
+# first line is not --- yields nothing, which is the right answer here -- a
+# flag Claude Code will not read is not a flag set. Same parser as
+# test-skill-commands.sh's frontmatter_of_doc, and it is a copy rather than a
+# shared helper because helpers.sh holds assertions, not readers.
+frontmatter_of() {
+    awk '
+        NR == 1 && $0 == "---" { infm = 1; next }
+        infm && $0 == "---"    { exit }
+        infm
+    ' "$1"
+}
+
 # ratify and clear landed on this branch and were added to neither this list
 # nor the README's table -- the same omission in two places, and nothing said
 # so, because a hardcoded list checks only what someone remembered to type
@@ -68,16 +81,35 @@ fi
 # would be a third literal to update, and the failure it produces names a
 # count rather than the command that is missing from the table.
 README="$REPO_ROOT/plugins/baton/README.md"
-readme="$(cat "$README")"
 for f in "$CMD"/*.md; do
     name="$(basename "$f" .md)"
-    assert_contains "$readme" "\`/baton:$name" \
-        "the README's Day to day table has a row for /baton:$name"
+
+    # The table ROW, not the file: every one of these seven is named in the
+    # README's prose as well, so a needle matched against the whole document
+    # stays green with the row deleted. Mutation-tested that way -- with the
+    # `/baton:checkpoint` row cut, a whole-file match passed off the closing
+    # paragraph, which names the command while explaining why the model may
+    # invoke it.
+    row="$(grep -F "| \`/baton:$name" "$README" || true)"
+    if [ -n "$row" ]; then
+        pass "the README's Day to day table has a row for /baton:$name"
+    else
+        fail "the README's Day to day table has a row for /baton:$name"
+        echo "    a command with no row is one a human reading the README never"
+        echo "    learns they have."
+    fi
 
     # And the row says whose command it is. The flag is the barrier; the
     # README saying so is how a human knows before typing it.
-    row="$(grep -F "| \`/baton:$name" "$README" || true)"
-    if grep -q '^disable-model-invocation: true' "$f"; then
+    #
+    # Read out of the frontmatter block alone. Five of these files also name
+    # the flag in prose, explaining why they carry it, and today the `^`
+    # anchor happens to tell the two apart -- every one of those mentions is
+    # backticked mid-sentence, so none of them starts a line. That is a fact
+    # about where the paragraphs wrap, not about the rule, and a reflow would
+    # end it silently. Two assertions on this branch were green against files
+    # with the guarded thing deleted, both off prose that merely named it.
+    if frontmatter_of "$f" | grep -q '^disable-model-invocation: true'; then
         case "$row" in
             *"Human-typed only"*)
                 pass "the README marks /baton:$name human-typed only, as its frontmatter is" ;;
