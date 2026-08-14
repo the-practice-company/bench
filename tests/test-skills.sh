@@ -46,13 +46,25 @@ for name in baton baton-checkpoint baton-resume baton-autopilot; do
     # argument to cut and had nothing left to find, which is the signal a cap is
     # doing its job rather than the signal to shave the nearest sentence.
     #
-    # These four sum to 1148, which test-budget.sh carries as its budget, and
+    # Two of them moved again for the no-dead-ends rule: no place where the run
+    # waits on a human may report that without naming the command that resolves
+    # it, which is a clause on baton-autopilot's exit-3 stop, a sentence in its
+    # end-of-run report, and one line in baton-resume's step 4. There was
+    # nothing left to trade for them -- the alternative was cutting a
+    # neighbouring sentence, which on the previous branch produced an
+    # oscillation where the same sentence was deleted and restored twice.
+    # Re-measured with those landed: baton-autopilot 338, baton-resume 313,
+    # hence 341 and 316. The other two caps are untouched and their floors are
+    # not re-derived here -- a cap nobody had a reason to move is a cap nobody
+    # measured today, and a number carried over from a measurement is not one.
+    #
+    # These four sum to 1156, which test-budget.sh carries as its budget, and
     # the assertion after this loop is what makes that a fact rather than a
     # claim. A cap that moves here moves that number too, in the same commit.
     case "$name" in
         baton)            cap=175 ;;
-        baton-autopilot)  cap=336 ;;
-        baton-resume)     cap=313 ;;
+        baton-autopilot)  cap=341 ;;
+        baton-resume)     cap=316 ;;
         baton-checkpoint) cap=324 ;;
     esac
     cap_total=$((cap_total + cap))
@@ -214,6 +226,25 @@ assert_contains "$resume" 'leave `needs_human` alone' \
 # that found nothing wrong.
 assert_contains "$resume" "baton: resume found a divergence" \
     "resume skill gives the suspect-raising write its own commit message"
+# Step 4 is where a resume meets a flag someone else raised, and it is the one
+# stop a human is guaranteed to read: the session halts there and reports.
+# It used to end by telling the agent to write `suspect: false` itself, which
+# `baton-write` now refuses outright -- so the instruction cost a refusal and
+# still left the human without the command. Pinned to the naming clause, not to
+# `/baton:clear`, which a later mention anywhere in the file would satisfy.
+assert_contains "$resume" 'Then name the command that lowers it: `/baton:clear`' \
+    "the flag found on disk is reported with the command that lowers it"
+# A sixth place of the same shape, found while doing the five the plan lists:
+# step 1 stops on a constitution nobody ratified and used to say "ask for
+# ratification", which is the wait without the words. It is the first stop a
+# fresh session can hit, so it is the likeliest of all of them to be read by
+# someone who has not seen this plugin before.
+assert_contains "$resume" 'not finished writing it — `/baton:ratify`' \
+    "the unratified-constitution stop names the command that ratifies"
+# And the write that no longer works is gone rather than merely supplemented:
+# an agent reading both would try the refused one first.
+assert_not_contains "$resume" 'field set to what they said and `suspect: false`' \
+    "resume no longer tells the agent to lower the flag through baton-write"
 assert_contains "$resume" "128" "resume skill explains the merge-base exit-128 case"
 assert_contains "$resume" "fatal:" "resume skill explains the merge-base fatal: message"
 assert_contains "$resume" "is an ancestor of \`HEAD\`. The claim holds." "resume skill explains merge-base exit 0"
@@ -458,6 +489,15 @@ assert_contains "$autopilot" "if anything is \`blocked\`" \
     "the flag is raised where the run actually ends, and only if a wave was parked"
 assert_contains "$autopilot" "Name every blocked wave in that report" \
     "a run that parked a wave and finished the rest does not read as a clean night"
+# The end-of-run report is written at 03:40 and read in the morning, and it is
+# the only place the raised flag is explained to anyone. A report that says the
+# run stopped without saying what un-stops it sends the human to the README --
+# and `baton-write` refuses the write that would lower it, so guessing costs
+# them a refusal too. Pinned to the flag and the command on one line: both
+# `needs_human` and `/baton:clear` appear elsewhere in this file, so either
+# alone would go green with this sentence deleted.
+assert_contains "$autopilot" 'If you raised `needs_human`, name `/baton:clear` too' \
+    "the end-of-run report names the command that lowers the flag it raised"
 assert_contains "$autopilot" "cannot account for as this wave" \
     "autopilot skill stops on an uncommitted path it cannot attribute to the wave"
 # The commit-and-regate branch is explicitly exempt from the three-attempt
@@ -484,6 +524,15 @@ assert_contains "$autopilot" "Absence is not symmetric" \
 # the flag, and stays green with this clause deleted. Pinned to the clause.
 assert_contains "$autopilot" '`3` also takes `needs_human: true`' \
     "exit 3 raises the run-level flag, not just a stop"
+# And exit 3's commonest cause is a constitution nobody ratified -- which the
+# agent cannot fix, since `baton-write` refuses that path, and which the human
+# fixes with one command they have to be told the name of. Named conditionally,
+# because exit 3 is a family: the script's message says which member, and only
+# the unratified one is `/baton:ratify`'s. Pinned to the flag beside the
+# command, since the file names `/baton:ratify` nowhere else and `needs_human:
+# true` half a dozen times.
+assert_contains "$autopilot" 'takes `needs_human: true` — say `/baton:ratify`' \
+    "the exit-3 stop names the command that ratifies, beside the flag it raises"
 # The parent's exit-4 row forbade this and the compression dropped it with the
 # row. Exit 4 is the gate saying it could not run verify_cmd -- the one moment
 # an agent has both a reason and an obvious way to run something else, and the

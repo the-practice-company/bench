@@ -109,9 +109,11 @@ out of**, and even then it means the evidence exists, not that it is green:
 read `verify_exit` and `placeholder_hits`. Any other code is a stop, and the
 script's own message names the cause — report that rather than paraphrasing
 it. `3` and `4` both mean the gate could not reach a verdict and hand the
-human different jobs; `3` also takes `needs_human: true`. `64` is a bad
-argument, checked before `verify_cmd` runs, so nothing was spent; anything
-else is git or awk failing underneath, not a verdict against the wave.
+human different jobs; `3` also takes `needs_human: true` — say `/baton:ratify`
+when the script's message is the unratified constitution, and `/baton:clear`
+for the flag once that is done. `64` is a bad argument, checked before
+`verify_cmd` runs, so nothing was spent; anything else is git or awk failing
+underneath, not a verdict against the wave.
 
 **Absence is not symmetric between the two constitution fields the gate
 needs**, so do not read one across to the other: a missing
@@ -285,7 +287,8 @@ skipped for want of a spec**, write `autopilot: off`, and stop with a report.
 Say in that report that the run is over and
 `superpowers:finishing-a-development-branch` is what closes it — merge, PR or
 clean up. Name every blocked wave in that report, and say what each was
-waiting on.
+waiting on. If you raised `needs_human`, name `/baton:clear` too: nothing else
+lowers it, and this report is the only thing the morning reads.
 
 Name every wave you skipped for a `—` spec too, and say that is why. A
 skipped wave is still `todo`, so nothing on disk records that you passed it —

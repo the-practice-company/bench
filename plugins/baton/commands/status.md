@@ -13,7 +13,9 @@ deviations matter more than progress:
 
 1. **Stopped or suspect.** If `needs_human: true`, say what stopped the run and
    what the human has to decide. If `suspect: true`, show the `Suspect` line.
-   If neither is set, say nothing here rather than reporting "all good".
+   With either flag up, name `/baton:clear`: only a human lowers one, and this
+   report is where they find out what to type. If neither is set, say nothing
+   here rather than reporting "all good".
 2. **Whether this run is unattended.** Read `autopilot` from the frontmatter,
    normalized the way the session-start hook already does before comparing
    it, not compared literally: trim whitespace, strip a trailing `\r`, strip

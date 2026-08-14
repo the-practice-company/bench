@@ -64,10 +64,10 @@ would stop to ask for: state it to that skill rather than letting it ask,
 since under the autopilot nobody is there to answer.
 
 Check `status` in its frontmatter before acting on any of it: anything other
-than `ratified` means the human has not finished writing it — stop and ask for
-ratification rather than guessing at intent. A `REPLACE-WITH` placeholder
-means the same, but match a *frontmatter field whose value begins with the
-token*, not the string anywhere in the file.
+than `ratified` means the human has not finished writing it — `/baton:ratify`
+is what finishes it, so stop and ask for that rather than guessing at intent.
+A `REPLACE-WITH` placeholder means the same, but match a *frontmatter field
+whose value begins with the token*, not the string anywhere in the file.
 
 **2. Verify rather than trust.**
 
@@ -157,10 +157,11 @@ does not reach step 6, because it does not reach step 5.
 
 Resolution is not yours alone. Put the specifics in front of the human: which
 field, what it claims, what the repository shows, what the `Suspect` line says
-about how it was caught. Then record what they decide: a journal entry with
-the decision and why, then a `baton-write` of `state.md` with the claimed
-field set to what they said and `suspect: false`. Nothing else clears it: the
-flag does not expire, and no checkpoint clears it for you.
+about how it was caught. Then name the command that lowers it: `/baton:clear`
+is the only thing that does — `baton-write` refuses a write that lowers a
+flag, the flag does not expire, and no checkpoint clears it for you. Record
+what they decide first: a journal entry with the decision and why, and a
+`baton-write` of `state.md` with the claimed field set to what they said.
 
 **5. Take the writer lease.**
 

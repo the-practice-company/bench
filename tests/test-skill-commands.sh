@@ -347,6 +347,17 @@ init_cmd="$(cat "$PLUGIN/commands/init.md")"
 assert_contains "$init_cmd" "Which document each wave builds to" "init settles the spec source per wave"
 assert_contains "$init_cmd" "Where the run works" "init settles the workspace preference"
 assert_contains "$init_cmd" "before you compact" "init tells the human to ratify before compacting"
+# Step 6 used to tell the human to open the constitution and change four fields
+# by hand. That is not a missing pointer but an instruction to do the thing
+# `/baton:ratify` exists to replace -- and a hand-filled `git_anchor` anchors
+# the run to whatever the human typed rather than to the commit they read.
+# Pinned to the hand-off, and the old wording pinned as forbidden: an edit that
+# restores the instruction while keeping the command name would satisfy a
+# needle that only looked for `/baton:ratify`.
+assert_contains "$init_cmd" 'Ask the human to type `/baton:ratify`' \
+    "init hands the constitution to the command that signs it, not to a text editor"
+assert_not_contains "$init_cmd" 'change `status: draft`' \
+    "init no longer walks the human through editing the four fields themselves"
 
 # --- the two commands the model may not invoke ---
 # The barrier is a frontmatter flag, so it is checked in the frontmatter: a
@@ -400,5 +411,20 @@ assert_contains "$clear_cmd" "opening on the very first line" \
     "clear requires the frontmatter it writes to stay where baton-write's guard looks"
 assert_contains "$clear_cmd" "both flags present as an explicit" \
     "clear keeps the flag it lowers as a readable false, rather than deleting the line"
+
+# --- the report a human reads names the command that acts on it ---
+# /baton:status is the one thing a human types before they know anything about
+# the run, so a stopped run reported there without the words that un-stop it
+# sends them to the README to look. `baton-digest` already obeys this where it
+# prints a raised flag, and test-digest.sh pins it there; this is the same rule
+# in the command that summarises the run rather than the state file.
+#
+# Pinned to the flag condition and the command together. A bare `/baton:clear`
+# would be a weaker assertion here than it looks: the command file has no other
+# reason to name it today, but the first sentence added about clearing a flag
+# anywhere in the file would keep it green with item 1 stripped back.
+status_cmd="$(cat "$PLUGIN/commands/status.md")"
+assert_contains "$status_cmd" 'With either flag up, name `/baton:clear`' \
+    "status reports a raised flag with the command that lowers it"
 
 finish

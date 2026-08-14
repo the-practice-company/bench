@@ -100,8 +100,8 @@ fields and sections required, then compose the filled document from the
 conversation and write it to a scratch file of your own —
 `.baton/init-constitution.md` and `.baton/init-state.md` — rather than the
 template path. Every `REPLACE-` marker must be gone except `ratified_by`,
-`ratified_at` and `git_anchor`: those three are the human's to fill at
-ratification in step 6, not the agent's to invent.
+`ratified_at` and `git_anchor`: those three are filled at ratification in step
+6, by `/baton:ratify` on the human's word and never by you.
 
 Scratch goes in `.baton/`, not `/tmp`. `/tmp/constitution.md` is a fixed name
 in a directory shared by everything on the machine, so two runs initialising at
@@ -153,8 +153,8 @@ gets committed, the same way every checkpoint after it will:
 
 ## 6. Hand it back for ratification
 
-Ask the human to read `docs/baton/constitution.md` and change `status: draft`
-to `status: ratified`, filling `ratified_by`, `ratified_at` and `git_anchor`.
+Ask the human to type `/baton:ratify`. It shows them the constitution, asks,
+then writes `status: ratified`, `ratified_by`, `ratified_at` and `git_anchor`.
 
 Say why it matters rather than treating it as paperwork: from this point the
 agent reads the constitution and never writes it — `baton-write` refuses the

@@ -16,12 +16,18 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SKILLS="$REPO_ROOT/plugins/baton/skills"
 . "$SCRIPT_DIR/helpers.sh"
 
-# 1148 is the sum of the four per-file caps in test-skills.sh, which is where
+# 1156 is the sum of the four per-file caps in test-skills.sh, which is where
 # the reasoning for each of them lives. Keep the two in step: a budget that
 # does not equal that sum is a second, quieter ceiling, and whichever is lower
 # is the real one. test-skills.sh asserts the equality, reading this line, so
 # the two now move together or fail together rather than drifting quietly.
-BUDGET=1148
+#
+# It grew from 1148 with two of those caps: baton-autopilot's exit-3 stop and
+# end-of-run report, and baton-resume's step 4, now name the command that
+# resolves the wait they report -- `/baton:ratify` and `/baton:clear`. A stop
+# that names no command sends the human to the README, and under the autopilot
+# the report is written at 03:40 to be read by someone who was not there.
+BUDGET=1156
 
 # What is actually scarce is tokens, and a line count is a wrap-width
 # artifact, not a token count: `fmt -w 100` across the four skills removes
@@ -36,7 +42,13 @@ BUDGET=1148
 # content, still fails here even though it would pass the line-based caps.
 # Neither budget replaces the other -- this one is blind to a paragraph
 # that grows the word count without ever wrapping past its line.
-BYTE_BUDGET=59500
+#
+# Measured, like BUDGET above, and for the same sentences: the skills weigh
+# 59811 bytes with the no-dead-ends rule landed, so this is that floor plus
+# about forty bytes, against the seventy the old 59500 left over 59426. It is
+# deliberately not proportional headroom -- see the paragraph above for why a
+# generous byte budget is the one that lets a rewrap buy real content.
+BYTE_BUDGET=59850
 
 total=0
 total_bytes=0
