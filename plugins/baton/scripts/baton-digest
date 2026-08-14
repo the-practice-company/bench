@@ -1,0 +1,385 @@
+#!/usr/bin/env bash
+# Print the essence of the constitution, or of whatever has stopped the run,
+# short enough for a human to read in chat and approve there.
+#
+# The script prints. It writes nothing -- not the files it reads, not a
+# temporary beside them -- and it summarises nothing: every line below is a
+# value lifted out of the file, in the file's own words. That is the whole
+# point of it existing rather than an agent doing the same job in prose. An
+# agent that retells the constitution hands the human a retelling to approve,
+# which is the disease baton-gate was built against, arriving one level up:
+# the party being judged writing the account. verify_cmd in particular is
+# printed verbatim and alone on its line, because the single thing this
+# digest must make noticeable is that value having been swapped for
+# something that passes.
+#
+# It also judges nothing about what it reads. A draft constitution, an empty
+# verify_cmd, a value whose opening quote is never closed -- each prints as
+# it stands rather than being refused, and the stray quote is more use to
+# the reader than a refusal would be. baton-gate is where a constitution is
+# checked for fitness to gate against; this is where a human reads one. The
+# two refusals below are not judgements of that kind: a file that is not
+# there, and a frontmatter block that cannot be read, leave nothing to print
+# except silence that would look like an answer.
+#
+# Exit codes:
+#   0   digest printed -- including a stop digest that finds nothing raised,
+#       which is a finding and not a failure
+#   1   not a git repository
+#   3   the file this object needs is missing, or carries no closed
+#       frontmatter block; and for stop, a suspect or needs_human that is
+#       neither true nor false. That last one is a refusal for the same
+#       reason the others are: of the two readings available for an
+#       unreadable stop flag, "the run is waiting for nobody" is the one
+#       that must never be printed on a guess.
+#   64  usage
+#
+# Two objects, and the second reads both files: state.md says which wave is
+# blocked, and the constitution's depends_on is the only place that says
+# what it is blocked ON. A missing constitution does not make the stop
+# digest fail -- what is stopped is still worth printing -- so the
+# dependency is reported as unknown, and says why.
+set -euo pipefail
+
+usage() { echo "usage: baton-digest <constitution|stop>" >&2; exit 64; }
+
+[ $# -eq 1 ] || usage
+case "$1" in
+    constitution|stop) object="$1" ;;
+    *) usage ;;
+esac
+
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    echo "baton-digest: not a git repository" >&2
+    exit 1
+fi
+
+# Every other script here was fixed for this once already: invoked from a
+# subdirectory, the relative paths below name nothing, and this one would
+# report a constitution missing in a repository that has one. The assignment
+# is kept separate from the cd for the reason baton-gate spells out -- under
+# bash 3.2 `cd ""` succeeds silently, so an inlined form would swallow a
+# bare repository's failure and carry on from the wrong directory.
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+constitution="docs/baton/constitution.md"
+state="docs/baton/state.md"
+
+# --- reading, borrowed wholesale from baton-gate ---
+
+# Lines between the opening and closing --- only, emitted only if the block
+# was closed: an unterminated block must not promote the prose after it to
+# frontmatter. The carriage return comes off every line first, because the
+# NR==1 comparison is exact and a file written by a Windows editor carries
+# CRLF on the opening --- too.
+frontmatter_of() {
+    awk '
+        { sub(/\r$/, "") }
+        NR==1 && $0=="---" { infm=1; next }
+        infm && $0=="---"  { closed=1; exit }
+        infm               { buf = buf $0 "\n" }
+        END                { if (closed) printf "%s", buf }
+    ' "$1"
+}
+
+# fm_field <frontmatter> <name>. The `|| true` is baton-gate's and
+# baton-lock's: sed keeps writing after head -1 has taken its line and
+# exited, takes SIGPIPE, and its 141 would otherwise propagate through
+# pipefail and kill the script. The trailing strip is whitespace rather than
+# just \r, so a copy-pasted line's invisible trailing space cannot defeat
+# unquote's exact match on the closing quote.
+fm_field() {
+    printf '%s\n' "$1" | sed -n "s/^$2: *//p" | head -1 | sed 's/[[:space:]]*$//' || true
+}
+
+# One layer of surrounding quotes, and only a matched pair. A value that
+# opens a quote it never closes keeps both characters and prints as it
+# stands -- baton-gate refuses that shape, and refusing it here as well
+# would hide the defect from the one reader in a position to fix it.
+unquote() {
+    local s="$1"
+    case "$s" in
+        \"*\") s="${s#\"}"; s="${s%\"}" ;;
+        \'*\') s="${s#\'}"; s="${s%\'}" ;;
+    esac
+    printf '%s' "$s"
+}
+
+field() { unquote "$(fm_field "$1" "$2")"; }
+
+# The body of a `## <name>` section, with blank lines trimmed off both ends.
+# Any heading ends it, including a deeper one: sections here are a handful
+# of sentences by design, and the alternative -- running on until the next
+# heading of the same level -- would print a whole subsection into a digest
+# that has to stay readable in chat.
+section_of() {
+    awk -v want="$2" '
+        {
+            line = $0
+            sub(/\r$/, "", line)
+        }
+        line ~ /^#+[ \t]/ {
+            h = line
+            sub(/^#+[ \t]*/, "", h)
+            sub(/[ \t]*$/, "", h)
+            insec = (h == want)
+            next
+        }
+        insec { lines[++n] = line }
+        END {
+            first = 0; last = 0
+            for (i = 1; i <= n; i++)
+                if (lines[i] ~ /[^ \t]/) { if (!first) first = i; last = i }
+            if (first)
+                for (i = first; i <= last; i++) print lines[i]
+        }
+    ' "$1"
+}
+
+# One line per wave: number, name, exit-criteria count, depends_on. Tab
+# separated, because a wave name may hold anything else.
+#
+# The criteria count is the part with a trap in it. Exit criteria are list
+# items under `exit_criteria:`, and the constitution's own prose carries
+# another bulleted list -- the five EARS patterns -- whose items begin
+# exactly the same way. What separates them is indentation: a criterion is
+# indented deeper than the `exit_criteria:` key it belongs to, and the prose
+# bullets are not indented at all. A blank line does not end the list (YAML
+# allows one mid-list); any other line that is not a deeper bullet does,
+# which is what stops the count at the closing ``` of the fence.
+#
+# [ \t] rather than [[:space:]] throughout: this has to run under the awk
+# that ships with macOS as well as gawk, and the character class is the one
+# thing not every awk here agrees on.
+waves_of() {
+    awk '
+        {
+            line = $0
+            sub(/\r$/, "", line)
+            body = line
+            sub(/^[ \t]*/, "", body)
+            indent = length(line) - length(body)
+        }
+        body ~ /^-[ \t]*wave:/ {
+            n++
+            v = body
+            sub(/^-[ \t]*wave:[ \t]*/, "", v)
+            sub(/[ \t]*$/, "", v)
+            num[n] = v; name[n] = ""; deps[n] = ""; crit[n] = 0
+            incrit = 0
+            next
+        }
+        n == 0 { next }
+        body ~ /^name:/ {
+            v = body; sub(/^name:[ \t]*/, "", v); sub(/[ \t]*$/, "", v)
+            name[n] = v; incrit = 0; next
+        }
+        body ~ /^depends_on:/ {
+            v = body; sub(/^depends_on:[ \t]*/, "", v); sub(/[ \t]*$/, "", v)
+            deps[n] = v; incrit = 0; next
+        }
+        body ~ /^exit_criteria:/ { incrit = 1; critindent = indent; next }
+        incrit {
+            if (body == "") next
+            if (body ~ /^-[ \t]/ && indent > critindent) { crit[n]++; next }
+            incrit = 0
+        }
+        END {
+            for (i = 1; i <= n; i++)
+                printf "%s\t%s\t%s\t%s\n", num[i], name[i], crit[i], deps[i]
+        }
+    ' "$1"
+}
+
+# Number and name of every wave whose status column says blocked. The header
+# and the |---|---| rule are skipped by requiring the first cell to be a
+# number, which neither of them is.
+blocked_waves_of() {
+    awk -F'|' '
+        {
+            line = $0
+            sub(/\r$/, "", line)
+        }
+        line ~ /^[ \t]*\|/ {
+            num = $2; name = $3; status = $4
+            gsub(/^[ \t]+/, "", num);    gsub(/[ \t]+$/, "", num)
+            gsub(/^[ \t]+/, "", name);   gsub(/[ \t]+$/, "", name)
+            gsub(/^[ \t]+/, "", status); gsub(/[ \t]+$/, "", status)
+            if (num ~ /^[0-9]+$/ && status == "blocked")
+                printf "%s\t%s\n", num, name
+        }
+    ' "$1"
+}
+
+# Prints $1 indented, or $2 indented if there is nothing. The fallback is
+# not decoration: a constitution with no goal, or with nothing declared
+# non-negotiable, is a fact the person about to ratify it needs, and an
+# omitted section would read as a section that was not worth printing.
+print_block() {
+    if [ -z "$1" ]; then
+        printf '  %s\n' "$2"
+        return
+    fi
+    printf '%s\n' "$1" | while IFS= read -r l; do printf '  %s\n' "$l"; done
+}
+
+or_unset() {
+    if [ -z "$1" ]; then printf '(not set)'; else printf '%s' "$1"; fi
+}
+
+criteria_phrase() {
+    case "$1" in
+        1) printf '1 exit criterion' ;;
+        *) printf '%s exit criteria' "$1" ;;
+    esac
+}
+
+if [ "$object" = "constitution" ]; then
+    if [ ! -f "$constitution" ]; then
+        echo "baton-digest: $constitution not found: there is no constitution here to read" >&2
+        exit 3
+    fi
+    fm="$(frontmatter_of "$constitution")"
+    if [ -z "$fm" ]; then
+        echo "baton-digest: $constitution has no closed frontmatter block: verify_cmd, placeholder_patterns and workspace all live there, and a digest missing them would look complete" >&2
+        exit 3
+    fi
+
+    # A field that is absent and a field written empty are the same empty
+    # string here -- fm_field cannot tell them apart, and baton-gate's
+    # header says why it does not try. What matters in a digest is that
+    # neither prints as a bare label with nothing after it, which reads as a
+    # value the reader's eye skipped rather than one the file does not
+    # carry. The cold-start fixtures predate `workspace` and are exactly
+    # that case.
+    printf 'Constitution: %s\n' "$constitution"
+    printf 'Status: %s\n' "$(or_unset "$(field "$fm" status)")"
+    printf '\n'
+
+    printf 'Goal:\n'
+    print_block "$(section_of "$constitution" Goal)" "(the file has no ## Goal section)"
+    printf '\n'
+
+    printf 'Non-negotiables:\n'
+    print_block "$(section_of "$constitution" Non-negotiables)" "(the file states none)"
+    printf '\n'
+
+    printf 'Waves:\n'
+    wave_lines="$(waves_of "$constitution")"
+    if [ -z "$wave_lines" ]; then
+        printf '  %s\n' "(the file declares no waves)"
+    else
+        while IFS="$(printf '\t')" read -r wnum wname wcrit wdeps; do
+            [ -n "$wnum$wname$wcrit" ] || continue
+            printf '  wave %s — %s (%s)\n' "$wnum" "${wname:-(unnamed)}" "$(criteria_phrase "$wcrit")"
+        done <<EOF
+$wave_lines
+EOF
+    fi
+    printf '\n'
+
+    # Last, each alone on its line and each verbatim. These three are what a
+    # substitution would touch, and a reader skimming to the bottom of a
+    # chat message finds them in the same place every time.
+    printf 'verify_cmd: %s\n' "$(or_unset "$(field "$fm" verify_cmd)")"
+    printf 'placeholder_patterns: %s\n' "$(or_unset "$(field "$fm" placeholder_patterns)")"
+    printf 'workspace: %s\n' "$(or_unset "$(field "$fm" workspace)")"
+    exit 0
+fi
+
+# --- stop ---
+
+if [ ! -f "$state" ]; then
+    echo "baton-digest: $state not found: there is no run here to be stopped" >&2
+    exit 3
+fi
+state_fm="$(frontmatter_of "$state")"
+if [ -z "$state_fm" ]; then
+    echo "baton-digest: $state has no closed frontmatter block: suspect and needs_human live there, and an unreadable one must not print as a run that is waiting for nobody" >&2
+    exit 3
+fi
+
+# Read in the main shell, not inside a command substitution: an exit from a
+# subshell is not an exit from this script, and the refusal below has to be
+# one.
+check_flag() {
+    case "$2" in
+        true|false) ;;
+        *)
+            echo "baton-digest: $1 in $state is '$2', which is neither true nor false: a stop flag nobody can read must not be reported as a stop flag that is down" >&2
+            exit 3
+            ;;
+    esac
+}
+
+suspect="$(field "$state_fm" suspect)"
+needs_human="$(field "$state_fm" needs_human)"
+check_flag suspect "$suspect"
+check_flag needs_human "$needs_human"
+
+raised=""
+if [ "$suspect" = "true" ]; then raised="suspect"; fi
+if [ "$needs_human" = "true" ]; then raised="${raised:+$raised, }needs_human"; fi
+
+printf 'Stop flags: %s\n' "$state"
+printf '\n'
+
+if [ -n "$raised" ]; then
+    printf 'Raised: %s\n' "$raised"
+    # Only while suspect is up. The line is the evidence for that flag and
+    # nothing else, and printing it beside a lone needs_human would invite
+    # lowering a flag nobody asked about.
+    if [ "$suspect" = "true" ]; then
+        suspect_line="$(sed -n 's/^[[:space:]]*-\{0,1\}[[:space:]]*\(\*\*\)\{0,1\}Suspect:\(\*\*\)\{0,1\}[[:space:]]*//p' "$state" | head -1 | sed 's/[[:space:]]*$//' || true)"
+        printf 'Suspect: %s\n' "${suspect_line:-(state.md records no Suspect line)}"
+    fi
+else
+    printf 'Nothing is raised (suspect: false, needs_human: false). The run is waiting for nobody.\n'
+fi
+
+blocked="$(blocked_waves_of "$state")"
+if [ -n "$blocked" ]; then
+    if [ -f "$constitution" ]; then
+        constitution_waves="$(waves_of "$constitution")"
+    else
+        constitution_waves=""
+    fi
+    while IFS="$(printf '\t')" read -r bnum bname; do
+        [ -n "$bnum$bname" ] || continue
+        # Three different answers, and collapsing any two of them would hide
+        # something worth seeing. No constitution: nothing to read the
+        # dependency from. A constitution that declares no such wave: the two
+        # files disagree about what the run consists of, which is the
+        # divergence baton exists to surface, not a dependency list to print.
+        # A wave declared with depends_on: []: it waits on nothing, and the
+        # blockage is somewhere the files do not say.
+        wave_row=""
+        if [ -f "$constitution" ]; then
+            wave_row="$(printf '%s\n' "$constitution_waves" | awk -F'\t' -v w="$bnum" '$1 == w { print; exit }')"
+        fi
+        if [ ! -f "$constitution" ]; then
+            deps="unknown, there is no constitution here to read it from"
+        elif [ -z "$wave_row" ]; then
+            deps="unknown, the constitution declares no wave $bnum"
+        else
+            deps="$(printf '%s\n' "$wave_row" | awk -F'\t' '{ print $4 }')"
+            deps="${deps#\[}"
+            deps="${deps%\]}"
+            deps="$(printf '%s' "$deps" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+            [ -n "$deps" ] || deps="none declared in the constitution"
+        fi
+        printf 'Blocked: wave %s — %s (depends_on: %s)\n' "$bnum" "${bname:-(unnamed)}" "$deps"
+    done <<EOF
+$blocked
+EOF
+fi
+
+# The rule the whole design turns on: nowhere the run waits on a human says
+# so without naming what lifts it. Printed only when something is up --
+# offering to lower a flag nobody raised is an invitation, not a way out.
+if [ -n "$raised" ]; then
+    printf '\n'
+    printf 'Only a human lowers a stop flag: /baton:clear\n'
+fi
+exit 0
