@@ -238,10 +238,14 @@ assert_contains "$sparse" "(the file states none)" \
 # other or as a wave that names a document.
 #
 # The wave above it names one, and that is the whole point of the fixture
-# having two: a reader parsing per-wave values carries the last one it saw
-# unless something clears it, so a wave with no key of its own is the wave
-# that quietly borrows its neighbour's document. Nothing on the page would
-# look wrong.
+# having two. A value read per wave is cleared once per wave, and a clearing
+# that never happens is invisible until there is something left over to
+# survive it: a reader that carries the last value it saw hands a wave with
+# no key of its own its neighbour's document, and nothing on the page looks
+# wrong. **A per-wave reset can only be proved by a fixture with a
+# neighbour.** One wave has nothing to borrow from, so the assertion passes
+# over the defect and reads afterwards as though it had covered it -- which
+# is how this fixture was written the first time.
 cat > docs/baton/constitution.md <<'EOF'
 ---
 schema: baton/constitution/v1
@@ -277,6 +281,96 @@ assert_not_contains "$(spec_line_under "$no_spec" "wave 2 — cutover")" "2026-0
     "and does not borrow the document of the wave above it, which would read as a wave that named one"
 assert_not_contains "$no_spec" "spec: —" \
     "nor is it reported as the em dash, which is a value a human wrote rather than a key nobody did"
+
+# Fields the file leaves empty, in waves that have neighbours. What is under
+# test here is not the parser but the handover between it and the printed
+# line: the values cross as one line per wave, and a field that is empty in
+# the middle of one must stay empty rather than letting every field after it
+# move up a place. When they moved, a wave printed its neighbour's criteria
+# count and its own document as `(not set)` -- silently, in the shape of a
+# wave that was read correctly, to the one reader who was told they need not
+# open the file.
+#
+# Each of them needs a neighbour to be provable at all: with a single wave a
+# shifted field has nowhere wrong to land, and the fixture goes green over
+# the defect. That is the same lesson the missing-spec fixture above had to
+# learn, and it is why this one has three waves rather than one.
+#
+# Three fields are checked because a shift is a property of the separator and
+# not of any one field: the wave number, the name, and depends_on. The
+# criteria count cannot be empty -- it starts at 0 -- and spec is last, with
+# nothing behind it to move up.
+cat > docs/baton/constitution.md <<'EOF'
+---
+schema: baton/constitution/v1
+status: draft
+verify_cmd: "make check"
+---
+
+## Goal
+
+Leave a field of every kind empty, and see what the digest says it read.
+
+## Waves
+
+```yaml
+- wave: 1
+  name:
+  depends_on: []
+  spec: docs/superpowers/specs/2026-08-14-unnamed-wave.md
+  exit_criteria:
+    - The system shall be judged against a wave nobody named
+    - When a name is missing, the system shall still count two criteria
+
+- wave: 2
+  name: no-dependencies
+  depends_on:
+  spec: docs/superpowers/specs/2026-08-14-empty-depends.md
+  exit_criteria:
+    - The system shall carry a depends_on nobody filled in
+
+- wave:
+  name: no-number
+  depends_on: [2]
+  spec: docs/superpowers/specs/2026-08-14-numberless.md
+  exit_criteria:
+    - The system shall be a wave whose number nobody wrote
+```
+EOF
+empties="$("$DIGEST" constitution)"
+assert_contains "$empties" "wave 1 — (unnamed) (2 exit criteria)" \
+    "a wave with an empty name is unnamed and still counts its own criteria, rather than printing the next field along"
+assert_equals "$(spec_line_under "$empties" "wave 1 — (unnamed)")" \
+    "    spec: docs/superpowers/specs/2026-08-14-unnamed-wave.md" \
+    "and still names the document it builds to, which a shifted row would report as (not set)"
+assert_equals "$(spec_line_under "$empties" "wave 2 — no-dependencies")" \
+    "    spec: docs/superpowers/specs/2026-08-14-empty-depends.md" \
+    "an empty depends_on does not move the spec of the wave carrying it"
+assert_contains "$empties" "— no-number (1 exit criterion)" \
+    "a wave whose number is missing keeps its name where the name goes"
+assert_equals "$(spec_line_under "$empties" "— no-number")" \
+    "    spec: docs/superpowers/specs/2026-08-14-numberless.md" \
+    "and its document too -- an empty first field shifts a row as surely as an empty middle one"
+
+# The other reader of those rows, and the one that was never wrong: the stop
+# digest picks the depends_on column out with awk's own -F, and an explicit
+# -F does not collapse a run of separators the way `IFS=<tab> read` does. So
+# these two are pinned rather than proved -- they were green against the
+# version that shifted the constitution digest's rows, and they say so here
+# so that nobody counts them as evidence the separator is right.
+#
+# What they are worth is the next change rather than this one. The dependency
+# a blocked wave is reported as waiting on comes from column 4 of a row whose
+# column 5 is a document, and those two are one place apart: a lookup rewritten
+# to read the row in the shell, or a sixth field inserted rather than appended,
+# lands the spec in the dependency line, where it would read as a wave waiting
+# on a file.
+write_state false false "none" "blocked"
+empties_stop="$("$DIGEST" stop)"
+assert_contains "$empties_stop" "wave 2 — refresh (depends_on: none declared in the constitution)" \
+    "an empty depends_on is read as empty by the stop digest as well"
+assert_not_contains "$empties_stop" "2026-08-14-empty-depends" \
+    "and a wave's spec is never what its dependency line reports"
 
 # The runbook scenario this whole script feeds: a substituted verify_cmd has
 # to be noticeable in the digest. Both directions are asserted, because

@@ -72,6 +72,25 @@ state="docs/baton/state.md"
 
 # --- reading, borrowed wholesale from baton-gate ---
 
+# The separator inside the lines waves_of and blocked_waves_of emit. A tab is
+# the obvious choice, and both functions were written with one; this is why
+# neither has one now.
+#
+# Tab is IFS *whitespace*. `IFS=<tab> read -r a b c` collapses a run of tabs
+# into one delimiter and drops leading ones, so a wave whose `name:` is empty
+# hands every later field to the wrong variable: ${wname:-(unnamed)} never
+# fires because wname holds the criteria count, the count prints the
+# depends_on value, and a wave that names a document prints `spec: (not
+# set)`. Nothing about that looks like a failure -- the digest prints a wave,
+# in the shape of a wave, describing a different one, to the one reader who
+# was promised they need not open the file.
+#
+# A separator outside the whitespace class splits an empty field as an empty
+# field wherever it sits -- leading, trailing, or between two others -- and
+# goes on doing so for a sixth field. That last part is the property worth
+# buying: this defect arrived with the fifth.
+field_sep="$(printf '\037')"
+
 # Lines between the opening and closing --- only, emitted only if the block
 # was closed: an unterminated block must not promote the prose after it to
 # frontmatter. The carriage return comes off every line first, because the
@@ -141,9 +160,10 @@ section_of() {
     ' "$1"
 }
 
-# One line per wave: number, name, exit-criteria count, depends_on, spec. Tab
-# separated, because a wave name may hold anything else. spec is last so that
-# the stop digest, which wants only $4, keeps reading the same column.
+# One line per wave: number, name, exit-criteria count, depends_on, spec,
+# separated by field_sep, because a wave name may hold anything else. spec is
+# last so that the stop digest, which wants only $4, keeps reading the same
+# column.
 #
 # spec is taken as the file writes it -- unquoted values are not unwrapped
 # here the way the frontmatter's are, because a wave's name and depends_on
@@ -163,7 +183,7 @@ section_of() {
 # that ships with macOS as well as gawk, and the character class is the one
 # thing not every awk here agrees on.
 waves_of() {
-    awk '
+    awk -v OFS="$field_sep" '
         {
             line = $0
             sub(/\r$/, "", line)
@@ -201,7 +221,7 @@ waves_of() {
         }
         END {
             for (i = 1; i <= n; i++)
-                printf "%s\t%s\t%s\t%s\t%s\n", num[i], name[i], crit[i], deps[i], spec[i]
+                print num[i], name[i], crit[i], deps[i], spec[i]
         }
     ' "$1"
 }
@@ -210,7 +230,7 @@ waves_of() {
 # and the |---|---| rule are skipped by requiring the first cell to be a
 # number, which neither of them is.
 blocked_waves_of() {
-    awk -F'|' '
+    awk -F'|' -v OFS="$field_sep" '
         {
             line = $0
             sub(/\r$/, "", line)
@@ -221,7 +241,7 @@ blocked_waves_of() {
             gsub(/^[ \t]+/, "", name);   gsub(/[ \t]+$/, "", name)
             gsub(/^[ \t]+/, "", status); gsub(/[ \t]+$/, "", status)
             if (num ~ /^[0-9]+$/ && status == "blocked")
-                printf "%s\t%s\n", num, name
+                print num, name
         }
     ' "$1"
 }
@@ -302,7 +322,7 @@ if [ "$object" = "constitution" ]; then
     if [ -z "$wave_lines" ]; then
         printf '  %s\n' "(the file declares no waves)"
     else
-        while IFS="$(printf '\t')" read -r wnum wname wcrit wdeps wspec; do
+        while IFS="$field_sep" read -r wnum wname wcrit wdeps wspec; do
             [ -n "$wnum$wname$wcrit" ] || continue
             printf '  wave %s — %s (%s)\n' "$wnum" "${wname:-(unnamed)}" "$(criteria_phrase "$wcrit")"
             # Under its wave and on a line of its own, so that the value can
@@ -383,7 +403,7 @@ if [ -n "$blocked" ]; then
     else
         constitution_waves=""
     fi
-    while IFS="$(printf '\t')" read -r bnum bname; do
+    while IFS="$field_sep" read -r bnum bname; do
         [ -n "$bnum$bname" ] || continue
         # Three different answers, and collapsing any two of them would hide
         # something worth seeing. No constitution: nothing to read the
@@ -394,14 +414,14 @@ if [ -n "$blocked" ]; then
         # blockage is somewhere the files do not say.
         wave_row=""
         if [ -f "$constitution" ]; then
-            wave_row="$(printf '%s\n' "$constitution_waves" | awk -F'\t' -v w="$bnum" '$1 == w { print; exit }')"
+            wave_row="$(printf '%s\n' "$constitution_waves" | awk -F"$field_sep" -v w="$bnum" '$1 == w { print; exit }')"
         fi
         if [ ! -f "$constitution" ]; then
             deps="unknown, there is no constitution here to read it from"
         elif [ -z "$wave_row" ]; then
             deps="unknown, the constitution declares no wave $bnum"
         else
-            deps="$(printf '%s\n' "$wave_row" | awk -F'\t' '{ print $4 }')"
+            deps="$(printf '%s\n' "$wave_row" | awk -F"$field_sep" '{ print $4 }')"
             deps="${deps#\[}"
             deps="${deps%\]}"
             deps="$(printf '%s' "$deps" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
