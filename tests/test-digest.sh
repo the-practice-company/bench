@@ -12,10 +12,13 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DIGEST="$REPO_ROOT/plugins/baton/scripts/baton-digest"
 . "$SCRIPT_DIR/helpers.sh"
 
-# The verify_cmd is a parameter because the one scenario this script exists
-# to serve is a substituted one: the same fixture written twice, with only
-# that value differing, is the only way to show the digest tracks the file
-# instead of reciting something it was told once.
+# The verify_cmd is a parameter, and wave 1's spec is one for the same
+# reason: the one scenario this script exists to serve is a substituted one,
+# and the same fixture written twice, with only that value differing, is the
+# only way to show the digest tracks the file instead of reciting something
+# it was told once. Both values are the agent's to compose at /baton:init and
+# nobody's to change afterwards, so both are values a swap has to be caught
+# in.
 #
 # Two shapes below are deliberate and load-bearing, not decoration. The
 # waves sit inside a ```yaml fence, as the real template writes them; and
@@ -23,6 +26,11 @@ DIGEST="$REPO_ROOT/plugins/baton/scripts/baton-digest"
 # exactly like exit criteria do. A counter that stops at neither the fence
 # nor the indent reports wave 2 with four criteria instead of one, and the
 # assertion on that count below is what catches it.
+#
+# Wave 2's spec is the em dash the template gives a wave nobody has specified
+# yet -- the value the autopilot refuses to take a wave on. It sits beside a
+# wave that names a real document so that the two are digested in one run and
+# can be told apart there.
 write_constitution() {
     mkdir -p docs/baton
     cat > docs/baton/constitution.md <<EOF
@@ -52,6 +60,7 @@ No network calls in the unit suite.
 - wave: 1
   name: exchange
   depends_on: []
+  spec: ${2-docs/superpowers/specs/2026-08-14-token-exchange.md}
   exit_criteria:
     - The system shall exchange a code for a token
     - When the code has expired, the system shall refuse it
@@ -59,6 +68,7 @@ No network calls in the unit suite.
 - wave: 2
   name: refresh
   depends_on: [1]
+  spec: —
   exit_criteria:
     - When a token is refreshed, the system shall preserve its subject
 \`\`\`
@@ -105,6 +115,17 @@ autopilot: off
 - **Suspect:** $3
 - **Open questions:** none
 EOF
+}
+
+# The line the digest prints directly under a wave's header line. Which wave
+# a spec belongs to is half of what the digest has to get right, and no
+# needle can pin it: assert_contains matches one line at a time, so a digest
+# that printed wave 1's document under wave 2 would satisfy every needle in
+# this file. awk rather than `grep -A1`, because a grep that finds nothing
+# exits 1 and this script runs under `set -e`, where that is not a red
+# assertion but a suite that stops mid-way looking green.
+spec_line_under() {
+    printf '%s\n' "$1" | awk -v want="$2" 'index($0, want) { getline; print; exit }'
 }
 
 make_fixture_repo
@@ -158,6 +179,25 @@ assert_contains "$out" "wave 1 — exchange (2 exit criteria)" \
 assert_contains "$out" "wave 2 — refresh (1 exit criterion)" \
     "wave 2 counts only its own criterion -- not the EARS bullets in the prose after the fence"
 
+# The document each wave builds to, whole and under its own wave. Equality
+# rather than containment: a spec cut short at the directory, folded into a
+# sentence about the wave, or printed under the wrong one is exactly what
+# ratifying off the digest has to catch, and every one of those still
+# contains the path's first half.
+assert_equals "$(spec_line_under "$out" "wave 1 — exchange")" \
+    "    spec: docs/superpowers/specs/2026-08-14-token-exchange.md" \
+    "wave 1 names the document it builds to, in full and under that wave"
+
+# The em dash is a value, not a blank. The autopilot will not take a wave
+# holding it, so a human ratifying the run is ratifying a wave that cannot
+# start, and a digest that let that pass for a document -- or for nothing at
+# all -- has hidden the one thing about that wave worth knowing.
+assert_equals "$(spec_line_under "$out" "wave 2 — refresh")" \
+    "    spec: — (nobody has named it yet, and the autopilot will not take a wave with none)" \
+    "a wave whose spec is the em dash says so, and says what it costs"
+assert_not_contains "$(spec_line_under "$out" "wave 2 — refresh")" "docs/superpowers/specs" \
+    "and does not inherit the document the wave before it names"
+
 assert_contains "$out" "verify_cmd: npm test -- --runInBand --reporters=summary" \
     "verify_cmd is printed whole, to its last flag"
 assert_contains "$out" "placeholder_patterns: TODO|FIXME|NotImplementedYet" \
@@ -191,6 +231,53 @@ assert_contains "$sparse" "(the file declares no waves)" \
 assert_contains "$sparse" "(the file states none)" \
     "a missing section is reported as missing, not left out of the digest"
 
+# A wave carrying no `spec:` key at all, which is what every constitution
+# written before the field moved out of state.md looks like. Three states and
+# not two: this one is a file that never knew about the field, the em dash
+# above is a run saying nobody has decided yet, and neither may print as the
+# other or as a wave that names a document.
+#
+# The wave above it names one, and that is the whole point of the fixture
+# having two: a reader parsing per-wave values carries the last one it saw
+# unless something clears it, so a wave with no key of its own is the wave
+# that quietly borrows its neighbour's document. Nothing on the page would
+# look wrong.
+cat > docs/baton/constitution.md <<'EOF'
+---
+schema: baton/constitution/v1
+status: draft
+verify_cmd: "make check"
+---
+
+## Goal
+
+Move every row across, and leave the old table where it stands.
+
+## Waves
+
+```yaml
+- wave: 1
+  name: migrate
+  depends_on: []
+  spec: docs/superpowers/specs/2026-08-14-row-migration.md
+  exit_criteria:
+    - The system shall copy every row to the new table
+
+- wave: 2
+  name: cutover
+  depends_on: [1]
+  exit_criteria:
+    - When every row is copied, the system shall switch reads to the new table
+```
+EOF
+no_spec="$("$DIGEST" constitution)"
+assert_equals "$(spec_line_under "$no_spec" "wave 2 — cutover")" "    spec: (not set)" \
+    "a wave that declares no spec at all says so in the words this digest uses for every field it did not find"
+assert_not_contains "$(spec_line_under "$no_spec" "wave 2 — cutover")" "2026-08-14-row-migration" \
+    "and does not borrow the document of the wave above it, which would read as a wave that named one"
+assert_not_contains "$no_spec" "spec: —" \
+    "nor is it reported as the em dash, which is a value a human wrote rather than a key nobody did"
+
 # The runbook scenario this whole script feeds: a substituted verify_cmd has
 # to be noticeable in the digest. Both directions are asserted, because
 # "contains the new one" alone is also true of a digest that prints every
@@ -201,6 +288,19 @@ assert_contains "$swapped" "verify_cmd: true # the suite, honest" \
     "a substituted verify_cmd is what the digest prints"
 assert_not_contains "$swapped" "npm test -- --runInBand" \
     "and the value it replaced is gone -- the digest reads the file each time"
+
+# The same in the other value the agent composes and nobody may change
+# afterwards. A wave quietly repointed at a document that asks less of it
+# gets a plan, work and a spec-compliance review that all agree with each
+# other and with nothing the human meant, and no gate has anything to say
+# about it -- the digest is the only place that value is ever checked.
+write_constitution "npm test" "docs/superpowers/specs/2026-08-14-a-shorter-brief.md"
+respec="$("$DIGEST" constitution)"
+assert_equals "$(spec_line_under "$respec" "wave 1 — exchange")" \
+    "    spec: docs/superpowers/specs/2026-08-14-a-shorter-brief.md" \
+    "a substituted spec is what the digest prints"
+assert_not_contains "$respec" "2026-08-14-token-exchange" \
+    "and the document it replaced is gone -- this value is read from the file too"
 
 # Invoked from a subdirectory, the paths still resolve from the repository
 # root. Without this the digest reads docs/baton/constitution.md relative to

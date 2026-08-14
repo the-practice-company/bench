@@ -842,7 +842,8 @@ about both.
    transcript carries a call to `baton-digest` under
    `${CLAUDE_PLUGIN_ROOT}/scripts/`, and the reply posts what it printed —
    the labels `Constitution:`, `Status:`, `Goal:`, `Non-negotiables:` and
-   `Waves:`, then `verify_cmd:`, `placeholder_patterns:` and `workspace:`
+   `Waves:` — each wave there carrying a `spec:` line of its own beneath
+   it — then `verify_cmd:`, `placeholder_patterns:` and `workspace:`
    each alone on a line at the end, in that order. A reply that instead reads
    "the constitution is still in draft: ship authentication, orchestrator
    mode, never change the token format, two waves" is the failure, and the
@@ -850,10 +851,20 @@ about both.
    `workspace: (not set)` is the digest reporting a field this fixture's
    constitution predates — not a defect in either.
 
-2. **`verify_cmd` was in front of you, verbatim.** The line reads
-   `verify_cmd: true`: the value itself, alone. Not "a verify command is
-   configured", not the field folded into a sentence about the constitution
-   being in order.
+2. **`verify_cmd` was in front of you, verbatim — and so was every wave's
+   `spec`.** The line reads `verify_cmd: true`: the value itself, alone. Not
+   "a verify command is configured", not the field folded into a sentence
+   about the constitution being in order. The same for the document each wave
+   builds to: under both waves the digest reads
+   `spec: docs/superpowers/specs/2026-08-03-fixture-auth.md`, the path whole,
+   so you can say what each wave will be judged against without opening
+   anything. `spec` is held to `verify_cmd`'s standard because it is in
+   `verify_cmd`'s position: the agent composes it out of the `/baton:init`
+   conversation, `baton-write` refuses the constitution from ratification on,
+   and this digest is the only place a human ever checks what it composed. A
+   wave reading `spec: —` is the digest saying nobody has named one, and no
+   such wave starts — worth knowing before you sign, though this fixture has
+   none.
 
 3. **The digest was enough to catch the substitution.** Before answering, you
    can say what the run would be gated on and why it is wrong — `true` exits

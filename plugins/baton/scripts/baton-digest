@@ -11,7 +11,11 @@
 # the party being judged writing the account. verify_cmd in particular is
 # printed verbatim and alone on its line, because the single thing this
 # digest must make noticeable is that value having been swapped for
-# something that passes.
+# something that passes. Each wave's spec is printed the same way and for the
+# same reason: the agent composes it at /baton:init out of the conversation,
+# baton-write refuses the constitution's path from ratification on, and this
+# digest is the only place the human sees which document each wave will be
+# judged against before it becomes one of the rules.
 #
 # It also judges nothing about what it reads. A draft constitution, an empty
 # verify_cmd, a value whose opening quote is never closed -- each prints as
@@ -137,8 +141,14 @@ section_of() {
     ' "$1"
 }
 
-# One line per wave: number, name, exit-criteria count, depends_on. Tab
-# separated, because a wave name may hold anything else.
+# One line per wave: number, name, exit-criteria count, depends_on, spec. Tab
+# separated, because a wave name may hold anything else. spec is last so that
+# the stop digest, which wants only $4, keeps reading the same column.
+#
+# spec is taken as the file writes it -- unquoted values are not unwrapped
+# here the way the frontmatter's are, because a wave's name and depends_on
+# are not either, and a path that arrived wearing quotes is a path the reader
+# should see wearing them.
 #
 # The criteria count is the part with a trap in it. Exit criteria are list
 # items under `exit_criteria:`, and the constitution's own prose carries
@@ -166,7 +176,7 @@ waves_of() {
             v = body
             sub(/^-[ \t]*wave:[ \t]*/, "", v)
             sub(/[ \t]*$/, "", v)
-            num[n] = v; name[n] = ""; deps[n] = ""; crit[n] = 0
+            num[n] = v; name[n] = ""; deps[n] = ""; spec[n] = ""; crit[n] = 0
             incrit = 0
             next
         }
@@ -179,6 +189,10 @@ waves_of() {
             v = body; sub(/^depends_on:[ \t]*/, "", v); sub(/[ \t]*$/, "", v)
             deps[n] = v; incrit = 0; next
         }
+        body ~ /^spec:/ {
+            v = body; sub(/^spec:[ \t]*/, "", v); sub(/[ \t]*$/, "", v)
+            spec[n] = v; incrit = 0; next
+        }
         body ~ /^exit_criteria:/ { incrit = 1; critindent = indent; next }
         incrit {
             if (body == "") next
@@ -187,7 +201,7 @@ waves_of() {
         }
         END {
             for (i = 1; i <= n; i++)
-                printf "%s\t%s\t%s\t%s\n", num[i], name[i], crit[i], deps[i]
+                printf "%s\t%s\t%s\t%s\t%s\n", num[i], name[i], crit[i], deps[i], spec[i]
         }
     ' "$1"
 }
@@ -235,6 +249,24 @@ criteria_phrase() {
     esac
 }
 
+# A wave's spec has three answers and not two, and each is a different thing
+# to know at ratification. A path is printed alone and whole, the way
+# verify_cmd is: the substitution to catch here is a wave pointed at a
+# document that asks less of it than the one the human meant. The em dash is
+# the template's marker for a wave nobody has specified yet -- it is a value
+# the file carries rather than a gap, and printed bare it reads as one, so it
+# says what it costs: no such wave starts. And a wave with no spec: key at
+# all borrows or_unset's words, because that is the same fact about a
+# different line and a reader should not have to learn two ways to be told
+# it.
+spec_phrase() {
+    case "$1" in
+        "") printf '(not set)' ;;
+        "—") printf '— (nobody has named it yet, and the autopilot will not take a wave with none)' ;;
+        *) printf '%s' "$1" ;;
+    esac
+}
+
 if [ "$object" = "constitution" ]; then
     if [ ! -f "$constitution" ]; then
         echo "baton-digest: $constitution not found: there is no constitution here to read" >&2
@@ -270,9 +302,15 @@ if [ "$object" = "constitution" ]; then
     if [ -z "$wave_lines" ]; then
         printf '  %s\n' "(the file declares no waves)"
     else
-        while IFS="$(printf '\t')" read -r wnum wname wcrit wdeps; do
+        while IFS="$(printf '\t')" read -r wnum wname wcrit wdeps wspec; do
             [ -n "$wnum$wname$wcrit" ] || continue
             printf '  wave %s — %s (%s)\n' "$wnum" "${wname:-(unnamed)}" "$(criteria_phrase "$wcrit")"
+            # Under its wave and on a line of its own, so that the value can
+            # be read against the wave it belongs to and against nothing
+            # else. Folded onto the header line it would be one more clause
+            # in a sentence about the wave, which is the shape a wrong value
+            # survives.
+            printf '    spec: %s\n' "$(spec_phrase "$wspec")"
         done <<EOF
 $wave_lines
 EOF
