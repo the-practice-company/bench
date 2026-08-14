@@ -328,6 +328,50 @@ confirms it before the wave moves to `done`. That confirmation lives in the
 conversation and in the commit, not in a column — such a wave's gate stays
 `—`.
 
+## Upgrading a run started on 0.1.0
+
+`spec` — the document each wave builds to — moved into the constitution in
+0.2.0. A constitution written under 0.1.0 carries no `spec:` key on any wave,
+and an absent key is refused exactly as `—` is: absent is not permission. So an
+existing run does not simply carry on. `/baton:auto` drops every wave from
+scope and stops, because a handover with nothing in scope is not a handover;
+a run already under a grant finishes the same way from the other side, naming
+every wave it skipped for want of a spec, raising `needs_human: true` and
+writing `autopilot: off`.
+
+What it needs is one hand edit. Open `docs/baton/constitution.md` and give each
+wave a `spec:` line, beside its `exit_criteria`, naming the document that wave
+builds to — the umbrella spec, one section of it, or a spec of its own:
+
+```yaml
+- wave: 2
+  name: rating
+  depends_on: [1]
+  spec: docs/superpowers/specs/2026-08-13-usage-billing-design.md
+  exit_criteria:
+    - The system shall turn a period of usage events into priced invoice
+      lines.
+```
+
+Then `/baton:clear` if the run stopped with `needs_human` raised, and
+`/baton:auto` to hand it over again — the grant went off when the run stopped,
+and only you can put it back.
+
+By hand, and by you, because the constitution is yours: `baton-write` refuses
+that path unconditionally, and `/baton:amend`, the command that would edit a
+ratified constitution for you, is not built. So this is the one moment the
+plugin asks you to open one of its files — and the whole thesis of the work
+that moved `spec` here is that it should not have to. `/baton:amend` is where
+this goes when it exists.
+
+**`state.md` needs nothing.** Its wave table lost the `spec` column in the same
+change — eight columns as 0.1.0 shipped it, six now — and that is safe because
+the one cell any code reads by position is `status`, which is the third cell in
+both shapes. An old `gate` cell reading `pass` is likewise nothing to fix: the
+legend no longer lists that value, but nothing has ever read the column, so it
+is a stale word in a table rather than a claim anything acts on. Leave the file
+alone; the next checkpoint writes it in the current shape.
+
 ## Requirements
 
 `git`, `bash`, and the standard Unix text tools that ship with any Linux or
