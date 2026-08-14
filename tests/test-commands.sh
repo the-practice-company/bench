@@ -9,6 +9,35 @@ for name in init checkpoint status auto continue; do
     assert_file_exists "$CMD/$name.md" "command $name exists"
 done
 
+# A ceiling on commands/ as a whole, not a per-file cap for each command the
+# way test-skills.sh caps each skill. A command file is loaded only when it
+# is invoked, not resident across every session the way a skill is, so
+# per-file caps here would be more machinery than the risk warrants.
+#
+# The risk is not commands/ growing on its own merits -- it is commands/
+# becoming the overflow bucket for skills/. The branch that cut the skills
+# down moved evicted prose to plugins/baton/README.md, which genuinely is
+# not loaded into context, but nothing in the tests distinguished that
+# destination from auto.md, which is loaded every time it runs. This cap is
+# what makes that distinction cost something to ignore.
+#
+# 606 is what commands/ weighs as this cap is added (auto 205, init 169,
+# continue 128, status 68, checkpoint 36); 620 leaves a little room without
+# being a fraction of what it used to weigh.
+CMD_BUDGET=620
+cmd_total=0
+for f in "$CMD"/*.md; do
+    n="$(wc -l < "$f" | tr -d ' ')"
+    cmd_total=$((cmd_total + n))
+done
+if [ "$cmd_total" -le "$CMD_BUDGET" ]; then
+    pass "commands total $cmd_total lines, within the $CMD_BUDGET-line budget"
+else
+    fail "commands total $cmd_total lines, over the $CMD_BUDGET-line budget"
+    echo "    commands/ is not where prose evicted from skills/ belongs -- that"
+    echo "    goes in plugins/baton/README.md, which is not loaded into context."
+fi
+
 init="$(cat "$CMD/init.md")"
 assert_contains "$init" "superpowers" "init checks for the companion plugin"
 assert_contains "$init" "verify_cmd" "init asks for the verification command"
