@@ -9,11 +9,12 @@
 # narrower and purely mechanical, the same way test-cold-start-diverged.sh is
 # narrower than the scenario it backs: that the fixture's one divergence is
 # real, and that nothing else about it diverges. The second half matters as
-# much as the first: build-diverged.sh's two divergences deliberately do not
-# live here, because baton-resume's branch check runs and stops before the
-# checks that would catch them ever fire (see build-diverged-branch.sh's own
-# comment) -- so this fixture has to prove, not just assert, that the branch
-# mismatch is the only thing an agent running RUNBOOK.md scenario 5 can find.
+# much as the first: build-diverged-claims.sh's two divergences deliberately
+# do not live here, because baton-resume's branch check runs and stops
+# before the checks that would catch them ever fire (see
+# build-diverged-branch.sh's own comment) -- so this fixture has to prove,
+# not just assert, that the branch mismatch is the only thing an agent
+# running RUNBOOK.md scenario 5 can find.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"

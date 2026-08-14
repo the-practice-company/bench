@@ -10,6 +10,14 @@ SKILLS="$REPO_ROOT/plugins/baton/skills"
 # the backstop, and it is the one that would catch it, by failing on a total.
 # Add the name here when a skill is added, or the cap it never had is the one
 # nobody notices missing.
+#
+# The same is true of a skills/<name>/references/*.md file: nothing here
+# gives it a per-file cap, and that is left as-is on purpose -- there is no
+# floor to set one from until such a file exists, and inventing a number now
+# would be a guess rather than a measurement. test-budget.sh does not have
+# that problem: it walks every .md file under each skill directory, so a
+# references file is counted in the total the moment it exists. Backstop
+# again, not a second gap.
 cap_total=0
 for name in baton baton-checkpoint baton-resume baton-autopilot; do
     f="$SKILLS/$name/SKILL.md"

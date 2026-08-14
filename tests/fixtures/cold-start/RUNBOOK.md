@@ -203,7 +203,7 @@ finds out what happens when it isn't.
 ### Setup
 
 Build the diverged fixture the same way as scenario 1's, but from
-`build-diverged.sh` instead of `build.sh`. It holds the same shape —
+`build-diverged-claims.sh` instead of `build.sh`. It holds the same shape —
 `docs/baton/constitution.md`, `docs/baton/state.md`, a wave 1 marked done and
 a wave 2 in progress — with two differences planted in it, neither one
 admitted anywhere on disk:
@@ -223,7 +223,7 @@ admitted anywhere on disk:
 as scenario 1's. Nothing here has been flagged yet — that is the point.
 
 ```bash
-bash tests/fixtures/cold-start/build-diverged.sh /tmp/baton-diverged
+bash tests/fixtures/cold-start/build-diverged-claims.sh /tmp/baton-diverged
 cd /tmp/baton-diverged
 claude
 ```

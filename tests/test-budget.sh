@@ -23,18 +23,50 @@ SKILLS="$REPO_ROOT/plugins/baton/skills"
 # the two now move together or fail together rather than drifting quietly.
 BUDGET=1148
 
+# What is actually scarce is tokens, and a line count is a wrap-width
+# artifact, not a token count: `fmt -w 100` across the four skills removes
+# roughly a fifth of the LINES, deletes no words, and would turn this budget
+# and every per-file cap in test-skills.sh green with headroom -- headroom
+# that could then be spent on real prose, landing well past what the caps
+# were measuring when they were set. Reflowing to a wider column barely
+# moves a byte count, so BYTE_BUDGET is set close to what the skills
+# currently weigh, in bytes, rather than given the same proportional
+# headroom as BUDGET above: it has to stay tight enough that rewrapping into
+# the line budget's freed headroom, then filling that headroom with more
+# content, still fails here even though it would pass the line-based caps.
+# Neither budget replaces the other -- this one is blind to a paragraph
+# that grows the word count without ever wrapping past its line.
+BYTE_BUDGET=59500
+
 total=0
-for f in "$SKILLS"/*/SKILL.md; do
+total_bytes=0
+# Every .md file under a skill directory, not just SKILL.md: a
+# skills/<name>/references/*.md file is loaded into context exactly when the
+# skill pointing at it is loaded, so it costs exactly as much context as
+# prose that lived in SKILL.md itself. The budget rations context, and
+# context does not care which filename it arrived in.
+while IFS= read -r f; do
     n="$(wc -l < "$f" | tr -d ' ')"
+    b="$(wc -c < "$f" | tr -d ' ')"
     total=$((total + n))
-    echo "  $(basename "$(dirname "$f")"): $n"
-done
+    total_bytes=$((total_bytes + b))
+    echo "  ${f#$SKILLS/}: $n lines, $b bytes"
+done < <(find "$SKILLS" -type f -name '*.md' | sort)
 
 if [ "$total" -le "$BUDGET" ]; then
     pass "skills total $total lines, within the $BUDGET-line budget"
 else
     fail "skills total $total lines, over the $BUDGET-line budget"
     echo "    Cutting is the default response. Raising BUDGET is a decision:"
+    echo "    say in the commit message what was added and why it had to be resident."
+fi
+
+if [ "$total_bytes" -le "$BYTE_BUDGET" ]; then
+    pass "skills total $total_bytes bytes, within the $BYTE_BUDGET-byte budget"
+else
+    fail "skills total $total_bytes bytes, over the $BYTE_BUDGET-byte budget"
+    echo "    A rewrap can lower the line count without lowering this one."
+    echo "    If lines are within budget and bytes are not, the content grew --"
     echo "    say in the commit message what was added and why it had to be resident."
 fi
 
