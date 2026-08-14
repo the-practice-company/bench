@@ -51,8 +51,8 @@ git add .gitignore
 git commit -q -m "baton: gitignore .baton/"
 # The repository's root commit -- what the first wave's gate falls back to
 # when the grant names no base (see baton-autopilot's "read the base off
-# the grant"). Captured now, the same way build-diverged.sh captures its
-# base_sha, before anything else exists to make `git rev-list
+# the grant"). Captured now, the same way build-diverged-claims.sh captures
+# its base_sha, before anything else exists to make `git rev-list
 # --max-parents=0` ambiguous.
 base_sha="$(git rev-parse HEAD)"
 

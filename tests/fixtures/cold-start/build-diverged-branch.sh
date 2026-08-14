@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Build a repository that is clean and consistent in every respect except
 # one: state.md's observed_branch names a branch this checkout is not on and
-# never was. Deliberately -- not a companion to build-diverged.sh's two
-# divergences, but their opposite. baton-resume's branch check ("Report it
-# and stop, write nothing") runs and answers before the claimed-field checks
-# that catch build-diverged.sh's divergences ever get a chance to fire, so a
-# fixture carrying the branch mismatch alongside those two would never let an
-# agent reach them -- see RUNBOOK.md scenario 5, which explains why this is a
-# separate fixture rather than a third divergence bolted onto that one.
+# never was. Deliberately -- not a companion to build-diverged-claims.sh's
+# two divergences, but their opposite. baton-resume's branch check ("Report
+# it and stop, write nothing") runs and answers before the claimed-field
+# checks that catch build-diverged-claims.sh's divergences ever get a chance
+# to fire, so a fixture carrying the branch mismatch alongside those two
+# would never let an agent reach them -- see RUNBOOK.md scenario 5, which
+# explains why this is a separate fixture rather than a third divergence
+# bolted onto that one.
 # Everything else here matches build.sh's cold-start fixture exactly: wave 1
 # genuinely closed at an ancestor of HEAD, observed_sha genuinely equal to
 # the current work_sha, tree_clean true, no .baton/precompact-facts. The

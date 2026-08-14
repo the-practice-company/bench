@@ -5,7 +5,23 @@
 # divergence anyway is the resuming agent's job, not something this fixture
 # does for it -- see RUNBOOK.md's second scenario.
 #
-# Two independent divergences, both real:
+# Named build-diverged-claims.sh, not build-diverged.sh: this is not the
+# general-purpose diverged fixture, and the old name invited exactly that
+# reading once already -- a third divergence was added under it, which broke
+# RUNBOOK scenario 2 because that divergence stopped the agent before it
+# could reach the two below. What ties these two together, and what the name
+# now says, is that both are **claimed** fields: plugins/baton/skills/baton/
+# SKILL.md's divergence policy names "a wave marked `done` ... the
+# `closed_at_sha` recorded against a closed wave" as claims `baton-resume`
+# checks mechanically and never repairs silently. `observed_branch` -- the
+# third divergence that was added here and then reverted -- is notably not
+# one of those: the policy gives it its own bullet ("looks observed and is
+# not"), and `baton-resume`'s branch check runs and stops before either
+# claimed-field check below ever fires. That ordering is why it needed a
+# fixture of its own, build-diverged-branch.sh, rather than a third
+# divergence bolted onto this one.
+#
+# Two independent divergences, both claims disagreeing with the repository:
 #
 #   1. Wave 1 is marked done at a closed_at_sha that is NOT an ancestor of
 #      main's HEAD. Built as a genuine, resolvable commit -- kept alive by a
@@ -17,13 +33,17 @@
 #
 #   2. observed_sha (what the last checkpoint recorded) is one commit behind
 #      work_sha (what the repository actually holds): a commit landed after
-#      that checkpoint that no later checkpoint captured. .baton/precompact-
-#      facts is written recording that later state, the same way the
-#      PreCompact hook would have -- that is what gives baton-resume's step
-#      3 something to find without a live hook run.
+#      that checkpoint that no later checkpoint captured. The sha itself is
+#      an observed field and would be repaired silently -- what stops the
+#      run is that wave 2's status, Next action and In flight were written
+#      against the stale value and nobody has corrected them since, which is
+#      the claim baton-resume's step 3 is actually checking. .baton/
+#      precompact-facts is written recording the later state, the same way
+#      the PreCompact hook would have -- that is what gives step 3 something
+#      to find without a live hook run.
 set -euo pipefail
 
-dest="${1:?usage: build-diverged.sh <destination-dir>}"
+dest="${1:?usage: build-diverged-claims.sh <destination-dir>}"
 mkdir -p "$dest"
 cd "$dest"
 

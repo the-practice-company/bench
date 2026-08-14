@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pins the premise of the diverged fixture (tests/fixtures/cold-start/
-# build-diverged.sh): what this suite can check mechanically about a
+# build-diverged-claims.sh): what this suite can check mechanically about a
 # repository where a claim disagrees with the repository. The behaviour
 # this fixture exists to exercise -- that a resuming agent notices the
 # divergence, says what diverged, sets suspect: true, and stops rather than
@@ -16,7 +16,7 @@ PLUGIN="$REPO_ROOT/plugins/baton"
 . "$SCRIPT_DIR/helpers.sh"
 
 FIXTURE="$(mktemp -d)"
-bash "$SCRIPT_DIR/fixtures/cold-start/build-diverged.sh" "$FIXTURE" >/dev/null
+bash "$SCRIPT_DIR/fixtures/cold-start/build-diverged-claims.sh" "$FIXTURE" >/dev/null
 cd "$FIXTURE"
 
 state="$(cat docs/baton/state.md)"

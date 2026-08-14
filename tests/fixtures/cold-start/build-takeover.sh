@@ -5,7 +5,7 @@
 # "the writer lease is stale, and the resuming agent has to notice, take it
 # over deliberately, and journal who it displaced" instead of "cold start
 # with no lease at all" (build.sh) or "state.md disagrees with the
-# repository" (build-diverged.sh).
+# repository" (build-diverged-claims.sh).
 set -euo pipefail
 
 dest="${1:?usage: build-takeover.sh <destination-dir>}"
@@ -20,8 +20,8 @@ git config commit.gpgsign false
 mkdir -p src docs/baton/journal
 
 # .baton/ gitignored from the start, as a real /baton:init'd repository has
-# it -- see build-diverged.sh's comment on the same lines. It matters most
-# here of all three fixtures: the stale lease written below lives in
+# it -- see build-diverged-claims.sh's comment on the same lines. It matters
+# most here of all three fixtures: the stale lease written below lives in
 # .baton/, and without this it is untracked noise rather than the invisible
 # leftover of a crashed session it is meant to be.
 printf '.baton/\n' > .gitignore
@@ -126,8 +126,8 @@ git add docs/baton
 git commit -q -m "baton: checkpoint at wave 2"
 
 # The stale lease itself. .baton/ is gitignored by a real /baton:init'd
-# repository (see build-diverged.sh's comment on the same point), so this
-# is written straight to the working tree, after the commit above, and
+# repository (see build-diverged-claims.sh's comment on the same point), so
+# this is written straight to the working tree, after the commit above, and
 # never touches git history -- exactly how a real crashed session would
 # leave it behind: mid-run, not checkpointed as part of any commit.
 #
