@@ -233,4 +233,24 @@ assert_contains "$runbook" "## Scenario 4: autopilot" "the runbook has a scenari
 assert_contains "$runbook" "build-autopilot.sh" "scenario 4 names the fixture it runs against"
 assert_contains "$runbook" "/baton:continue" "scenario 4 exercises the fresh-session pickup"
 
+# --- auto refuses a spec-less wave ---
+auto_cmd="$(cat "$PLUGIN/commands/auto.md")"
+assert_not_contains "$auto_cmd" "I will derive it from the constitution" "the readiness review no longer offers to write the spec itself"
+assert_contains "$auto_cmd" 'its `spec` cell must name a document' "the scope rules refuse a wave with no spec"
+assert_contains "$auto_cmd" "If that leaves no waves at all" \
+    "the scope rules say what happens when dropping spec-less waves empties the scope"
+# The availability list grew to four when the spec rule went in, and this
+# sentence went on saying three -- so the count told the reader the newest
+# rule, the one most likely to reject a scope, was not among the ones checked.
+# Pinned to the count and not to "availability": the ordinal at "the third
+# availability rule" a few lines up is a different number that is still right.
+assert_contains "$auto_cmd" "it checks all four" \
+    "auto's scope check counts the availability rules the loop actually applies"
+
+# --- init asks the two questions that make the rest work ---
+init_cmd="$(cat "$PLUGIN/commands/init.md")"
+assert_contains "$init_cmd" "Which document each wave builds to" "init settles the spec source per wave"
+assert_contains "$init_cmd" "Where the run works" "init settles the workspace preference"
+assert_contains "$init_cmd" "before you compact" "init tells the human to ratify before compacting"
+
 finish

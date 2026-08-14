@@ -10,15 +10,13 @@ Persist the run so a session with no memory of this one can continue it.
 **Announce at start:** "Checkpointing the run — writing it down so it survives without this context."
 
 **Prerequisite:** `docs/baton/constitution.md`'s `status` is `ratified` with no
-`REPLACE-WITH` token left — checkpointing a run that was never handed over
-records state for a run that does not exist yet. You also hold the writer lease:
+`REPLACE-WITH` token left. You also hold the writer lease:
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/baton-lock" check "${CLAUDE_CODE_SESSION_ID:-$CLAUDE_SESSION_ID}"
 ```
 
-Read the exit code, not just whether it was zero — non-zero does not mean "go
-elsewhere and sort this out":
+Read the exit code, not just whether it was zero:
 
 | Exit | Meaning | What to do |
 |---|---|---|
@@ -33,69 +31,20 @@ Then `acquire`, before writing anything:
 "${CLAUDE_PLUGIN_ROOT}/scripts/baton-lock" acquire "${CLAUDE_CODE_SESSION_ID:-$CLAUDE_SESSION_ID}"
 ```
 
-Both names, in that order: `CLAUDE_CODE_SESSION_ID` is what Claude Code exports,
-but neither name is a documented contract, so the fallback is what survives the
-next rename. Exit 64, session id must not be empty, means the environment gave
-neither — report it and stop; do not invent an id.
-
-If `acquire` prints `takeover=<previous session>` — it does when it displaces
-the expired lease of exit 4 — journal it as a `takeover` entry (step 5), so two
-sessions cannot silently overlap.
-
-For the holder that `acquire` is the heartbeat, not a second acquisition: it
-pushes the expiry out. Checkpoint regularly and the lease never lapses; a
-session that stopped checkpointing stopped working, which is exactly when
-someone else should get the baton.
-
-## The Process
-
-```dot
-digraph checkpoint {
-    lock       [shape=box, label="baton-lock check, then acquire"];
-    read       [shape=box, label="Read the entire current state.md"];
-    observe    [shape=box, label="baton-observe: snapshot git facts"];
-    compare    [shape=box, label="Compare claims against facts; ancestry-check every done wave"];
-    diverged   [shape=diamond, label="Claimed field diverged?"];
-    silent     [shape=box, label="Fix observed fields, writer and updated_at silently"];
-    suspect    [shape=box, label="Set suspect, describe it, surface it"];
-    narrative  [shape=box, label="Update Next action / In flight / Open questions"];
-    threshold  [shape=diamond, label="Any decision crossing the threshold?"];
-    entry      [shape=box, label="baton-journal + baton-write the entry"];
-    diff       [shape=box, label="Diff the draft against the committed file"];
-    deliberate [shape=diamond, label="Every difference one you made deliberately?"];
-    rebuild    [shape=doublecircle, label="Stop; rebuild the draft from the committed file"];
-    write      [shape=box, label="baton-write the whole file"];
-    verify     [shape=box, label="Verify: every section still committed, docs/baton clean"];
-    over       [shape=diamond, label="Session over, by something you can point at?"];
-    hold       [shape=doublecircle, label="Keep the lease; resume work"];
-    release    [shape=doublecircle, label="baton-lock release"];
-
-    lock -> read -> observe -> compare -> diverged;
-    diverged -> suspect [label="yes"];
-    diverged -> silent [label="no"];
-    suspect -> narrative;
-    silent -> narrative;
-    narrative -> threshold;
-    threshold -> entry [label="yes"];
-    threshold -> diff [label="no"];
-    entry -> diff -> deliberate;
-    deliberate -> rebuild [label="no"];
-    deliberate -> write [label="yes"];
-    write -> verify -> over;
-    over -> release [label="yes"];
-    over -> hold [label="no"];
-}
-```
+Exit 64, session id must not be empty, means the environment gave neither name —
+report it and stop; do not invent an id. If `acquire` prints
+`takeover=<previous session>` — it does when it displaces the expired lease of
+exit 4 — journal it as a `takeover` entry (step 5). For the holder, `acquire` is
+the heartbeat, not a second acquisition: it pushes the expiry out. Checkpoint
+regularly and the lease never lapses.
 
 ## Steps
 
-**1. Read the current state, whole.** Read all of `docs/baton/state.md` before
-changing anything. You are editing a document, not composing one: `baton-write`
-replaces the entire file with whatever you pipe into it, so every section you
-did not deliberately change — Goal, Operating mode, Non-negotiables, Waves
-table, Pointers, all of it — has to come through into your draft byte for byte.
-The steps below name only the fields they update; they assume you already have
-the rest, from here.
+**1. Read the current state, whole.** Read all of `docs/baton/state.md` first.
+`baton-write` replaces the entire file with whatever you pipe into it, so every
+section you did not deliberately change — Goal, Operating mode, Non-negotiables,
+Waves table, Pointers — has to come through into your draft byte for byte. The
+steps below name only the fields they update.
 
 **2. Snapshot the repository.**
 
@@ -104,32 +53,29 @@ the rest, from here.
 ```
 
 **3. Reconcile.** Compare what `state.md` claims against what came back.
-Observed fields — `observed_sha`, `observed_branch`, `tree_clean` — you
+Observed fields — `observed_sha`, `tree_clean`, `writer`, `updated_at` — you
 overwrite without ceremony. Take `observed_sha` from `baton-observe`'s
 `work_sha`, not its `sha`: `sha` is raw `HEAD`, which this checkpoint is about
-to move by committing `state.md`, so a baseline read from it is wrong the moment
-it is written. `work_sha` is the last commit touching anything outside
-`docs/baton/` — which a checkpoint commit never does.
+to move. `work_sha` is the last commit touching anything outside `docs/baton/` —
+which a checkpoint commit never does.
 
-`writer` and `updated_at` are overwritten the same way, and both are almost
-certainly stale: nothing has written either since `/baton:init`.
+`observed_branch` is not on that list: a disagreement is **a stop, not a
+repair**. Name the branch `state.md` expects and the branch you are on, and stop
+without writing — not even a flag.
+
+`writer` and `updated_at` are both stale: nothing has written either since
+`/baton:init`. Bump `updated_at` freely — `baton-write` strips that line before
+deciding whether a checkpoint is idle.
 
 ```bash
 printf 'writer: %s\n' "${CLAUDE_CODE_SESSION_ID:-$CLAUDE_SESSION_ID}"
 printf 'updated_at: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 ```
 
-`writer` reads as naming whoever holds the lease right now, so carrying the init
-session's id through a multi-day run is worse than naming nobody. Bump
-`updated_at` freely: `baton-write` strips that line before deciding whether a
-checkpoint is idle, precisely so a timestamp alone cannot manufacture a commit.
-
 A claimed field that diverged — a wave marked `done` whose work is not in the
 repository — you never overwrite: set `suspect: true`, put the specifics in the
-`Suspect` line, and say so in your reply. "Diverged" is a check, not an
-impression, and `baton-observe` cannot make it for you: a sha, a branch and a
-dirty count say nothing about whether wave 2 is done. For every `done` row, run
-the check `baton-resume` runs:
+`Suspect` line, and say so in your reply. For every `done` row, run the check
+`baton-resume` runs — `baton-observe` cannot make this call for you:
 
 ```bash
 git merge-base --is-ancestor <closed_at_sha> HEAD
@@ -137,26 +83,21 @@ git merge-base --is-ancestor <closed_at_sha> HEAD
 
 Any non-zero exit — 1 and 128 alike — is a divergence; the codes are tabulated
 in `baton-resume`'s step 2. A `done` row whose `closed_at_sha` is still `—`
-fails as exit 128, which is the right answer, not a technicality: nothing
-recorded the sha, so the claim cannot be checked at all, and unverifiable is
-indistinguishable from false from outside. Running it here finds the divergence
-at a checkpoint instead of only at the resume after the next compaction.
+fails as exit 128: nothing recorded the sha, so the claim cannot be checked.
 
 **4. Write the narrative fields.**
 
 - `Next action` — one sentence, deterministic enough that a session with no
   memory of this one executes it without asking. "Continue the API work" is a
-  failure. "Run `npm test -- auth.spec.ts` and fix the two failing assertions
-  in `src/auth/session.ts`" is not.
+  failure. "Run `npm test -- auth.spec.ts` and fix the two failing assertions in
+  `src/auth/session.ts`" is not.
 - `In flight` — what was interrupted mid-way, or `nothing`. One exception: an
   autopilot attempt counter (`wave 2: attempt 2 of 3`) stays, even when nothing
-  is mid-edit and `nothing` is otherwise the honest answer. It is not a note
-  about interrupted work but the only copy of a ceiling, and writing `nothing`
-  over it hands the next session a fresh count — see `baton-autopilot`.
+  is mid-edit and `nothing` is otherwise the honest answer — it is the only copy
+  of a ceiling. See `baton-autopilot`.
 - `Open questions` — or `none`.
 
-Write these from the repository, not from your recollection of the last hour —
-the recollection is the thing about to be compacted:
+Write these from the repository, not from your recollection of the last hour:
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/baton-observe" --changed-since <observed_sha>
@@ -166,17 +107,11 @@ takes the `observed_sha` you read in step 1 — the previous checkpoint's
 baseline, not the one you just overwrote — and lists every file changed since,
 untracked ones included.
 
-`state.md` is capped at 60 lines, and the cap is not advisory: the file has to
-be something a session with no memory of this one can take in whole, and one
-that outgrows that stops getting read closely. Detail that does not fit — a long
-"In flight", a Suspect writeup worth keeping — goes to a journal entry, and
-`state.md` keeps only a pointer to it (e.g. "see DEC-0008").
-
-An autopilot attempt counter is the one thing that never moves out. It is nine
-characters and it is a ceiling; a pointer to it in a journal entry is a ceiling
-the next session has to go and look for, which is a ceiling it will sometimes
-miss. Send the surrounding narrative to the entry and keep
-`wave 2: attempt 2 of 3` on the line.
+`state.md` is capped at 60 lines. Detail that does not fit — a long "In flight",
+a Suspect writeup worth keeping — goes to a journal entry, and `state.md` keeps
+only a pointer to it (e.g. "see DEC-0008"). An autopilot attempt counter is the
+one thing that never moves out: send the surrounding narrative to the entry and
+keep `wave 2: attempt 2 of 3` on the line.
 
 **5. Journal anything that crossed the threshold.** Write an entry only if at
 least one holds:
@@ -186,11 +121,7 @@ least one holds:
 - it reinterprets a rule from the constitution;
 - the choice was between real alternatives and the loser was plausible.
 
-They are spelled out here because nothing loads the `baton` skill when this one
-fires, and a threshold you have to go and fetch is one you judge by feel.
-`baton` carries the reasoning behind each, and the rule that entries are
-immutable — superseding one means a new entry, never an edit.
-
+Entries are immutable: superseding one means a new entry, never an edit.
 Allocate the id, then write:
 
 ```bash
@@ -224,41 +155,18 @@ needs_review: false
 Four other entry types are required elsewhere in these skills — same envelope,
 same `baton-journal` allocation, different `type` and sections:
 
-- **`takeover`** — whenever a `baton-lock` call prints
-  `takeover=<previous session>`: `baton-resume` displacing another session's
-  lease, or the `acquire` above taking over an expired one. `type: takeover`;
-  sections `## Who was displaced`, `## Why it was believed safe`.
-- **`incoming`** — when new input arrives mid-run (see the `baton` skill's "New
-  input mid-run"). `type: incoming`, `needs_review: true`; sections
-  `## What arrived`, `## From whom`, `## What it affects`.
-- **`autopilot`** — written by `/baton:auto` when a human grants the run, and
-  named by `state.md`'s `autopilot_grant`. `type: autopilot`, plus
-  **`base:` in the frontmatter** — the resolved sha of `--since <ref>`, or `—`
-  when none was given. Sections `## Scope`, `## The readiness review`,
-  `## The human's corrections`. You do not write this one — a human's does — but the
-  morning reads it to find out what was authorised, so an `autopilot_grant`
-  pointing at nothing is a grant with no record of its terms.
+| Type | Written when | Envelope | Sections |
+|---|---|---|---|
+| `takeover` | a `baton-lock` call prints `takeover=<previous session>`: `baton-resume` displacing another session's lease, or the `acquire` above taking over an expired one | `type: takeover` | `## Who was displaced`, `## Why it was believed safe` |
+| `incoming` | new input arrives mid-run (see the `baton` skill's "New input mid-run") | `type: incoming`, `needs_review: true` | `## What arrived`, `## From whom`, `## What it affects` |
+| `autopilot` | `/baton:auto` grants the run — written by it, not by you, and named by `state.md`'s `autopilot_grant` | `type: autopilot`, plus **`base:` in the frontmatter** — the resolved sha of `--since <ref>`, or `—` when none was given, and nowhere else | `## Scope`, `## The readiness review`, `## The human's corrections` |
+| `blocked` | a wave cannot close and moves to `blocked` (see `baton-autopilot`'s "The pat") | `type: blocked`, and no `needs_human` | `## What stopped`, `## The evidence`, `## What was tried`, `## Why each attempt did not move it` |
 
-  `base:` belongs in the frontmatter and nowhere else. `baton-autopilot` reads
-  it from there to set the first wave's `--since`, and it reads only there: a
-  base described in the body is a base nothing finds, so the run falls back to
-  the repository's root commit and silently disagrees with the human who took
-  the trouble to name one.
-- **`blocked`** — when a wave cannot close and moves to `blocked` (see
-  `baton-autopilot`'s "The pat"). `type: blocked`; sections
-  `## What stopped`, `## The evidence`, `## What was tried`,
-  `## Why each attempt did not move it`. The last section is the one that
-  earns the entry: a human reading it at breakfast needs to know which
-  explanations have already been ruled out, and an entry that lists three
-  attempts without saying why each failed sends them back through all three.
-
-  This entry carries no `needs_human`. That is a granted field in `state.md`,
-  not part of any entry's envelope — unlike `incoming`'s `needs_review: true`
-  above, which really is one — and under the autopilot a parked wave
-  deliberately does **not** raise it: `baton-resume` and `/baton:continue` both
-  halt on finding it set, so raising it while the run carries on stops the run
-  at its next compaction. `baton-autopilot`'s "The pat" says when it is raised,
-  which is when there is no wave left to move to.
+Two riders on `blocked`. Its `## Why each attempt did not move it` says why each
+attempt failed, not only that it was made. This entry carries no `needs_human`:
+that is a granted field in `state.md`, not part of any entry's envelope, and
+under the autopilot a parked wave deliberately does **not** raise it.
+`baton-autopilot`'s "The pat" says when it is raised.
 
 Pipe it through `baton-write` so it lands atomically and gets committed:
 
@@ -269,12 +177,9 @@ Pipe it through `baton-write` so it lands atomically and gets committed:
 ```
 
 `.baton/` is the scratch directory for this write and the state draft below, not
-`/tmp`. It already exists — the lease you took at the top created it — and
-`/baton:init` put it in `.gitignore` before anything was committed, so scratch
-never reaches the log. A fixed filename is enough because `.baton/` is
-per-repository and the lease refuses a second session inside this repository. Do
-not add `$$` to make it unique anyway — the tool that writes the draft and the
-shell that reads it are different processes, and would not agree on the name.
+`/tmp`; the lease you took at the top created it. Do not add `$$` to the
+filename to make it unique: the tool that writes the draft and the shell that
+reads it are different processes, and would not agree on the name.
 
 **6. Check the draft against what is committed.** Write the draft to
 `.baton/checkpoint-state.md` — step 7 pipes it from there anyway — and diff it
@@ -285,19 +190,11 @@ diff <(git show HEAD:docs/baton/state.md) .baton/checkpoint-state.md
 ```
 
 Every line on the `<` side is a line this checkpoint deletes. Take them one at a
-time and name the step that decided each: an observed field or `writer` from
-step 3, a `Now` line from step 4, a wave row you closed. A difference you cannot
-name is not a change but a section that fell out of a draft rebuilt from memory,
-and it aborts the checkpoint: re-read the committed file, apply your changes to
-*that*, and diff again.
-
-Nothing downstream catches this. `baton-write` writes what it is given, the
-commit lands, the tree comes back clean — a checkpoint that dropped the Goal,
-the Non-negotiables and half the Waves table is indistinguishable from a good
-one afterwards; reproduced, a 41-line state file replaced by a 16-line draft,
-exit 0. The script's guards do not help: the whitespace refusal fires only on a
-draft with no non-whitespace byte at all, and the 60-line cap is a ceiling,
-never a floor.
+time and name the step that decided each: an observed field from step 3, a `Now`
+line from step 4, a wave row you closed. A difference you cannot name is a
+section that fell out of a draft rebuilt from memory, and it aborts the
+checkpoint: re-read the committed file, apply your changes to *that*, diff again.
+Nothing downstream catches it.
 
 **7. Write the state.** What you pipe into `baton-write` is the whole file you
 just diffed, unchanged since you diffed it.
@@ -308,54 +205,39 @@ just diffed, unchanged since you diffed it.
 ```
 
 If nothing of substance changed, the script writes nothing and exits 0. That is
-correct, not a failure — running the ritual twice in a row leaves no trace.
+correct, not a failure.
 
 **8. Release the lease only if the session is over.** Mid-stretch, keep it.
-Releasing a lease you are still using invites not a visible takeover but a
-silent one: `acquire` against a free lease succeeds outright, prints no
-`takeover=` line and journals nothing, so a second writer arrives in your run
-leaving no trace anywhere.
-
 "Over" has to be something you can point at, not a feeling: the human said they
 are stopping, asked you to wrap up, or took the run back; or the last wave is
-`done` with nothing left to pick up. A compaction is none of those, and it is
-this skill's most common trigger — it takes the context, not the session, and
-the same session keeps working straight through. When it is genuinely over,
-release once the state write above has succeeded:
+`done` with nothing left to pick up. A compaction is none of those.
+Verify before you release, never after: a verification that fails once the lease
+is gone is one you cannot act on. Run both checks below, then:
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/baton-lock" release "${CLAUDE_CODE_SESSION_ID:-$CLAUDE_SESSION_ID}"
 ```
 
-Releasing means the next session starts clean: `acquire` succeeds outright
-instead of facing a live lease it must decide whether to take over. Every
-takeover is journaled, so a lease left behind after a clean end of session
-manufactures an entry for an overlap that never happened — noise in exactly the
-log that has to stay signal.
-
 ## Closing a wave
 
 There are two ways a wave closes, and which one applies is decided by the
-`autopilot` field in `state.md`, not by whether a human happens to be
-answering right now.
+`autopilot` field in `state.md`, not by whether a human happens to be answering
+right now.
 
-**While `autopilot` reads `off`** — the default, and the case this section is
-mostly about — you are the only mechanism. A wave moves to `done` only when
-every exit criterion the constitution lists for it has been checked, one by
-one, against the repository, not against your impression of the work, with the
-check recorded, **and** the human has confirmed it. Either half missing means
-it stays where it is. Green tests are not a confirmation; they are the
-condition under which asking for one is worth the human's time.
+**While `autopilot` reads `off`** — the default — you are the only mechanism. A
+wave moves to `done` only when every exit criterion the constitution lists for
+it has been checked, one by one, against the repository rather than your
+impression of the work, with the check recorded, **and** the human has confirmed
+it. Either half missing means it stays where it is. Green tests are not a
+confirmation; they are what makes asking for one worth the human's time.
 
-**While `autopilot` names a scope**, a human handed the run over and is not
-here to confirm anything. The confirmation is replaced — not waived — by
+**While `autopilot` names a scope**, a human handed the run over and is not here
+to confirm anything. The confirmation is replaced — not waived — by
 `baton-gate`'s evidence plus a verdict file under `docs/baton/gates/` that
-records your walk through the criteria. The `baton-autopilot` skill has the
-procedure.
-
-Do not read the second path as "close it yourself when nobody answers". It
-applies while the flag is set and at no other time, and the flag is set by a
-human typing `/baton:auto`.
+records your walk through the criteria; `baton-autopilot` has the procedure. Do
+not read this path as "close it yourself when nobody answers": it applies while
+the flag is set and at no other time, and the flag is set by a human typing
+`/baton:auto`.
 
 Closing the wave is then four edits to this checkpoint's draft, and it is not
 closed until all four are in:
@@ -364,12 +246,9 @@ closed until all four are in:
 - `closed_at_sha` → this run's `work_sha` from `baton-observe`, not its `sha`,
   for the reason step 3 gives;
 - **Current wave** → whatever is now in progress;
-- the `gate` column → `pass` or `auto`, per the table below. It was three edits
-  before either gate existed, when the column had nothing to record and stayed
-  `—`; a wave closed today and left at `—` claims that nothing closed it.
+- the `gate` column → `pass` or `auto`, per the table below.
 
-The `gate` column takes one of three values, and which one is not a matter of
-taste:
+The `gate` column takes one of three values:
 
 | Value | What it says |
 |---|---|
@@ -377,25 +256,17 @@ taste:
 | `auto` | Closed under the autopilot: `baton-gate`'s evidence was green and you walked the criteria. The verdict is filed in `docs/baton/gates/`. |
 | `pass` | A human confirmed it, or a future `baton-verify` did. |
 
-Closing under the autopilot writes `auto`, not `pass`. `pass` claims a human
-saw this, and if none did, that is a claim with no record behind it — one a
-later resume, or a human deciding whether to trust this row, has nothing to
-check against. Turning `auto` into `pass` is the morning's work, and it cannot
-be done if the two were conflated overnight.
+Closing under the autopilot writes `auto`, not `pass`: `pass` claims a human saw
+this, and turning `auto` into `pass` is the morning's work. The row above the one
+you are filling in carries the previous run's value, not an instruction.
 
-The row above the one you are filling in may already carry a value; that is
-the previous run's table, not an instruction.
-
-`closed_at_sha` is the only claim in this file anything checks mechanically:
-`baton-resume` and step 3 above both run `git merge-base --is-ancestor` against
-it for every wave marked `done`. Left at `—`, `done` is a claim with nothing
-behind it, and both checks can only read that as a divergence.
+`closed_at_sha` is the one claim here checked mechanically: `baton-resume` and
+step 3 above both run `git merge-base --is-ancestor` against it for every wave
+marked `done`. Left at `—`, both checks can only read `done` as a divergence.
 
 ## If the write fails
 
-`baton-write` exits non-zero for reasons that need different responses; do not
-retry blindly. These are all of them — exit 3 has enough distinct causes to get
-a table of its own.
+Do not retry blindly; the response differs by exit code.
 
 | Exit | Meaning | What to do |
 |---|---|---|
@@ -406,9 +277,7 @@ a table of its own.
 | 7, "could not be verified" | The commit failed, the rollback ran, and `git status` itself failed, so whether the tree was restored is unknown. | Stop, the same way — but hand over the difference. "The tree is dirty" a human can look at and fix; "the repository could not answer what state it is in" is what they need to hear first. |
 | 64 | Malformed invocation: no path, more than one path, or `-m` with nothing after it. Nothing was written. | Fix the call. The two forms this skill uses are the blocks in steps 5 and 7. |
 
-Exit 3's causes, told apart by the message:
-
-| Message says | What to do |
+| Exit 3's message says | What to do |
 |---|---|
 | an unresolved merge, or an unresolved rebase, is in progress | A partial commit of one path is impossible mid-merge or mid-rebase. Finish or abort it, then checkpoint again. |
 | the path is excluded by `.gitignore` | The file could never be committed, so writing it would leave state `git status` never shows. Fix the ignore rule or the path. |
@@ -421,27 +290,22 @@ Exit 0 with no commit is not a failure — see step 7.
 
 ## Verify before claiming success
 
-Two conditions, and the second one alone proves nothing about the first.
-
-**Every section is still in the committed file.**
+**1. Every section is still in the committed file.**
 
 ```bash
 git show HEAD:docs/baton/state.md | grep -nE '^(#|\*\*[A-Z]|\| [0-9])'
 ```
 
 Goal, Operating mode, Non-negotiables, `## Waves` with one row per wave,
-`## Now`, `## Pointers` — everything you read in step 1 has to be in that
-output. Anything missing is the truncation step 6 exists to stop, and it is
-already committed: recover the lost text from
-`git show HEAD~1:docs/baton/state.md` and checkpoint again from a draft built on
-it.
+`## Now`, `## Pointers` — everything you read in step 1 has to be in that output.
+Anything missing is already committed: recover the lost text from
+`git show HEAD~1:docs/baton/state.md` and checkpoint again from a draft on it.
 
-**`git status --porcelain docs/baton` is empty.** It cannot see a truncation —
-`baton-write` committed that, so the tree is clean either way — but it catches
-what the content check cannot: a rollback that left the tree dirty (exit 7), or
-a stray untracked file under `docs/baton/`. If it is not empty, state is sitting
-outside the log and the checkpoint did not happen. Say so rather than reporting
-success.
+**2. `git status --porcelain docs/baton` is empty.** It proves nothing about the
+first, but catches what the first cannot: a rollback that left the tree dirty
+(exit 7), or a stray untracked file under `docs/baton/`. If it is not empty,
+state is sitting outside the log and the checkpoint did not happen. Say so
+rather than reporting success.
 
 ## Red Flags
 

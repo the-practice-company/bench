@@ -14,6 +14,11 @@ git_anchor: REPLACE-WITH-SHA
 umbrella_spec: docs/superpowers/specs/REPLACE-WITH-SPEC.md
 verify_cmd: "REPLACE-WITH-TEST-COMMAND"
 placeholder_patterns: "TODO|FIXME|NotImplemented|unimplemented|raise NotImplementedError"
+# in-place | worktree. Where the run works. Declared here so
+# superpowers:using-git-worktrees honours it without asking -- under the
+# autopilot there is nobody to answer a consent prompt. baton needs no tree
+# of its own; this protects your other work in this repository, not the run.
+workspace: in-place
 ---
 
 # REPLACE-WITH-THE-NAME-OF-THIS-RUN
@@ -24,9 +29,14 @@ One or two sentences. What counts as success for the whole run.
 
 ## Operating mode
 
-Who the agent is in this run. Default: orchestrator. It delegates
-implementation to subagents and workflows, does not write code in the primary
-session, and is answerable for carrying the work to completion.
+Who the agent is in this run. Default: orchestrator. It does not write code in
+the primary session, and it is answerable for carrying the work to completion.
+
+Delegation goes through the named procedures, not through whatever tool is at
+hand: `superpowers:writing-plans` for the wave's plan, then
+`superpowers:subagent-driven-development` to execute it. A wave executed by
+some other means loses that skill's two-stage review, and the first stage is
+the one that catches work drifting from the spec.
 
 ## Non-negotiables
 

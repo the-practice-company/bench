@@ -5,8 +5,50 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SKILLS="$REPO_ROOT/plugins/baton/skills"
 . "$SCRIPT_DIR/helpers.sh"
 
+# This list is hardcoded; test-budget.sh globs */SKILL.md. So a fifth skill
+# gets no per-file cap here and is still counted there -- test-budget.sh is
+# the backstop, and it is the one that would catch it, by failing on a total.
+# Add the name here when a skill is added, or the cap it never had is the one
+# nobody notices missing.
+cap_total=0
 for name in baton baton-checkpoint baton-resume baton-autopilot; do
     f="$SKILLS/$name/SKILL.md"
+
+    # Per-file caps, not one flat convention. A single ceiling high enough
+    # for the largest skill is no ceiling for the others, and the growth
+    # this bounds arrived one justified paragraph at a time.
+    #
+    # Each cap is the file's measured floor plus about three lines -- room for
+    # one restored rule, not for a paragraph -- and never a fraction of what the
+    # file used to weigh. That second method is how baton-checkpoint got 305, a
+    # number nobody had checked; reading the file with the cleanup invariant in
+    # hand put its floor at 321, hence 324.
+    #
+    # The four floors as this branch left them: baton 172, baton-autopilot 333,
+    # baton-resume 310, baton-checkpoint 321. Every cap below is its floor plus
+    # three, set in one pass rather than one conversation per file -- the first
+    # time these numbers moved they moved separately, and three separate
+    # negotiations is how a ceiling turns into a running total.
+    #
+    # Two of those floors rose because a rule went back in: baton-resume states
+    # the workspace preference to using-git-worktrees instead of letting it ask,
+    # and baton-autopilot says what happens when the criteria walk finds a
+    # criterion unmet -- the case the gate exists for, which was unwritten.
+    # baton-autopilot had already paid for two restored rules by finding an
+    # argument to cut and had nothing left to find, which is the signal a cap is
+    # doing its job rather than the signal to shave the nearest sentence.
+    #
+    # These four sum to 1148, which test-budget.sh carries as its budget, and
+    # the assertion after this loop is what makes that a fact rather than a
+    # claim. A cap that moves here moves that number too, in the same commit.
+    case "$name" in
+        baton)            cap=175 ;;
+        baton-autopilot)  cap=336 ;;
+        baton-resume)     cap=313 ;;
+        baton-checkpoint) cap=324 ;;
+    esac
+    cap_total=$((cap_total + cap))
+
     assert_file_exists "$f" "skill $name exists"
     [ -f "$f" ] || continue
 
@@ -16,12 +58,22 @@ for name in baton baton-checkpoint baton-resume baton-autopilot; do
     assert_contains "$body" "description: Use when" "skill $name describes when to trigger"
 
     lines="$(wc -l < "$f" | tr -d ' ')"
-    if [ "$lines" -le 500 ]; then
-        pass "skill $name is within the 500-line convention ($lines lines)"
+    if [ "$lines" -le "$cap" ]; then
+        pass "skill $name is within its $cap-line cap ($lines lines)"
     else
-        fail "skill $name is within the 500-line convention ($lines lines)"
+        fail "skill $name is within its $cap-line cap ($lines lines)"
     fi
 done
+
+# The caps above and test-budget.sh's BUDGET are one statement made twice, and
+# until now only a comment said so. Raise a cap and forget the budget and both
+# files stay green -- until the skills grow into the headroom, at which point
+# the failure surfaces in test-budget.sh, naming a total rather than the cap
+# that actually moved. Read out of that file rather than copied into this one:
+# a second literal here would be a third place to forget.
+budget="$(sed -n 's/^BUDGET=\([0-9][0-9]*\).*/\1/p' "$SCRIPT_DIR/test-budget.sh")"
+assert_equals "$cap_total" "$budget" \
+    "the per-file caps sum to the budget test-budget.sh enforces"
 
 core="$(cat "$SKILLS/baton/SKILL.md")"
 assert_contains "$core" "Red Flags" "core skill lists the rationalisations to catch"
@@ -109,6 +161,16 @@ assert_contains "$checkpoint" '| `auto` | Closed under the autopilot' \
     "the gate table still has the auto row that its lead sentence promises"
 assert_contains "$checkpoint" '## Why each attempt did not move it' \
     "the blocked entry keeps the section that earns it, not only its type"
+# This ordering lived only as an edge in the process digraph -- write -> verify
+# -> over -> release -- while the prose puts `## Verify before claiming success`
+# two sections after step 8. So the digraph was the only artefact in the file
+# saying the checkpoint is confirmed BEFORE the lease goes, and deleting it as a
+# 1:1 restatement of the steps took the rule with it. No assertion could have
+# caught that: nothing pins an edge, and no prose reviewer misses a sentence
+# that was never in the prose. Release first and a failed verification finds you
+# without the lease you need to act on it.
+assert_contains "$checkpoint" "Verify before you release, never after" \
+    "checkpoint confirms the write landed before it gives up the lease"
 assert_contains "$checkpoint" "Read the current state, whole" "checkpoint skill instructs reading the current state file first"
 assert_contains "$checkpoint" "baton-lock" "checkpoint skill mentions the lock script"
 assert_contains "$checkpoint" "release" "checkpoint skill covers releasing the lease"
@@ -190,12 +252,12 @@ assert_not_contains "$autopilot_desc" "set to anything but off" \
 assert_contains "$autopilot" "Reading the field yourself is not the decision" \
     "autopilot's prerequisite refuses a grant inferred from the field alone"
 
-# Eligibility has three conditions and the third is the one that would be
+# Eligibility has four conditions and the `consumes` one is what would be
 # dropped as pedantic -- two waves can be independent in the graph and
-# still share a contract the blocked wave was to define. Which is why the
-# third is pinned to its whole clause: `consumes` alone also appears where
-# the skill derives a spec, so the bare word would stay green after the
-# condition it is meant to defend had been deleted.
+# still share a contract the blocked wave was to define. Which is why it is
+# pinned to its whole clause: `consumes` alone also appears in step 0's
+# shorthand of these same conditions, so the bare word would stay green
+# after the condition it is meant to defend had been deleted.
 assert_contains "$autopilot" "transitive" \
     "autopilot skill requires the whole transitive dependency closure to be done"
 # The eligibility rule existed but governed only the post-block search, so the
@@ -209,6 +271,19 @@ assert_contains "$autopilot" "**Check it is available.**" \
     "autopilot checks availability before starting a wave, not only after a block"
 assert_contains "$autopilot" 'nothing in its `consumes` appears in the `produces`' \
     "autopilot skill excludes a wave that consumes what a blocked wave produces"
+# The availability list is what the end-of-run branch reads: it ends the run
+# when nothing is available. A spec-less wave that step 1 refuses but this
+# list still calls available is a wave the loop can take, skip, and take
+# again, with "if no wave is available" never becoming true. So the refusal
+# has to live HERE, not only in step 1.
+assert_contains "$autopilot" 'its `spec` cell is not `—`' \
+    "a wave with no spec is unavailable, not merely skipped once it has been taken"
+# The count and the enumeration rot independently -- the same lesson as
+# "eleven keys" over the key table, and "four edits" over the gate bullet. A
+# list of four under a lead sentence saying three is read as three, and the
+# fourth condition is the one an agent stops evaluating.
+assert_contains "$autopilot" "all four hold" \
+    "the lead sentence counts the spec condition among the conditions beneath it"
 
 # The pat is bounded by evidence first and a counter second.
 assert_contains "$autopilot" "unchanged evidence" \
@@ -241,6 +316,14 @@ assert_contains "$autopilot" "weaken the gate" "autopilot skill forbids weakenin
 # incidental prose mentions of baton-gate elsewhere in the file.
 assert_contains "$autopilot" 'scripts/baton-gate" --since' \
     "autopilot skill calls the evidence script, with the argument that scopes it"
+# --since is chosen here, two sections before `work_sha` is defined under
+# "Reading the evidence". Without this clause the cell is a forward reference
+# to a term the reader does not have yet, and the agent reaches for `sha`,
+# which is the one field the next wave's scan must not start from. Deleted
+# once already -- by me, to buy a line against the cap, which is the wrong
+# reason to spend a sentence that tells you what a field is for.
+assert_contains "$autopilot" "the last commit that moved the work" \
+    "closed_at_sha says what it names, where --since is actually chosen"
 # /baton:auto resolves --since and records it as base: on the grant entry, and
 # this skill is the only thing that reads it. Unread, the human sets a base
 # because the root-commit fallback is wrong for their repository, and the run
@@ -343,6 +426,13 @@ assert_contains "$autopilot" "Name every blocked wave in that report" \
     "a run that parked a wave and finished the rest does not read as a clean night"
 assert_contains "$autopilot" "cannot account for as this wave" \
     "autopilot skill stops on an uncommitted path it cannot attribute to the wave"
+# The commit-and-regate branch is explicitly exempt from the three-attempt
+# ceiling -- correctly, since no verdict was rendered -- so it is the one loop
+# in this skill with no counter bounding it. Unbounded, a repository writing
+# files nothing accounts for keeps it committing and regating with nobody
+# watching. The bound is the second occurrence routing to the stop instead.
+assert_contains "$autopilot" "take the stop below" \
+    "a tree still dirty after the regate takes the stop, not the loop again"
 
 # Verified against the script's behaviour, not its header comment: an absent
 # verify_cmd exits 4 (reported as "empty"), an absent placeholder_patterns
@@ -351,10 +441,95 @@ assert_contains "$autopilot" "cannot account for as this wave" \
 # them back into one parenthetical is exactly how this was wrong before.
 assert_contains "$autopilot" "Absence is not symmetric" \
     "autopilot skill keeps the two fields' absence causes on their own exit codes"
+# Exit 3 is a stop AND a flag. A stop without the flag does not stick under
+# the autopilot: the next /baton:continue resumes, hits exit 3 again, stops
+# again, and nothing on disk ever says a human must clear it.
+# NOT `assert_contains "$autopilot" "needs_human: true"`: that string appears
+# six times in this file already -- the multi-root stop, the pat, the never-
+# covers list -- so the bare form was green before exit 3 said anything about
+# the flag, and stays green with this clause deleted. Pinned to the clause.
+assert_contains "$autopilot" '`3` also takes `needs_human: true`' \
+    "exit 3 raises the run-level flag, not just a stop"
+# The parent's exit-4 row forbade this and the compression dropped it with the
+# row. Exit 4 is the gate saying it could not run verify_cmd -- the one moment
+# an agent has both a reason and an obvious way to run something else, and the
+# whole point of the field living in a file baton-write refuses to touch is
+# that the agent does not choose it. Pinned to the imperative: `verify_cmd`
+# alone appears a dozen times in this file and would pin nothing.
+assert_contains "$autopilot" "Never substitute a command of your own" \
+    "the agent does not run a command it thinks equivalent to verify_cmd"
+# The gate's central case, and it was unwritten: the file said green evidence
+# was necessary but not sufficient, said to walk the exit_criteria, and never
+# said what an unmet one does. Both halves are pinned because they are only
+# correct together. An unmet criterion counting as an attempt is what makes
+# the ceiling bound the walk at all; scoping the unchanged-evidence stop is
+# what stops that same ceiling collapsing to one. A criteria walk leaves
+# verify_exit=0 and the failing set empty every time, so the unchanged-evidence
+# test fires on attempt 2 of every criteria failure -- which the plugin's own
+# autopilot fixture contradicts: build-autopilot.sh records three attempts on
+# exactly this case, evidence unmoved throughout.
+assert_contains "$autopilot" "An unmet criterion is" \
+    "a criterion the walk finds unmet is a failed attempt, not a close"
+assert_contains "$autopilot" "**Evidence-red attempts only.**" \
+    "the unchanged-evidence stop does not fire on a failed criteria walk"
 # An empty pattern list is a legitimate constitution, so a zero here can mean
 # the scan was never asked anything -- indistinguishable, in the output, from
 # a scan that read every changed file and found nothing.
 assert_contains "$autopilot" "only evidence if the scan was asked anything" \
     "autopilot skill refuses to read placeholder_hits=0 as clean when patterns are empty"
+
+# Observed fields are repaired silently; this one is not, because it does not
+# describe the tree -- it answers whether this is the tree at all.
+assert_contains "$core" "observed_branch" "core skill names the branch field"
+assert_contains "$core" "a stop, not a repair" "core skill makes a diverged observed_branch a stop"
+assert_contains "$core" "superpowers:subagent-driven-development" "core skill names the procedure that executes a wave"
+
+assert_contains "$resume" "Repair both silently" "resume still repairs the two fields baton-observe can speak to"
+assert_contains "$resume" "observed_branch" "resume checks the branch"
+assert_contains "$resume" "do not repair it" "resume does not silently repair a diverged branch"
+# Step 6's write list used to say `observed_branch` is set "from what
+# baton-observe reported", which silently undoes step 2's refusal to repair
+# it -- the second half of the skill re-granting what the first half denied.
+assert_not_contains "$resume" '`observed_branch` and `tree_clean` set from what' \
+    "step 6 does not write back a field step 2 refused to repair"
+
+assert_contains "$core" "A field named nowhere above is claimed" \
+    "core skill's catch-all does not sweep in the field with its own policy"
+
+# Was `assert_not_contains "$autopilot" "derive one from"`, pinned to the exact
+# wording of a sentence deleted in aa3d41f -- so it forbade one phrasing of a
+# derivation branch and passed any rephrasing of it, which is the opposite of
+# what it claimed. The rule is that the skill refuses to derive a spec at all,
+# so pin the refusal: a re-introduced branch has to remove or contradict it.
+assert_contains "$autopilot" "Never derive that document yourself" \
+    "the autopilot refuses to write a wave's spec, however a branch is worded"
+assert_contains "$autopilot" "superpowers:subagent-driven-development" \
+    "the work step names the procedure that executes it"
+assert_contains "$autopilot" "not a second review of the code" \
+    "the gate is framed as a record of closure"
+assert_contains "$autopilot" "superpowers:finishing-a-development-branch" \
+    "the end-of-run report names the skill that closes the run"
+
+assert_contains "$resume" "Write nothing, not even" \
+    "the branch stop writes no flag into a state.md it cannot establish is this run's"
+
+# Step 1 skips a wave whose spec cell is `—` rather than deriving one, and a
+# skipped wave stays `todo` -- so nothing on disk records that it was passed
+# over. The end-of-run report is the only place it can appear, and the run it
+# appears in is the one that most wants a human: what the wave needs is a
+# brainstorming session.
+assert_contains "$autopilot" "skipped for want of a spec" \
+    "a wave skipped for an empty spec cell is named in the end-of-run report"
+
+# The workspace preference was a field nothing read: /baton:init collected it,
+# the constitution declared it, baton/SKILL.md called using-git-worktrees
+# "settled once" by it, and no procedure ever handed it over -- that skill reads
+# the agent's instructions, not the constitution. Pinned to the hand-off and not
+# to the word: `workspace` goes green the moment step 1 lists the field, and
+# listing a field is not conveying it.
+assert_contains "$resume" "superpowers:using-git-worktrees" \
+    "resume names the skill the workspace preference has to reach"
+assert_contains "$resume" "state it to that skill rather than letting it ask" \
+    "resume states the preference unasked, since the autopilot has nobody to answer a consent prompt"
 
 finish

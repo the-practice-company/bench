@@ -147,9 +147,21 @@ wave, because that is a question only you can answer.
 
 ---
 
-**The shape worth remembering:** baton is what happens before the first wave
-and after the last one, plus a short record between waves. Inside a wave it is
-not there.
+**The shape worth remembering:**
+
+```
+[where the run works — declared once, in the constitution]
+
+    wave 1:  plan  work  →  gate  →  checkpoint
+    wave 2:  plan  work  →  gate  →  checkpoint
+    wave 3:  plan  work  →  gate  →  checkpoint
+
+[you are back: merge? PR? clean up?]
+```
+
+baton is what happens before the first wave and after the last one, plus a
+short record between waves. Inside a wave it is not there — `plan` and `work`
+are superpowers' own skills, running exactly as they would without baton.
 
 ## First run
 
@@ -214,6 +226,17 @@ session, deliberately not automatic: a session started to check one thing has
 not agreed to an hour of unattended work, and only a human typing the command
 can say otherwise.
 
+The gate's design turns on one distinction: "the tests failed" and "the tests
+could not be run" arrive in the same shape, a number on a `verify_exit=` line.
+`baton-gate` deliberately does not remap `127` or the signal deaths into
+something tidier — a real test runner can propagate a `127` of its own, and
+guessing which case this is would be worse than reporting the number. So the
+exit codes keep the two apart at every other level: `3` and `4` both mean the
+gate could not reach a verdict, and they hand you different jobs. A missing
+`placeholder_patterns` is `3`, because `/baton:init` always writes that field
+and its absence is a statement about the constitution. A missing `verify_cmd`
+is `4`, reported as empty: there is simply nothing to run.
+
 ## What appears in your repository
 
 ```
@@ -235,15 +258,27 @@ session rather than the run, and `/baton:init` adds it to `.gitignore`.
 ## How it stays honest
 
 - **The repository is the source of truth about facts.** Observed fields —
-  the commit, the branch, whether the tree is clean — are re-derived every
-  time, never remembered. A claim that disagrees with the repository (a wave
-  marked done that the repository doesn't back up) is flagged, never quietly
-  corrected.
+  the commit, whether the tree is clean — are re-derived every time, never
+  remembered, and repaired in place when they disagree. A claim that
+  disagrees with the repository (a wave marked done that the repository
+  doesn't back up) is flagged, never quietly corrected.
+- **The branch is neither.** It is observed, but it does not describe the
+  tree the way the others do — it answers whether this is the tree at all. So
+  a disagreement between the branch `state.md` names and the branch you are
+  on is not repaired and not flagged: it stops the run where it stands, with
+  both branches named and nothing written, because the `state.md` that would
+  record the flag is the one that cannot be established as this run's.
 - **One writer.** The writer role is held under a lock for the whole
   session, not re-acquired per write.
 - **No state outside the log.** Every checkpoint is a commit, so
   `git log -p docs/baton/state.md` is the full history. A checkpoint with
   nothing to say writes nothing.
+- **Resume verifies before it trusts.** A grant to work without a human is not
+  a grant to work from an unverified state, so the divergence checks run on
+  every resume including an autopilot one. The one input resume cannot observe
+  is whether a human is in the session — the session source says how the
+  session arrived, not who is in it — which is why `/baton:continue` exists as
+  a separate word rather than a smarter guess.
 
 ## Worth knowing before you rely on it
 

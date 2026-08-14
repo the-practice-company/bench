@@ -26,7 +26,31 @@ Switching branches is a write to the working tree from a procedure that has not 
 
 **3. How much the cleanup actually yields** → measured per task, capped in Task 11.
 
-Recording the arithmetic honestly up front: the spec estimated 900–1000 lines total. A third off each file gives `157 + 333 + 291 + 305 = 1086`, and the `baton` skill grows slightly from Tasks 3 and 7. So **1100 is the realistic ceiling**, and the spec's estimate was optimistic by about 10%. Task 11 sets the cap at 1100. If the cleanup lands lower without breaking the invariant, tighten it in that same commit.
+> **Settled by measurement, and the estimate lost.** The per-file caps below
+> were arithmetic — roughly a third off each file's then-current size —
+> written before anyone had read those files with the invariant in hand. Task
+> 10 measured `baton-checkpoint`'s actual floor at ~317 with every argument
+> sentence gone and every rule kept. So its cap is **324**, not 305 — the
+> floor plus three lines. A second cap moved for the same reason:
+> `baton-resume`'s 290 was reachable only by deleting its digraph's
+> `[shape=…]` declarations, and those are the graph's vocabulary — box for an
+> action, diamond for a decision, doublecircle for a terminal state — so a
+> cap met by spending them is a cap set below the floor. It went to 310, and
+> later to **313** when the final review found that `workspace` was a field no
+> procedure ever handed to the skill meant to read it. `baton-autopilot` moved
+> the same way, 330 → **336**, for the case the gate exists for and had never
+> written down. The budget is therefore **1148**, not 1100.
+>
+> Holding any of those numbers would have meant cutting rules to defend an
+> estimate nobody had checked — the failure the cap exists to prevent, wearing
+> the opposite mask. **Caps are set from the measured floor upward, not from a
+> target downward**, and they moved in one pass at the end rather than one
+> conversation per file: three separate negotiations, each defensible alone, is
+> how a ceiling becomes a running total.
+
+The arithmetic as it stood before anyone measured, kept for the record: the spec estimated 900–1000 lines total; a third off each file gave `157 + 333 + 291 + 305 = 1086`, so **1100** looked like the realistic ceiling and the spec looked optimistic by about 10%.
+
+Both numbers were wrong in the same direction, and for the same reason — neither was a measurement. What the four files actually weigh with every argument gone and every rule kept is `172 + 333 + 310 + 321 = 1136`. The caps are those floors plus about three lines each, room for one restored rule and not for a paragraph: `175 + 336 + 313 + 324 = **1148**`, which is what `tests/test-budget.sh` carries.
 
 **The cleanup invariant, restated because every cleanup task depends on it:**
 
@@ -289,7 +313,35 @@ with:
   wave does.
 ```
 
-- [ ] **Step 5: Run the skill tests**
+- [ ] **Step 5: Repair the catch-all the new bullet just falsified**
+
+The Divergence policy ends with a default, currently:
+
+```markdown
+A field on neither list is claimed. These lists are what the schema carries
+today, and the default has to be the reading that preserves evidence.
+```
+
+That was exhaustive while every non-claimed field sat inside an enumerated
+kind. `observed_branch` now satisfies its literal condition — on neither list —
+while the bullet four lines above hands it a different policy entirely. Read
+top to bottom the specific bullet wins, so nothing misbehaves today; what
+breaks is the next editor, who extends the section by pattern-matching a
+sentence that is no longer true. Replace with:
+
+```markdown
+A field named nowhere above is claimed. These bullets are what the schema
+carries today, and the default has to be the reading that preserves evidence.
+```
+
+Two lines for two — it costs nothing against the 175-line cap. Pin it:
+
+```bash
+assert_contains "$core" "A field named nowhere above is claimed" \
+    "core skill's catch-all does not sweep in the field with its own policy"
+```
+
+- [ ] **Step 6: Run the skill tests**
 
 Run: `bash tests/test-skills.sh`
 Expected: all PASS, including `skill baton is within the 500-line convention`.
@@ -315,12 +367,19 @@ The rule from Task 3, applied in the procedure that executes it.
 
 Append to `tests/test-skills.sh`, before `finish`:
 
+`$resume` is already defined in this file — do not redefine it.
+
 ```bash
-resume="$(cat "$SKILLS/baton-resume/SKILL.md")"
-assert_contains "$resume" "Repair all three silently" "resume still repairs the three genuinely observed fields"
+assert_contains "$resume" "Repair both silently" "resume still repairs the two fields baton-observe can speak to"
 assert_contains "$resume" "observed_branch" "resume checks the branch"
 assert_contains "$resume" "do not repair it" "resume does not silently repair a diverged branch"
+assert_not_contains "$resume" '`observed_branch` and `tree_clean` set from what' \
+    "step 6 does not write back a field step 2 refused to repair"
 ```
+
+Single quotes, not double: the needle contains backticks, and this file already
+pins backticked needles that way (see the `pass` is a second party saying so
+assertion). In double quotes bash would read them as command substitution.
 
 - [ ] **Step 2: Run it to verify it fails**
 
@@ -342,12 +401,23 @@ not hold the lease yet, so nothing is written until step 6.
 becomes:
 
 ```markdown
-Three frontmatter fields in `state.md` describe the repository rather than
-claiming anything about the work: `observed_sha`, `tree_clean`, `writer`.
-Repair all three silently where they disagree with what came back — stale
-reading, and the repository is right. Note the repairs; you do not hold the
-lease yet, so nothing is written until step 6.
+Two frontmatter fields in `state.md` describe the repository rather than
+claiming anything about the work: `observed_sha` and `tree_clean`.
+Repair both silently where they disagree with what came back — stale reading,
+and the repository is right. Note the repairs; you do not hold the lease yet,
+so nothing is written until step 6.
 ```
+
+**Two, not three.** An earlier draft of this plan kept the count at three by
+substituting `writer`. That was wrong, and checking it is what caught it:
+`plugins/baton/scripts/baton-observe` prints `sha`, `short_sha`, `work_sha`,
+`branch`, `tree_clean` and `dirty_count` — no `writer`. This paragraph is
+scoped to what `baton-observe` reports, so `writer` has nothing to be
+reconciled against here; the lease is step 5's, and `writer` is written from
+the session id rather than repaired against an observation. The `baton` skill
+is right to keep `writer` on its observed list — that list is about
+`state.md` fields re-derived rather than trusted, and the lease file is a
+source it names. Do not "fix" the model skill to match this paragraph.
 
 - [ ] **Step 4: Replace the branch comparison with the stop**
 
@@ -368,12 +438,33 @@ expects and which one you are on, and stop. Do not switch branches to
 resolve it: you hold no lease yet, and the human may have moved on purpose.
 ```
 
-- [ ] **Step 5: Run the skill tests**
+- [ ] **Step 5: Stop step 6 writing back what step 2 refused to repair**
+
+Step 6's `**Always:**` list currently reads:
+
+```markdown
+**Always:** the observed-field repairs from step 2 — `observed_sha` set from
+`baton-observe`'s `work_sha`, `observed_branch` and `tree_clean` set from what
+it reported.
+```
+
+Leave it as it is and step 2 says do not repair the branch while step 6 says
+always write it from what `baton-observe` reported. Replace with:
+
+```markdown
+**Always:** the observed-field repairs from step 2 — `observed_sha` set from
+`baton-observe`'s `work_sha`, and `tree_clean` set from what it reported.
+`observed_branch` is not on this list. Step 2 does not repair it, and a resume
+that reached step 6 at all is one whose branch agreed, so there is nothing to
+write.
+```
+
+- [ ] **Step 6: Run the skill tests**
 
 Run: `bash tests/test-skills.sh`
 Expected: all PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add plugins/baton/skills/baton-resume/SKILL.md tests/test-skills.sh
@@ -394,17 +485,26 @@ The core of the change. Step 1 loses the derivation branch; step 3 names `subage
 
 Append to `tests/test-skills.sh`, before `finish`:
 
+`$autopilot` is already defined in this file — do not redefine it under a
+second name.
+
 ```bash
-auto_skill="$(cat "$SKILLS/baton-autopilot/SKILL.md")"
-assert_not_contains "$auto_skill" "derive one from the constitution" "the autopilot no longer writes a wave's spec for itself"
-assert_contains "$auto_skill" "superpowers:subagent-driven-development" "the work step names the procedure that executes it"
-assert_contains "$auto_skill" "not a second review of the code" "the gate is framed as a record of closure"
+assert_not_contains "$autopilot" "derive one from" "the autopilot no longer writes a wave's spec for itself"
+assert_contains "$autopilot" "superpowers:subagent-driven-development" "the work step names the procedure that executes it"
+assert_contains "$autopilot" "not a second review of the code" "the gate is framed as a record of closure"
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `bash tests/test-skills.sh`
-Expected: two FAILs — the `assert_not_contains` and the `subagent-driven-development` one.
+Expected: FAILs including `did not expect to find: derive one from`.
+
+The needle is `derive one from` and not the whole phrase on purpose. In the
+file today, `derive one from the constitution` wraps: `derive one from` ends
+one line and `the constitution:` begins the next. `grep -F` is line-based, so
+the fuller, more specific-looking needle would find nothing and the assertion
+would go green before the change was made. `helpers.sh` prints a NOTE when
+that happens; a needle that fits on one line is better than a note.
 
 - [ ] **Step 3: Rewrite steps 1 and 3**
 
@@ -489,7 +589,7 @@ it runs once here rather than at the end of every wave.
 Add the matching assertion to `tests/test-skills.sh`:
 
 ```bash
-assert_contains "$auto_skill" "superpowers:finishing-a-development-branch" "the end-of-run report names the skill that closes the run"
+assert_contains "$autopilot" "superpowers:finishing-a-development-branch" "the end-of-run report names the skill that closes the run"
 ```
 
 - [ ] **Step 6: Run the skill tests**
@@ -502,6 +602,77 @@ Expected: all PASS.
 ```bash
 git add plugins/baton/skills/baton-autopilot/SKILL.md tests/test-skills.sh
 git commit -m "baton-autopilot: name the procedures, and stop deriving the spec you will be judged by"
+```
+
+---
+
+### Task 5b: a skipped wave must survive into the morning
+
+Not in the original plan. Task 5's review found it, and it is a regression this
+change introduced rather than one it inherited.
+
+Before Task 5, a wave whose `spec` cell read `—` got a spec the agent derived
+and it ran. After Task 5 it is skipped — and the skip is recorded nowhere. The
+wave stays `todo`; `state.md` says nothing about having been passed over; the
+end-of-run report names only `blocked` waves; and `needs_human` does not fire,
+because it is gated on something being `blocked` and step 1 says in as many
+words that a spec-less wave is not blocked. A run can therefore finish clean
+having silently not done a wave — the one wave that needed the human most,
+since what it wants is a `brainstorming` session, the single thing an
+unattended run could never have supplied.
+
+**Sequencing: this lands after Task 8's cleanup commit**, against the cleaned
+text. The anchors quoted below are from before that cleanup and may have been
+reworded; match on the rule, not on the characters.
+
+**Files:** `plugins/baton/skills/baton-autopilot/SKILL.md`, `tests/test-skills.sh`.
+
+- [ ] **Step 1: Write the failing assertion**
+
+```bash
+assert_contains "$autopilot" "skipped for want of a spec" \
+    "a wave skipped for an empty spec cell is named in the end-of-run report"
+```
+
+- [ ] **Step 2: Widen the flag condition**
+
+In `## The pat`, the end-of-run paragraph currently raises the flag
+`**if anything is `blocked`**`. Widen it:
+
+```markdown
+`needs_human: true` **if anything is `blocked`, or was skipped for want of a
+spec**
+```
+
+- [ ] **Step 3: Name them in the report**
+
+After the existing rule naming every blocked wave and what each was waiting on,
+add:
+
+```markdown
+Name every wave you skipped for a `—` spec cell too, and say that is why. A
+skipped wave is still `todo`, so nothing on disk records that you passed it —
+this report is the only place it exists. It also wants the human more plainly
+than a blocked wave does: what it needs is a `brainstorming` session, which is
+the one thing this run could not have supplied for itself.
+```
+
+- [ ] **Step 4: Fix the sentence that now lets it through**
+
+That paragraph ends by telling the agent when to leave the flag alone —
+currently `If nothing is blocked and the scope simply finished`. A scope that
+finished by skipping half its waves is not a scope that simply finished:
+
+```markdown
+If nothing is blocked, nothing was skipped, and the scope simply finished,
+leave `needs_human` alone — that run wants no one.
+```
+
+- [ ] **Step 5: Run and commit**
+
+```bash
+git add plugins/baton/skills/baton-autopilot/SKILL.md tests/test-skills.sh
+git commit -m "baton-autopilot: a wave nobody ran is not a wave that closed"
 ```
 
 ---
@@ -637,13 +808,18 @@ And after the **Operating mode** bullet:
 At the end of `## 6. Hand it back for ratification`, append:
 
 ```markdown
-Say one more thing, because it costs them a round otherwise: **ratify before
-you compact.** Clearing a context filled by this dialogue is a sensible move
-here and a safe one — `state.md` is already written and committed. But a
-session that comes back to an unratified constitution will stop and ask for
-the ratification, which is correct and is also a compaction spent arriving
-where they already were.
+Say one more thing, because it costs them a round otherwise:
+**ratify before you compact.** Clearing a context filled by this dialogue is a
+sensible move here and a safe one — `state.md` is already written and
+committed. But a session that comes back to an unratified constitution will
+stop and ask for the ratification, which is correct and is also a compaction
+spent arriving where they already were.
 ```
+
+Keep `**ratify before you compact.**` on one line. The assertion in Step 1
+looks for `before you compact`, and `grep -F` is line-based: break that phrase
+across the wrap and the assertion fails on the reflow while the rule is sitting
+right there.
 
 - [ ] **Step 5: Run the command tests**
 
@@ -660,6 +836,24 @@ git commit -m "/baton:init: settle the spec source and the workspace while the h
 ---
 
 ### Task 8: Clean `baton-autopilot` to 330 lines
+
+> **What this task got wrong, recorded because Tasks 9 and 10 inherit the
+> shape.** The four sections named below save about 93 lines of the 194 needed.
+> The other ~101 are demanded by the cap and specified nowhere — so more than
+> half the compression was unguided, in a task whose own acceptance criterion
+> says "if a rule had no test and you are unsure, keep it". The review found
+> one discretionary defect in that unguided half and three in the *specified*
+> replacements, which is the opposite of what the plan's shape predicted.
+>
+> Three of the four rules lost were lost by transcribing the replacement text
+> below: exit 3 stopped raising `needs_human: true`, exit 4 was described as
+> pointing at the constitution when it has machine-side causes, and the
+> dirty-tree commit-and-regate branch kept its exemption from the three-attempt
+> ceiling while losing the sentence that bounded it. **A replacement paragraph
+> written from a distance is a worse instrument than a criterion**, because it
+> looks precise while silently dropping whatever it forgot to mention. Where a
+> future cleanup task must name a number, it should name the criterion and let
+> the implementer meet it, not hand over prose to transcribe.
 
 Largest file, and the one whose sections were surveyed in the spec. Apply the invariant: rules stay, arguments for them go.
 
@@ -783,6 +977,17 @@ do not enter the fix-and-regate loop below. Every attempt spent fixing code
 against a suite that never ran is an attempt off the ceiling, and three of
 them close nothing.
 ```
+
+**One rule in that section is pinned and must not leave.** The paragraph after
+the table (`plugins/baton/skills/baton-autopilot/SKILL.md:151-157`) opens
+`**Absence is not symmetric between those two fields**`, and
+`tests/test-skills.sh` asserts that phrase. It is a rule, not an argument for
+one: it stops the agent reading exit 3 and exit 4 across from each other. Keep
+a line carrying `Absence is not symmetric` in the skill and compress the rest
+of the paragraph — the worked example of *which* field is which code is what
+moves to the README in Step 4. Run `bash tests/test-skills.sh` after this step
+specifically; a green suite is the only thing separating "compressed" from
+"deleted a rule".
 
 - [ ] **Step 4: Move the evicted reasoning to the README**
 
@@ -954,7 +1159,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SKILLS="$REPO_ROOT/plugins/baton/skills"
 . "$SCRIPT_DIR/helpers.sh"
 
-BUDGET=1100
+BUDGET=1148
 
 total=0
 for f in "$SKILLS"/*/SKILL.md; do
@@ -983,7 +1188,12 @@ chmod +x tests/test-budget.sh
 - [ ] **Step 2: Run it**
 
 Run: `bash tests/test-budget.sh`
-Expected: PASS, with the four per-skill counts printed and a total at or below 1100. If it fails, the cleanup in Tasks 8–10 did not reach its caps — go back rather than raising `BUDGET`.
+Expected: PASS, with the four per-skill counts printed and a total at or below 1148. If it fails, the cleanup in Tasks 8–10 did not reach its caps — go back rather than raising `BUDGET`.
+
+`1148` is `175 + 336 + 313 + 324`, the sum of the per-file caps in
+`tests/test-skills.sh`. Keep the two in step: a budget that does not equal the
+sum of the caps is a second, quieter ceiling, and whichever is lower is the
+real one.
 
 - [ ] **Step 3: Add the picture to the README**
 
@@ -1030,6 +1240,22 @@ git commit -m "tests: a budget, because every line was added for a good reason"
 ---
 
 ### Task 12: The half of the branch stop no script can watch
+
+> **Corrected during implementation.** As written below, this task adds the
+> branch divergence to `build-diverged.sh`, which already carries two others.
+> That breaks RUNBOOK scenario 2: a compliant agent hits the branch check in
+> `baton-resume` step 2 *before* it runs the `closed_at_sha` ancestry check or
+> reads `.baton/precompact-facts`, so scenario 2's pass conditions become
+> unreachable. A fixture with three divergences tests one and hides two.
+>
+> What was built instead: `build-diverged.sh` and `test-cold-start-diverged.sh`
+> stay at two divergences, and the branch stop gets its own fixture
+> `build-diverged-branch.sh` — deliberately clean in every other respect, so it
+> is the only thing an agent can find — with its own
+> `tests/test-cold-start-diverged-branch.sh`. Scenario 5 points at that one.
+>
+> The steps below stand as the description of the assertion and the scenario;
+> only the fixture they attach to changed.
 
 `tests/test-cold-start-diverged.sh` says it plainly in its own header: whether a resuming agent *notices* a divergence, says what diverged, and stops is not something a script can observe. That half is the runbook's, run by a human.
 
@@ -1128,9 +1354,29 @@ git commit -m "tests: a fixture that is not on the branch it claims, and the sce
 ## Done when
 
 - `bash tests/run-tests` is green, including the new `test-budget.sh`.
-- `grep -rn "branch/worktree" plugins/ tests/` returns nothing.
-- `grep -rn "derive one from the constitution" plugins/` returns nothing.
+- `grep -rn "branch/worktree" plugins/ tests/` returns nothing outside
+  `tests/test-templates.sh`, where the string is the needle of the assertion
+  forbidding it.
+- `grep -rn "derive one from" plugins/` returns nothing.
 - `plugins/baton/skills/*/SKILL.md` totals 1100 lines or fewer.
 - The spec's §9 table has a commit against every row.
 
 Then use `superpowers:finishing-a-development-branch`.
+
+---
+
+## Deliberately not fixed here
+
+Found by the whole-branch review, judged out of scope, recorded so they are not lost.
+
+**The `spec` cell is the new load-bearing invariant and has no mechanism behind it.** `verify_cmd` and `placeholder_patterns` are safe because they live in a file `baton-write` refuses unconditionally. The `spec` cell lives in `state.md`, which the agent rewrites at every checkpoint. The skill asserts "a human put it there" and "never derive that document yourself" — both prose. Nothing stops an unattended agent writing a spec document, entering its path at the next checkpoint, and taking the wave: the self-judging loop this branch removed, reconstituted one level up. The divergence policy classifies the cell as claimed by catch-all, which governs whether it may be *repaired* but says nothing about who may *author* it. **This is the first thing to harden next.**
+
+**A wave left `doing` by a mid-wave compaction has no branch in the loop.** Availability rule 1 is `status` is `todo`, so an agent entering `baton-autopilot` at step 0 skips it. What saves it today is that a resumed session enters through `baton-resume`'s `Next action` instead, a different entry point — and the skill never says which one a resumed session uses. Pre-existing, but sharper now that the availability list is pinned as authoritative.
+
+**The budget rations lines, and what is scarce is tokens.** `fmt -w 100` across the four skills would remove roughly a fifth of the line count, delete nothing, and turn both tests green with room to spare — an evasion that looks like tidying. A byte or word budget alongside the line budget closes it.
+
+**`references/` is the budget's largest hole, and the roadmap points straight at it.** `test-budget.sh` globs `*/SKILL.md`, so a `skills/<name>/references/*.md` file is neither capped nor counted. The design defers references files to a later round; whoever introduces them must widen that glob in the same commit or the budget quietly stops meaning anything.
+
+**Command files are loaded into context and are not capped.** `commands/` is ~600 lines. This branch moved evicted prose to `README.md`, which genuinely is not loaded — but nothing in the tests distinguishes the two destinations, and `auto.md` is the natural landing spot for anything cut from `baton-autopilot`.
+
+**`build-diverged.sh` is a name that invites the mistake this branch already undid once.** Nothing in the filename says it carries two specific divergences rather than being the general-purpose diverged fixture. Rename before a sixth scenario arrives.

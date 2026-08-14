@@ -72,10 +72,17 @@ fresh timestamp is noise in the log that has to stay readable.
 When state and repository disagree, what you do depends on which kind of field
 diverged.
 
-- **Observed fields** — `observed_sha`, `observed_branch`, `tree_clean`,
-  `writer`, `updated_at`. Fix them silently. Each describes something you can
-  check at this moment — the repository, the lease file, the clock — so the
-  file's copy of it is never the authority.
+- **Observed fields** — `observed_sha`, `tree_clean`, `writer`, `updated_at`.
+  Fix them silently. Each describes something you can check at this moment —
+  the repository, the lease file, the clock — so the file's copy of it is
+  never the authority.
+- **`observed_branch`** — looks observed and is not. The others describe the
+  tree; this one answers whether this is the tree at all. A disagreement is
+  **a stop, not a repair**: name the branch `state.md` expects and the branch
+  you are on, and stop without writing — not even a flag, because the file you
+  would write to is the one you cannot establish is this run's. Repairing it
+  silently is how a session on the wrong branch adopts a `state.md` that
+  belongs to no run it is in.
 - **Claimed fields** — a wave marked `done`, a gate marked `auto` or `pass`,
   the `closed_at_sha` recorded against a closed wave, which is the one claim
   `baton-resume` checks mechanically. Never fix these. Set `suspect: true`,
@@ -90,8 +97,8 @@ diverged.
   in the other direction — writing `off` is always yours, writing anything
   else is the human's, through `/baton:auto`, a command you cannot invoke.
 
-A field on neither list is claimed. These lists are what the schema carries
-today, and the default has to be the reading that preserves evidence.
+A field named nowhere above is claimed. These bullets are what the schema
+carries today, and the default has to be the reading that preserves evidence.
 
 Clearing your own `suspect` is the same act as silently fixing the claim that
 raised it. Granting yourself the autopilot is that act one level up: it
@@ -152,6 +159,14 @@ These thoughts mean stop — you are rationalising.
   skill is the model it applies once state is restored, not a step that
   precedes it.
 - **baton-checkpoint** — persist before compaction or at the end of a stretch
-- **superpowers:brainstorming** — writes the per-wave spec
+- **superpowers:brainstorming** — writes a wave's own spec, when the umbrella
+  spec does not cover that wave closely enough. Never run unattended.
 - **superpowers:writing-plans** — writes the per-wave plan
-- **superpowers:subagent-driven-development** — executes the wave
+- **superpowers:subagent-driven-development** — executes the wave, including
+  its own two-stage review. Named at step 3 of the autopilot loop, not left
+  to the agent's choice of tool.
+- **superpowers:using-git-worktrees** and
+  **superpowers:finishing-a-development-branch** — both bracket one unit of
+  work, and baton's unit is the run. The first is settled once by the
+  constitution's `workspace`; the second runs when the run ends, not when a
+  wave does.

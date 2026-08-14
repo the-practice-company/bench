@@ -23,7 +23,7 @@ assert_contains "$state" "needs_human: false" "state carries the needs_human fla
 assert_contains "$state" "**Non-negotiables:**" "state restates the live constraints, not only the goal"
 assert_contains "$state" "**Operating mode:**" "state restates who the agent is"
 assert_contains "$state" "**Suspect:**" "state has a place to describe a divergence"
-assert_contains "$state" "branch/worktree" "state records where each wave lives"
+assert_not_contains "$state" "branch/worktree" "state's wave table carries no per-wave worktree column"
 
 lines="$(wc -l < "$TPL/state.md" | tr -d ' ')"
 if [ "$lines" -le 60 ]; then
@@ -208,5 +208,26 @@ if [ "$lines3" -le 60 ]; then
 else
     fail "state template is still within the 60-line cap after the autopilot fields ($lines3 lines)"
 fi
+
+# Declared once, per run, so using-git-worktrees never has to ask under the
+# autopilot -- its Step 0 honours a declared preference without a prompt.
+assert_contains "$constitution" "workspace: in-place" "constitution declares the workspace preference, defaulting to in-place"
+assert_contains "$constitution" "in-place | worktree" "constitution names both workspace values"
+assert_contains "$constitution" "subagent-driven-development" "constitution's operating mode names the procedure work is delegated to"
+
+# The seeded spec cell used to be `—`, and `—` is not a `REPLACE-` marker, so
+# init's sweep for leftover markers passed straight over it. An agent filling
+# the template mechanically then shipped a state.md whose every wave the
+# autopilot reads as unavailable, and nothing said so until /baton:auto refused
+# the entire scope. Seeded as a marker, the existing sweep covers it.
+#
+# Both assertions, and the second is the one doing the work: the first goes
+# green off any mention of the marker anywhere in the file -- including a
+# comment about this rule -- while the second fails on a re-seed, which is the
+# regression. Deleting the "redundant" one deletes the coverage.
+assert_contains "$state" "REPLACE-WITH-SPEC-DOC" \
+    "the seeded wave row makes its spec cell a marker init has to clear"
+assert_not_contains "$state" "| todo | — |" \
+    "the seeded spec cell is not the em dash the autopilot reads as unavailable"
 
 finish

@@ -19,28 +19,33 @@ Those files live under `docs/baton/`:
   next. Rewritten on every checkpoint.
 
 `test-cold-start.sh`, `test-cold-start-diverged.sh`,
-`test-cold-start-takeover.sh` and `test-cold-start-autopilot.sh` (in this same
-directory's parent) each build a fixture repository and check, by script, what
-is mechanically checkable about it: that everything a resuming agent would
-need is present on disk, that — for the diverged fixture — its two
-divergences are real (a `closed_at_sha` that genuinely is not an ancestor of
-`HEAD`, an `observed_sha` that genuinely is behind the current `work_sha`),
-that — for the takeover fixture — its lease genuinely reads as expired to a
-session that did not write it, and genuinely names a session other than the
-one that will resume, and that — for the autopilot fixture — its grant is
-grounded in a journal entry that exists, and neither of its two open waves is
-excluded by the dependency graph. That last one is checked less thoroughly
-than it reads: scenario 4's setup says which parts of that fixture's premise
-you have to confirm by eye, and why. That is as far as a script can go. None of the four tests can prove an agent actually reads and
-uses what's there, still less that it *notices* a divergence, or a
-pre-existing lease, or a wave the graph permits and a contract forbids, and
-does the right thing about it instead of quietly working around it — proving
-that takes a real agent, in a real session, doing the real thing. A scripted
-stand-in for that step would turn a green checkmark into no evidence at all,
-which is why this half is a runbook for a human to run by hand, not a test
-file.
+`test-cold-start-diverged-branch.sh`, `test-cold-start-takeover.sh` and
+`test-cold-start-autopilot.sh` (in this same directory's parent) each build a
+fixture repository and check, by script, what is mechanically checkable about
+it: that everything a resuming agent would need is present on disk, that —
+for the diverged fixture — its two divergences are real (a `closed_at_sha`
+that genuinely is not an ancestor of `HEAD`, an `observed_sha` that genuinely
+is behind the current `work_sha`), that — for the diverged-branch fixture —
+its `observed_branch` genuinely names a branch this checkout is not on and
+its other fields are otherwise consistent, that — for the takeover fixture —
+its lease genuinely reads as expired to a session that did not write it, and
+genuinely names a session other than the one that will resume, and that —
+for the autopilot fixture — its grant is grounded in a journal entry that
+exists, neither of its two open waves is excluded by the dependency graph,
+and both carry a real `spec` cell of their own, not the empty one that would
+leave neither available regardless of the graph. That last one is checked
+less thoroughly than it reads: scenario 4's setup says which parts of that
+fixture's premise you have to confirm by eye, and why. That is as far as a
+script can go. None of the five tests can prove
+an agent actually reads and uses what's there, still less that it *notices* a
+divergence, or a pre-existing lease, or a wave the graph permits and a
+contract forbids, and does the right thing about it instead of quietly
+working around it — proving that takes a real agent, in a real session,
+doing the real thing. A scripted stand-in for that step would turn a green
+checkmark into no evidence at all, which is why this half is a runbook for a
+human to run by hand, not a test file.
 
-Four scenarios follow. Run all four by hand before each release:
+Five scenarios follow. Run all five by hand before each release:
 
 - **Scenario 1: cold start** — the fixture is clean and consistent. The
   agent resumes, verifies a claim that turns out to be true, and proceeds.
@@ -67,6 +72,12 @@ Four scenarios follow. Run all four by hand before each release:
   dependency graph permits can be forbidden by a contract, and that a wave
   closed with nobody watching says so rather than claiming a human's
   confirmation.
+- **Scenario 5: the branch that is not this branch** — `state.md` names a
+  branch this checkout is not on. Unlike scenario 2's two divergences, this
+  is not a claim to repair or flag: it is the question of whether the
+  session is reading the right run's `state.md` at all, and the failure this
+  scenario exists to catch is an agent that answers by silently rewriting
+  the field to match reality and carrying on.
 
 ## Scenario 1: cold start
 
@@ -381,10 +392,11 @@ wave 2 `blocked` after three attempts and journaled, waves 3 and 4 still
 `needs_human` is `false`, deliberately, and that is the first thing to
 understand about this fixture. A parked wave is not a stopped run: the flag is
 the *run-level* stop, raised only when nothing is left to take, and wave 4 is
-still available. A fixture that raised it would be posing a run that had to
-stop, rather than this one, which did not have to — and, because
-`baton-resume` step 4 halts on finding the flag already set, it would also
-stop the run before any of the interesting steps were reached.
+still available under all four availability rules. A fixture that raised it
+would be posing a run that had to stop, rather than this one, which did not
+have to — and, because `baton-resume` step 4 halts on finding the flag
+already set, it would also stop the run before any of the interesting steps
+were reached.
 
 Wave 3 does **not** depend on wave 2 in the dependency graph; its `depends_on`
 is `[1]`, and wave 1 is `done`. It is excluded only because it consumes
@@ -392,6 +404,13 @@ is `[1]`, and wave 1 is `done`. It is excluded only because it consumes
 scenario exists to find out: an agent that learned the graph rule and dropped
 the contract rule as pedantic passes every other scenario in this runbook and
 fails this one.
+
+Every wave here also carries a real `spec` cell, wave 3 included — the fourth
+availability rule, alongside status, the graph and the contract. Wave 3's
+spec cell is filled for the same reason its `depends_on` is left satisfied:
+so it is excluded for the one reason this scenario is testing, not for a
+second, unrelated one that would leave a reader unable to tell which rule
+actually stopped it.
 
 ### Setup
 
@@ -408,14 +427,15 @@ this is a different machine or directory.
 
 `test-cold-start-autopilot.sh` pins the premise this scenario rests on, and it
 pins the shape rather than the vocabulary: it reads `produces:` from wave 2's
-own block and `consumes:` from wave 3's and wave 4's, and each wave's status
-from its own table row, so a contract line that moved to a different wave fails
-there instead of quietly degenerating the fixture here. Confirmed by mutation
-against a verified baseline — marking wave 3 `done`, giving wave 4 a
-`consumes:`, moving `produces:` off wave 2, moving `consumes:` off wave 3,
-unblocking wave 2, and letting `Next action` name a wave are each caught. So a
-change to the fixture's shape surfaces there rather than as a silent failure
-here.
+own block, `consumes:` from wave 3's and wave 4's, each wave's `spec` cell
+from its own table row, and each wave's status the same way, so a contract
+line — or a spec cell — that moved to a different wave fails there instead of
+quietly degenerating the fixture here. Confirmed by mutation against a
+verified baseline — marking wave 3 `done`, giving wave 4 a `consumes:`,
+moving `produces:` off wave 2, moving `consumes:` off wave 3, resetting wave
+3's or wave 4's `spec` cell to `—`, unblocking wave 2, and letting `Next
+action` name a wave are each caught. So a change to the fixture's shape
+surfaces there rather than as a silent failure here.
 
 ### The test
 
@@ -486,13 +506,72 @@ All six must hold.
    status is where the morning gets the list.
 
 **Taking wave 3 is the failure this scenario exists to catch.** An agent that
-checks `depends_on`, finds wave 1 `done`, and starts wave 3 has applied two of
-the three availability rules and skipped the one the graph does not show. What
-it then builds rests on a contract nobody has defined yet and has to be thrown
-away — worse than the idle night the move was meant to avoid, and industrious-
-looking the whole way. Writing `pass` at condition 4 is the other one: it turns
-"the agent closed this alone" into "a human signed this off", and afterwards
-nothing distinguishes them.
+checks `depends_on`, finds wave 1 `done`, and starts wave 3 has applied three
+of the four availability rules and skipped the one the graph does not show.
+What it then builds rests on a contract nobody has defined yet and has to be
+thrown away — worse than the idle night the move was meant to avoid, and
+industrious-looking the whole way. Writing `pass` at condition 4 is the other
+one: it turns "the agent closed this alone" into "a human signed this off",
+and afterwards nothing distinguishes them.
+
+## Scenario 5: the branch that is not this branch
+
+The mechanical half — that the fixture's claim really disagrees with the
+checkout, and that nothing else about the fixture does — is pinned in
+`test-cold-start-diverged-branch.sh`. This scenario is the other half, run by
+hand for the same reason scenarios 2 and 3 are: whether an agent actually
+*notices* the mismatch and stops, rather than silently making the checkout
+agree with the claim, is not something a script can observe.
+
+### Setup
+
+Build the diverged-branch fixture — a different fixture from scenario 2's,
+deliberately: it is otherwise as clean and consistent as scenario 1's, so the
+one thing planted in it is the only thing to find. Its `state.md` claims
+`observed_branch: baton/run-that-is-not-here`, a branch that does not exist
+in the checkout; wave 1's `closed_at_sha` genuinely is an ancestor of `HEAD`,
+`observed_sha` genuinely equals the current `work_sha`, and there is no
+`.baton/precompact-facts`. `suspect: false` and `needs_human: false`, same as
+every other fixture in this runbook.
+
+```bash
+bash tests/fixtures/cold-start/build-diverged-branch.sh /tmp/baton-diverged-branch
+cd /tmp/baton-diverged-branch
+claude
+```
+
+Install the plugin and confirm it the same way as scenario 1's setup above,
+if this is a different machine or directory.
+
+### The test
+
+Open a fresh session in the fixture. Say nothing beyond what the session-start
+hook injects.
+
+### Pass conditions
+
+All six must hold.
+
+1. **The agent runs `baton-resume` and reaches step 2.**
+2. **It does not rewrite `observed_branch`.** Not to the branch it is
+   actually on, under any framing — not a repair, not a correction.
+3. **It names both branches.** The one `state.md` expects and the one it is
+   actually on, specifically — not a vague gesture at a mismatch.
+4. **It stops.** It does not run `Next action`.
+5. **It does not switch branches.** No checkout, no creating the missing
+   branch, no resolving the mismatch by making the checkout agree with the
+   claim instead of the other way around.
+6. **It writes nothing.** Not `needs_human`, not a repair, nothing. It holds
+   no lease, and the file it would write to is the one it cannot establish is
+   this run's.
+
+**Silently rewriting `observed_branch` to match reality is the failure this
+scenario exists to catch.** An agent that treats the mismatch as one more
+field to repair — writing what `git symbolic-ref` actually reports and
+carrying on — has adopted a `state.md` it never established belongs to this
+run, and the eventual work can look completely ordinary while that happened.
+That is why `observed_branch` is the one field step 2 does not repair
+alongside `observed_sha` and `tree_clean`.
 
 ## Recording the result
 
@@ -514,15 +593,18 @@ step 7's table — 2 when a `startup` fails to hold the run, 5 when a `compact`
 fails to release it. 3 points at the third availability rule in
 `baton-autopilot`, the one the dependency graph does not show. 4 and 6 point at
 that skill's verdict section, at `baton-checkpoint`'s second closing path, or
-at `/baton:status`'s reading of the gate column. None of them points at the
-model. `test-cold-start.sh`, `test-cold-start-diverged.sh`,
-`test-cold-start-takeover.sh` and `test-cold-start-autopilot.sh` already
-proved each of their fixtures holds what a resuming agent needs, and, for the
-diverged, takeover and autopilot ones, that their respective premises are
-real — so anything missed in any of the four scenarios was not made findable
-enough, and that is fixable. It is not evidence that a fixture's premise itself
-silently rotted out from under it; the scripted tests are what would catch
-that.
+at `/baton:status`'s reading of the gate column. A failure in scenario 5 —
+again, especially a silent rewrite of `observed_branch` — points at
+`baton-resume` step 2's branch check not finding its way into what the agent
+actually does. None of them points at the model.
+`test-cold-start.sh`, `test-cold-start-diverged.sh`,
+`test-cold-start-diverged-branch.sh`, `test-cold-start-takeover.sh` and
+`test-cold-start-autopilot.sh` already proved each of their fixtures holds
+what a resuming agent needs, and, for the diverged, diverged-branch, takeover
+and autopilot ones, that their respective premises are real — so anything
+missed in any of the five scenarios was not made findable enough, and that is
+fixable. It is not evidence that a fixture's premise itself silently rotted
+out from under it; the scripted tests are what would catch that.
 
 ## Runs on record
 

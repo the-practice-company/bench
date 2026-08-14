@@ -5,15 +5,11 @@ description: Use when the human's first message of a session is "continue", "whe
 
 # baton Resume
 
-Recover the run. Nothing else happens until this finishes.
+Recover the run: nothing else happens until this finishes. **Announce at
+start:** "Restoring baton state before doing anything else."
 
-**Announce at start:** "Restoring baton state before doing anything else."
-
-This skill writes — repairing observed fields, and raising a divergence it
-finds — both through `baton-write` under the writer lease. It is idempotent:
-run it again after nothing has changed and `baton-write` has nothing to
-commit, like `baton-checkpoint`'s idle case. If you are unsure whether you
-already resumed, resume again.
+It writes only through `baton-write`, under the writer lease, and it is
+idempotent: if you are unsure whether you already resumed, resume again.
 
 ## The Process
 
@@ -23,6 +19,8 @@ digraph resume {
     "Not a baton run - say so, suggest /baton:init, stop" [shape=doublecircle];
     "Read constitution.md and state.md" [shape=box];
     "baton-observe; check merge-base ancestry" [shape=box];
+    "Branch disagrees?" [shape=diamond];
+    "Report the branch mismatch - stop, write nothing" [shape=doublecircle];
     "Read .baton/precompact-facts if present" [shape=box];
     "suspect or needs_human already on disk?" [shape=diamond];
     "Resolve that first - report to the human" [shape=doublecircle];
@@ -35,7 +33,9 @@ digraph resume {
     "docs/baton/state.md exists?" -> "Not a baton run - say so, suggest /baton:init, stop" [label="no"];
     "docs/baton/state.md exists?" -> "Read constitution.md and state.md" [label="yes"];
     "Read constitution.md and state.md" -> "baton-observe; check merge-base ancestry";
-    "baton-observe; check merge-base ancestry" -> "Read .baton/precompact-facts if present";
+    "baton-observe; check merge-base ancestry" -> "Branch disagrees?";
+    "Branch disagrees?" -> "Report the branch mismatch - stop, write nothing" [label="yes"];
+    "Branch disagrees?" -> "Read .baton/precompact-facts if present" [label="no"];
     "Read .baton/precompact-facts if present" -> "suspect or needs_human already on disk?";
     "suspect or needs_human already on disk?" -> "Resolve that first - report to the human" [label="yes"];
     "suspect or needs_human already on disk?" -> "Acquire the writer lease" [label="no"];
@@ -46,46 +46,26 @@ digraph resume {
 }
 ```
 
-## Steps
-
 **0. Is this a baton run at all?** If `docs/baton/state.md` does not exist,
-this repository is not a baton run: say so, suggest `/baton:init`, stop.
-Create nothing — not the directory, not a state file, not a constitution. This
-skill fires on every session start and on the word "continue", in every
-repository on the machine, so a missing state file is the ordinary case, not a
-fault to report at length.
+this is not a baton run: say so in one line, suggest `/baton:init`, stop.
+Create nothing: not the directory, not a state file, not a constitution.
 
-**1. Read both files.** First pin the working directory to the repository
-root:
-
-```bash
-cd "$(git rev-parse --show-toplevel)"
-```
-
-Every path here — `docs/baton/state.md`, `.baton/precompact-facts` — is
-relative to that root; from a monorepo subdirectory they resolve against
-`packages/foo/`, find nothing, and this resume concludes there is no run.
-Every script and both hooks re-resolve for the same reason:
-`hooks/pre-compact` records a lease that landed in a subdirectory and left two
-sessions each believing it held it alone.
-
+**1. Read both files.** Pin the working directory to the repository root with
+`cd "$(git rev-parse --show-toplevel)"`; every path here resolves against it.
 Then read `docs/baton/constitution.md` first, `docs/baton/state.md` second.
-Three things from it, none optional: the goal, your operating mode, the
-non-negotiables. Without the constraints, a run correctly serves the current
-request while violating the original brief. The operating mode is who you are
+Four things from the constitution, none optional: the goal, your operating
+mode, the non-negotiables, and `workspace`. The operating mode is who you are
 for the rest of the session, and step 8 means it literally: orchestrator means
-you delegate rather than implement here.
+you delegate rather than implement here. `workspace` — `in-place` or
+`worktree` — is the consent `superpowers:using-git-worktrees` would stop to
+ask for: state it to that skill rather than letting it ask, since under the
+autopilot nobody is there to answer.
 
 Check `status` in its frontmatter before acting on any of it: anything other
 than `ratified` means the human has not finished writing it — stop and ask for
-ratification rather than guessing at intent.
-
-A `REPLACE-WITH` placeholder means the same — but match a *frontmatter field
-whose value begins with the token*, not the string anywhere in the file. The
-template ships `REPLACE-WITH` inside a frontmatter *comment* explaining the
-ratification rule, which survives untouched into a perfectly ratified
-constitution; a substring match then halts every resume of that run,
-permanently, over a line of documentation.
+ratification rather than guessing at intent. A `REPLACE-WITH` placeholder
+means the same, but match a *frontmatter field whose value begins with the
+token*, not the string anywhere in the file.
 
 **2. Verify rather than trust.**
 
@@ -93,53 +73,37 @@ permanently, over a line of documentation.
 "${CLAUDE_PLUGIN_ROOT}/scripts/baton-observe"
 ```
 
-Three frontmatter fields in `state.md` describe the repository rather than
-claiming anything about the work: `observed_sha`, `observed_branch`,
-`tree_clean`. Repair all three silently where they disagree with what came
-back — stale reading, and the repository is right. Note the repairs; you do
-not hold the lease yet, so nothing is written until step 6.
+`observed_sha` and `tree_clean` are observed — they describe the repository,
+not the work. Repair both silently where they disagree with what came back,
+but note the repairs rather than writing them; that is step 6, once you hold
+the lease. Compare `observed_sha` against this run's `work_sha`, not its
+`sha`; an empty `work_sha` is not a failure, only nothing outside
+`docs/baton/` on `HEAD` yet.
 
-Compare `observed_sha` against this run's `work_sha`, not its `sha`. `sha` is
-raw `HEAD` and moves on every checkpoint commit, so it could never equal a
-baseline the checkpoint before it recorded; `work_sha` is the last commit
-outside `docs/baton/`, which checkpoint commits never touch, so it holds
-across checkpoints and moves when work lands. Empty `work_sha` is not a
-failure — nothing outside `docs/baton/` is reachable from `HEAD` yet. Then
-compare `observed_branch`.
+Then compare `observed_branch` — and **do not repair it**. Report it and stop:
+name the branch `state.md` expects and the branch you are on, go no further,
+and do not switch branches to resolve it. **Write nothing, not even
+`needs_human`:** you hold no lease, and the file you would write to is the one
+you cannot establish is this run's.
 
-`tree_clean: false` matters most on a resume: uncommitted work in the tree,
-most often from a session that died mid-edit — the one you are picking up.
-Find out what it is before touching anything:
+`tree_clean: false` on a resume is most often uncommitted work from the
+session you are picking up. Find out what it is before touching anything:
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/baton-observe" --changed-since "<observed_sha>"
 ```
 
-That lists every path changed since the last checkpoint's baseline, untracked
-included. Reconcile against `In flight`: the same work means you have found
-the interrupted edit and `In flight` says what it was for. If `In flight` says
-`nothing` and the list is not empty, say so — that is work nobody wrote down,
-and `Next action` was written for a clean tree; running it over a tree of
-unknown provenance tangles the two together.
+That lists every path changed since that baseline, untracked included.
+Reconcile against `In flight`: the same work means you have found the
+interrupted edit. If `In flight` says `nothing` and the list is not empty, say
+so before going further — `Next action` was written for a clean tree.
 
-A wave marked `done` whose `closed_at_sha` is not an ancestor of `HEAD` is a
-different finding: `closed_at_sha` is claimed, so it is a divergence, never
-repaired silently. Check every wave marked `done`, not only the most recent —
-a run on day three has several, and the older claim is likelier to have been
-rebased out from under.
-
-The template's `—` placeholder means "no sha recorded here", and what that is
-worth depends entirely on the wave's status. On a wave that is not `done` it is
-simply the default, so do not run the check against it at all — `merge-base`
-would answer exit 128 and that reads as history moving when nothing did. On a
-wave marked `done` it is a divergence, and the strongest kind: nothing recorded
-the sha, so the claim cannot be checked at all, and unverifiable is
-indistinguishable from false from outside. `baton-checkpoint` reaches the same
-verdict on the same cell, deliberately — a wave declared finished with nothing
-behind the declaration is the exact failure this whole check exists to catch.
-
-Capture the exit code and the message together — the table below keys one row
-on what the command printed:
+`closed_at_sha` on a wave marked `done` is claimed, so a mismatch there is a
+divergence, never repaired silently: check every `done` wave, not only the
+most recent. A `—` means no sha was recorded — on a wave that is not `done`
+that is the default, so do not run the check against it at all; on a `done`
+wave it is itself the divergence. Capture the exit code and the message
+together, since one row keys on what the command printed:
 
 ```bash
 rc=0
@@ -153,78 +117,48 @@ printf 'exit=%s message=%s\n' "$rc" "$out"
 | 1 | It is not an ancestor. The claim diverged from the repository. |
 | 128, message starts `fatal:` | `<closed_at_sha>` is not a valid commit at all — a placeholder never filled in, or history rewritten out from under it. |
 
-Any non-zero exit, 1 or 128 alike, is the same finding: the claimed field
-diverged and the run stops for it — 128 is not a crash to report and move
-past. But record which code, and which wave, in step 6's `Suspect` line: 1
-says the commit exists and history moved past it, 128 says there is no such
-commit at all.
+Any non-zero exit, 1 or 128 alike, is the same finding: the claim diverged and
+the run stops. Record which code and which wave in step 6's `Suspect` line.
 
-**3. Check what happened after the last checkpoint.** If
-`.baton/precompact-facts` exists, the PreCompact hook recorded the repository
-as it stood at compaction time.
+**3. Check what happened after the last checkpoint.** Read
+`.baton/precompact-facts` if present: the PreCompact hook wrote it with the
+repository as it stood at compaction time. If it carries
+`observe_failed=true`, stop reading there — no `work_sha` was recorded to
+compare against. Say no staleness check was possible this resume, and go to
+step 4.
 
-If it carries `observe_failed=true`, stop reading there: the hook writes that
-line, and deliberately no `work_sha` at all, when `baton-observe` failed at
-compaction time. An absent field reads back as an empty string, unequal to
-every real `observed_sha`, so comparing anyway manufactures a divergence on a
-healthy run — the one case the hook went to trouble to prevent. Say no
-staleness check was possible this resume, and go to step 4.
-
-Otherwise check direction first. If the precompact `work_sha` is an ancestor
+Otherwise check direction first: if the precompact `work_sha` is an ancestor
 of *both* the current `work_sha` and `observed_sha` — the `merge-base` call
-from step 2 — the file is left over from an earlier compaction already
-checkpointed past, and establishes nothing. `.baton/` is gitignored and
-nothing prunes it, so a spent file is the normal case here; treating one as a
-mismatch raises a divergence on a healthy run at every resume to the end of
-the run.
+from step 2 — the file is spent, an earlier compaction already checkpointed
+past, and nothing prunes these files, so that is the ordinary case.
 
 Otherwise compare the file's `work_sha` — not its `sha` — against the
-`observed_sha` you read *from disk* in step 1, before step 2's repair: step 2
-sets that field from the same `baton-observe` output, so the repaired value
-would be compared against itself and never fire. Three outcomes:
+`observed_sha` you read *from disk* in step 1, before step 2's repair:
 
-- **Equal.** The checkpoint was current when the compaction hit. Nothing
-  follows.
-- **`observed_sha` is an ancestor of the precompact `work_sha`.** Work landed
-  after the last checkpoint and nothing captured it. The sha repair is
-  routine, step 2 covers it — but `Next action`, `In flight` and the wave
-  statuses were written alongside the old value and describe a repository that
-  has since moved. They are claimed fields, nobody has corrected them, and
-  *that* stops the run: not the sha, the narrative written against it.
-- **Neither is an ancestor of the other, or `merge-base` exits 128.** History
-  moved — a rebase, a force-push, a branch that is not the branch it was. A
-  genuine divergence, and the same stop.
+| Comparison | What it means |
+|---|---|
+| Equal | The checkpoint was current when the compaction hit. Nothing follows. |
+| `observed_sha` is an ancestor of the precompact `work_sha` | Work landed after the last checkpoint and nothing captured it. The sha repair is routine, step 2 covers it — but `Next action`, `In flight` and the wave statuses were written against the old value and nobody has corrected them, and *that* stops the run: not the sha, the narrative written against it. |
+| Neither is an ancestor of the other, or `merge-base` exits 128 | History moved — a rebase, a force-push, a history rewritten under you. A genuine divergence, and the same stop. |
 
 Once the file has been acted on — step 6's write has landed, or you
-established above that it was spent — delete it:
+established it was spent — delete it: `rm -f .baton/precompact-facts`.
 
-```bash
-rm -f .baton/precompact-facts
-```
+**4. Handle the flags that were already on disk.** Steps 0 to 3 only read, and
+only step 2's branch disagreement stops there, without writing. `suspect: true`
+in the `state.md` from step 1 means a claim already diverged, caught earlier;
+`needs_human: true` means the run is already stopped. Either one, found
+already set, is the whole job until resolved: report it and stop rather than
+working around it. What steps 2 and 3 just found themselves is different —
+that is step 6, once you hold the lease. The branch check is the exception: it
+does not reach step 6, because it does not reach step 5.
 
-The next compaction writes a fresh one. Left behind, it makes the next resume
-re-litigate a question this one already answered, and the answer only gets
-more wrong as the run goes on.
-
-**4. Handle the flags that were already on disk.** Steps 0 to 3 are all reads;
-this is the first step that decides anything. `suspect: true` in the
-`state.md` from step 1 means a claim already diverged, caught by an earlier
-session's checkpoint or resume; `needs_human: true` means the run is already
-stopped. Either one, found already set, is the whole job until resolved:
-report it and stop rather than working around it. What steps 2 and 3 just
-found themselves is different — that is step 6, once you hold the lease.
-
-Resolution is not yours alone. `suspect` marks a claimed field that disagrees
-with the repository, and which of the two is wrong is a question about intent
-— was the wave actually finished, or was the commit lost? — so it takes the
-human's decision, not your judgement. Put the specifics in front of them:
-which field, what it claims, what the repository shows, what the `Suspect`
-line says about how it was caught. Then record what they decide: a journal
-entry with the decision and why, then a `baton-write` of `state.md` with the
-claimed field set to what they said and `suspect: false`. That write is the
-only thing that clears the flag: it does not expire, and no checkpoint clears
-it for you. Clearing it without that conversation is silently correcting a
-claim, the exact thing the flag exists to prevent.
+Resolution is not yours alone. Put the specifics in front of the human: which
+field, what it claims, what the repository shows, what the `Suspect` line says
+about how it was caught. Then record what they decide: a journal entry with
+the decision and why, then a `baton-write` of `state.md` with the claimed
+field set to what they said and `suspect: false`. Nothing else clears it: the
+flag does not expire, and no checkpoint clears it for you.
 
 **5. Take the writer lease.**
 
@@ -232,16 +166,11 @@ claim, the exact thing the flag exists to prevent.
 "${CLAUDE_PLUGIN_ROOT}/scripts/baton-lock" acquire "${CLAUDE_CODE_SESSION_ID:-$CLAUDE_SESSION_ID}"
 ```
 
-Both names, in that order, deliberately: `CLAUDE_CODE_SESSION_ID` is what
-Claude Code actually exports, and neither name is a documented contract, so
-the fallback keeps this working if the exported name changes again.
-`baton-lock` refuses an empty id rather than granting a shared lease, so exit
-64 — the session id must not be empty — means the environment gave neither
-name; report that and stop rather than inventing an id.
-
-Exit 3 means another session holds an unexpired lease — do not write state;
-say so, and stop. If you have good reason to believe that session is gone,
-take it over instead; that always succeeds:
+Exit 64 — the session id must not be empty — means the environment gave
+neither name; report that and stop rather than inventing an id. Exit 3 means
+another session holds an unexpired lease: do not write state, say so, stop. If
+you have good reason to believe that session is gone, take it over instead —
+that always succeeds:
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/baton-lock" takeover "${CLAUDE_CODE_SESSION_ID:-$CLAUDE_SESSION_ID}"
@@ -249,74 +178,52 @@ take it over instead; that always succeeds:
 
 Either way, whenever the script prints `takeover=<previous session>` — which
 `acquire` also prints when it displaces an expired lease — record a journal
-entry of type `takeover`, so an overlap of two sessions cannot pass unnoticed.
-Its shape is not here: read `baton-checkpoint`'s step 5, "Journal anything
-that crossed the threshold", which you will not have loaded this session. What
-you need from it: `${CLAUDE_PLUGIN_ROOT}/scripts/baton-journal <slug>` hands
-back the id and the path — never invent either — the frontmatter is the
-standard envelope with `type: takeover`, the required sections are
-`## Who was displaced` and `## Why it was believed safe`, and the entry
-reaches disk through `baton-write` at the path `baton-journal` printed. Name
-the displaced session id the script actually printed, not "a previous
-session".
+entry of type `takeover`, naming the displaced session id the script actually
+printed rather than "a previous session". Its shape is `baton-checkpoint`'s
+step 5, "Journal anything that crossed the threshold":
+`${CLAUDE_PLUGIN_ROOT}/scripts/baton-journal <slug>` hands back the id and the
+path — never invent either — the frontmatter is the standard envelope with
+`type: takeover`, the required sections are `## Who was displaced` and
+`## Why it was believed safe`, and the entry reaches disk through
+`baton-write` at the path `baton-journal` printed.
 
-**6. Write what you found.** This step always runs: you hold the lease now,
-and everything steps 2 and 3 turned up exists only in your head.
+**6. Write what you found.** This step always runs; you hold the lease now.
 
 **Always:** the observed-field repairs from step 2 — `observed_sha` set from
-`baton-observe`'s `work_sha`, `observed_branch` and `tree_clean` set from what
-it reported.
+`baton-observe`'s `work_sha`, and `tree_clean` set from what it reported.
+`observed_branch` is not on this list: step 2 does not repair it.
 
 **And, if steps 2 or 3 found a divergence** that step 4's on-disk flags did
-not already cover — a `closed_at_sha` no longer an ancestor of `HEAD`, or a
-precompact `work_sha` whose narrative fields describe an older repository:
+not already cover:
 
 - set `suspect: true`;
 - describe the specifics in the `Suspect` line: which check failed, what each
-  side said, which wave, and, for the ancestry check, whether it exited 1 or
-  128;
-- leave `needs_human` alone. Stopping here feels like the run needs a human,
-  and it does — but that is what `suspect` already says, and step 4 treats
-  either flag, found set, as the whole job until resolved. Two flags raised
-  for one divergence reads, to the next session, as two things having gone
-  wrong. For the same reason, do not write a `Suspect` line that promises a
-  flag you are not setting;
-- report it, and stop. A suspect run does not continue to `Next action`;
-  resolving the divergence is the next thing that happens here, and step 4
-  says what resolving it means.
+  side said, which wave, and whether the ancestry check exited 1 or 128;
+- leave `needs_human` alone — `suspect` already says the run needs a human,
+  and do not write a `Suspect` line that promises a flag you are not setting;
+- report it, and stop. A suspect run does not continue to `Next action`; step
+  4 says what resolving it means.
 
-Both cases go through one command, and the message says which of the two it
-was — `baton: resume verified state` when this resume only repaired observed
-fields, `baton: resume found a divergence` when it raised `suspect`:
+One command, two messages: `baton: resume verified state` when this resume
+only repaired observed fields, `baton: resume found a divergence` when it
+raised `suspect`.
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/baton-write" \
     -m "baton: resume verified state" docs/baton/state.md < .baton/resume-state.md
 ```
 
-That is not decoration. `git log docs/baton/state.md` is the event log, and it
-is what someone scanning weeks of a run reads instead of opening every
-revision. A commit that raised the flag, filed under the message for one that
-found nothing wrong, hides the single entry in that log most worth stopping
-at.
-
 Pipe in the *whole file* — frontmatter, Goal, Operating mode, Non-negotiables,
 the Waves table, Now, Pointers — everything you read in step 1, byte for byte,
-with only the fields above changed on top. Not a diff, not just the fields
-this resume touched. `baton-write` replaces the file with its stdin: it does
-not merge and cannot know what you meant to keep. Two frontmatter lines piped
-in leave a two-line `state.md` with the Waves table gone — exit 0, committed,
-`git status --porcelain docs/baton` empty afterwards, and nothing downstream
-will tell you it happened.
+with only the fields above changed on top. Not a diff: `baton-write` replaces
+the file with its stdin.
 
 `state.md` is capped at 60 lines and `baton-write` refuses anything longer; a
 `Suspect` writeup with real detail is what usually pushes it over. Put the
-detail in a journal entry and leave a pointer ("see DEC-0008") in the line.
-An autopilot attempt counter on the `In flight` line is the one thing that
-never moves out that way: it is a ceiling, and a ceiling behind a pointer is
-one the next session has to go and look for.
-For any other non-zero exit, `baton-checkpoint`'s "If the write fails" table
-says which situation you are in and what it needs; do not retry blindly.
+detail in a journal entry and leave a pointer ("see DEC-0008") in the line —
+except an autopilot attempt counter on the `In flight` line, which stays. For
+any other non-zero exit, `baton-checkpoint`'s "If the write fails" table says
+which situation you are in and what it needs; do not retry blindly.
 
 If this write raised `suspect`, release the lease once it has succeeded:
 
@@ -324,61 +231,34 @@ If this write raised `suspect`, release the lease once it has succeeded:
 "${CLAUDE_PLUGIN_ROOT}/scripts/baton-lock" release "${CLAUDE_CODE_SESSION_ID:-$CLAUDE_SESSION_ID}"
 ```
 
-You are stopping, and the lease lives six hours. Held, the human's next
-session finds a live lease and can only get past it with `takeover` —
-manufacturing a journal entry for an overlap that never happened, noise in the
-one log that has to stay signal. On the clean path, keep the lease: you are
-about to work under it.
+On the clean path, keep the lease: you are about to work under it.
 
 **7. Pick up the autopilot grant.** Read `autopilot` from `state.md`'s
-frontmatter. If it is `off`, nothing here applies: this is an ordinary resume,
-a human is expected, and step 8 runs as written.
+frontmatter. If it is `off`, this is an ordinary resume: a human is expected,
+and step 8 runs as written.
 
-If it is anything else, this run was handed over — the journal entry named by
-`autopilot_grant` is the handover, and it records what the human granted. What
-happens next depends on how this session started, which the `SessionStart` hook
-injects as a `Session source:` line in the context you woke up with:
+If it is anything else, this run was handed over, and `autopilot_grant` names
+the journal entry recording what the human granted. What happens next depends
+on how this session started, which the `SessionStart` hook injects as a
+`Session source:` line:
 
 | Session source | What to do |
 |---|---|
-| `compact`, `resume` | Continue. Same session, same grant, and the human is still away. Say one line about where the run stands, then carry step 8 out under the `baton-autopilot` skill. |
-| `startup`, `clear`, `fork` | Do not start work. Report that the autopilot is on, name the scope and the granting entry, and wait. |
+| `compact`, `resume` | Continue. Same session, same grant, the human is still away. One line on where the run stands, then step 8 under `baton-autopilot`. |
+| `startup`, `clear`, `fork` | Do not start work. Report that the autopilot is on, name the scope and the granting entry, wait. |
 | `unknown` | Read it as `startup` and wait. |
 
-The second row is not caution for its own sake. A session started to check one
-thing is not a session that agreed to an hour of unattended work, and the grant
-cannot tell the two apart — only the human can, by typing `/baton:continue`.
-
-The third row is that same rule under uncertainty, and the asymmetry is the
-point: waiting when you should have continued costs the human one command,
-while continuing when you should have waited is the failure the row above
-exists to prevent. The hook writes `unknown` when it could not determine the
-source, never as a guess, so `unknown` is a fact about the hook and not a hint
-about the session.
-
-Do not reconstruct the source from anything else. `.baton/precompact-facts` is
-the tempting one and it is wrong: a session that died after a compaction and
-before step 3 deleted the file leaves it genuinely un-spent, so a fresh session
-the next morning reads someone else's compaction as its own and starts work
-nobody asked for. That is the exact outcome this step exists to prevent,
-reached through the mechanism meant to enforce it.
+Waiting when you should have continued costs the human one command;
+continuing when you should have waited is the failure the second row exists to
+prevent. Do not reconstruct the source from anything else — `.baton/precompact-facts`
+is the tempting one and it is wrong: an un-spent file from a session that died
+makes a fresh morning session read someone else's compaction as its own.
 
 This step gates step 8; it does not sit beside it. But notice what it decides
 on: the session source says how this session **arrived**, not who is in it now.
-Those come apart in one place, and `/baton:continue` is it.
-
 A human who types `/baton:continue` in a session that began with `/clear` is
-right there — and the source still reads `clear`, which the table above sends
-to "wait". Waiting would mean waiting for the person who just spoke. Nothing
-this step can read distinguishes that session from an unattended one, because
-the distinguishing fact is the command itself, and the command is not in the
-source. So `/baton:continue` runs this skill only as far as step 6 and makes
-the grant decision itself, where that fact is available.
-
-That split is not redundancy or distrust of this step. It is the one input this
-step structurally cannot observe, held by the one caller that has it. What is
-left here is the case this step *can* judge: a session that arrived on its own,
-with nobody having said anything in it yet.
+right there while the source still reads `clear` — so `/baton:continue` runs
+this skill only as far as step 6 and decides the grant itself.
 
 Everything above still runs. The divergence checks are not skipped because the
 run is on the autopilot: a grant to work without a human is simply
@@ -388,29 +268,21 @@ not a grant to work from an unverified state.
 Reached only when step 6 found nothing that stops the run, and step 7 did not
 park the run for a human.
 
-Exactly what it says — but that governs the work, not who does it. If step 1's
-operating mode is orchestrator, delegating `Next action` to a subagent or a
-workflow *is* executing it, and implementing it here, in the primary session,
-is not. The mode came from the constitution and outranks the convenience of
-doing the thing yourself.
+Exactly what it says governs the work, not who does it: if step 1's operating
+mode is orchestrator, delegating `Next action` to a subagent or a workflow
+*is* executing it, and implementing it here is not.
 
-If `Next action` is too vague to act on, that is a checkpoint-quality failure
-— reconstruct from the repository and the wave's plan rather than guessing,
-and write a sharper one at the next checkpoint.
+If `Next action` is too vague to act on, that is a checkpoint-quality failure:
+reconstruct from the repository and the wave's plan rather than guessing, and
+write a sharper one at the next checkpoint.
 
 ## What you are working under from here
 
-The procedure is over; the run is not. The rest of the session is governed by
-the **baton** skill — read it now unless it is already in context. It is the
-model these procedures implement: which fields are observed and which are
-claimed, and why that decides what you may repair; the four criteria that make
-a decision worth journaling; what to do when new input arrives mid-run.
-
-**baton-checkpoint** is the other half. Checkpoint before the next compaction,
-at the end of a stretch of work, and after closing anything meaningful — it
-also carries the 60-line cap on `state.md`, the journal entry formats, and the
-release of the lease when the session ends. A run that resumes cleanly and
-then never checkpoints has only moved the loss to the next compaction.
+The rest of the session is governed by the **baton** skill — read it now
+unless it is already in context. **baton-checkpoint** is the other half:
+checkpoint before the next compaction, at the end of a stretch of work, and
+after closing anything meaningful. It carries the 60-line cap on `state.md`,
+the journal entry formats, and the release of the lease when the session ends.
 
 ## Before implementing anything
 
@@ -427,6 +299,8 @@ working code.
 | "I know roughly where we were" | You do not. That is what the compaction took. |
 | "The summary I woke up with reads complete" | Summaries always read complete. That is the premise this whole skill is built on. |
 | "state.md says done, good enough" | Claims are checked against the repository, not accepted. |
+| "The branch is wrong, I'll switch to the one `state.md` names" | The human may have moved on purpose. Name both branches, stop, and let them say which repository this is. |
+| "The branch disagrees, so I'll flag it and carry on" | Neither half of that. The resume ends there, and not even the flag gets written: you hold no lease, and the `state.md` you would write it into is the one you cannot establish is this run's. |
 | "suspect is set but I can work around it" | Resolving it is the work, and only the human can resolve it. |
 | "The lease is held, I'll write anyway" | Two writers is exactly the failure the lease exists to prevent. |
 | "I'll pipe the fields I changed into `baton-write`" | It replaces the whole file with your stdin. Anything you did not carry over is deleted, the commit succeeds, and the tree looks clean. |

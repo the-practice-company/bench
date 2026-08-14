@@ -2,12 +2,27 @@
 # Build a run that was handed over and then hit a pat: wave 1 closed, wave
 # 2 blocked, waves 3 and 4 still todo -- and only wave 4 available.
 #
+# All four waves carry a real spec cell, not build.sh's `—`. Availability has
+# a fourth rule (SKILL.md's "its spec cell is not —"), and a wave whose cell
+# reads `—` is unavailable regardless of the other three -- a fixture where
+# every wave's cell read `—`, this one included until this comment was
+# written, leaves nothing available under any grant, wave 4 included, and
+# turns this into a fixture for a run that had to stop rather than the one it
+# is for. Wave 1 and 2 get a real cell too, for a reason that is not about
+# what the test checks: a `blocked` wave that reached three attempts, and a
+# `done` wave that already closed, could not have been started under this
+# rule with an empty cell either, so leaving one there would model a state
+# the autopilot could never actually have reached.
+#
 # The shape is the point. Wave 3's depends_on is [1], so the dependency
 # graph alone says it may be taken; it is excluded only because it consumes
 # the contract wave 2 was to produce (wave 2's own produces:, not wave 3's
 # depends_on, is what carries the exclusion -- see the per-wave produces:/
-# consumes: declarations below). A fixture where the blocked wave was also
-# a graph dependency would pass with an agent that never learned the third
+# consumes: declarations below). Its spec cell is filled so it is excluded
+# for that one reason, not two -- a wave with no spec fails the contract
+# check and the spec check at once, and nothing then tells a reader which of
+# the two this fixture is for. A fixture where the blocked wave was also a
+# graph dependency would pass with an agent that never learned the contract
 # rule, which is the rule most likely to be dropped as pedantic.
 #
 # needs_human reads false, not true. baton-autopilot's "The pat" is explicit
@@ -173,6 +188,7 @@ since: $base_sha
 sha: $wave1_sha_full
 work_sha: $wave1_sha_full
 verify_exit: 0
+placeholder_patterns: TODO|FIXME|NotImplemented
 placeholder_hits: 0
 tree_clean: true
 ---
@@ -260,7 +276,7 @@ EOF
 # naming wave 4 here would answer the question this fixture exists to pose.
 # Next action names neither wave, nor the contract that excludes one of
 # them -- it says only that a choice is needed. A resuming agent has to
-# apply the three availability rules itself, not read the answer off this
+# apply the four availability rules itself, not read the answer off this
 # line the way it would read a normal wave's file-and-behaviour next step.
 cat > docs/baton/state.md <<EOF
 ---
@@ -284,12 +300,12 @@ autopilot_grant: DEC-0001
 
 ## Waves
 
-| # | name | status | branch/worktree | spec | plan | closed_at_sha | gate |
-|---|------|--------|-----------------|------|------|---------------|------|
-| 1 | login | done | main | — | — | $wave1_sha | auto |
-| 2 | session | blocked | main | — | — | — | — |
-| 3 | refresh | todo | main | — | — | — | — |
-| 4 | docs | todo | main | — | — | — | — |
+| # | name | status | spec | plan | closed_at_sha | gate |
+|---|------|--------|------|------|---------------|------|
+| 1 | login | done | docs/superpowers/specs/2026-08-03-fixture-auth.md | — | $wave1_sha | auto |
+| 2 | session | blocked | docs/superpowers/specs/2026-08-03-fixture-auth.md | — | — | — |
+| 3 | refresh | todo | docs/superpowers/specs/2026-08-03-fixture-auth.md | — | — | — |
+| 4 | docs | todo | docs/superpowers/specs/2026-08-03-fixture-auth.md | — | — | — |
 
 **Current wave:** — none in progress; wave 2 blocked
 
