@@ -31,7 +31,7 @@ BUDGET=1156
 
 # What is actually scarce is tokens, and a line count is a wrap-width
 # artifact, not a token count: `fmt -w 100` across the four skills removes
-# roughly a fifth of the LINES, deletes no words, and would turn this budget
+# 132 of their 1147 LINES, deletes no words, and would turn this budget
 # and every per-file cap in test-skills.sh green with headroom -- headroom
 # that could then be spent on real prose, landing well past what the caps
 # were measuring when they were set. Reflowing to a wider column barely
