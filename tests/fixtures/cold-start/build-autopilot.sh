@@ -4,8 +4,9 @@
 #
 # All four waves carry a real `spec:` in the constitution -- which is where
 # that field lives now; state.md has no spec column at all. Availability has
-# a fourth rule (SKILL.md's "its spec in the constitution is not —"), and a
-# wave whose spec reads `—` is unavailable regardless of the other three -- a
+# a fourth rule (SKILL.md's "its spec in the constitution names a document",
+# which an absent `spec:` key fails exactly as `—` does), and a wave whose
+# spec reads `—` is unavailable regardless of the other three -- a
 # fixture where every wave's spec read `—`, this one included until this
 # comment was written, leaves nothing available under any grant, wave 4
 # included, and turns this into a fixture for a run that had to stop rather

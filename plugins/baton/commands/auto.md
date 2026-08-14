@@ -72,11 +72,11 @@ actually be a scope, not a wish:
   `produces` names it, say which wave is blocked and which contract they
   share, and stop.
 - its `spec` in the constitution must name a document — the umbrella spec, a
-  section of it, or the wave's own. `—` means nobody has said what this wave
-  builds to, and the autopilot cannot supply that: the spec comes from
-  `superpowers:brainstorming`, which needs the human who is about to leave.
-  Say which wave, and that the fix is to name the document in the constitution
-  before handing the run over.
+  section of it, or the wave's own. `—`, and no `spec:` key at all, both mean
+  nobody has said what this wave builds to, and the autopilot cannot supply
+  that: the spec comes from `superpowers:brainstorming`, which needs the human
+  who is about to leave. Say which wave, and that the fix is to name the
+  document in the constitution before handing the run over.
 
 A numbered wave failing this was already refused above. With no argument, drop
 the spec-less waves from the scope and **name every one you dropped** — a run
