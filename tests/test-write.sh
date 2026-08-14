@@ -555,4 +555,117 @@ do
         "state.md still holds 60 lines after the refused $spelling over-cap write"
 done
 
+# --- granted fields move one way only. The skill states it as a rule --
+# "raising suspect or needs_human is always yours; clearing either is the
+# human's" -- and baton-write is where it stops being only prose. The refusal
+# is on the transition, not on the value, so it takes four cases to pin and
+# not two: refusing every state.md write outright would be just as green on
+# the two refusals below as the real rule is. ---
+
+# 19 lines, under the cap, and shaped like the real template: the `Now`
+# section carries a `**Suspect:**` line, which is exactly the body text a
+# flag lookup that was not scoped to the frontmatter would read as the flag.
+state_with_flags() {
+    printf '%s\n' \
+        '---' \
+        'schema: baton/state/v1' \
+        'writer: test-session' \
+        'updated_at: 2026-08-04T09:00:00Z' \
+        'observed_sha: 0000000' \
+        'observed_branch: main' \
+        'tree_clean: true' \
+        "suspect: $1" \
+        "needs_human: $2" \
+        'autopilot: off' \
+        'autopilot_grant: —' \
+        '---' \
+        '' \
+        '# State' \
+        '' \
+        '## Now' \
+        '' \
+        "- **Next action:** $3" \
+        '- **Suspect:** none'
+}
+
+# The baseline goes into HEAD with plain git, never through baton-write: the
+# `suspect: true` baseline could not be arrived at through the refusal it is
+# about to test, and a fixture built out of the thing under test proves less.
+commit_state_flags() {
+    state_with_flags "$1" "$2" "$3" > docs/baton/state.md
+    git add docs/baton/state.md
+    git commit -q -m "fixture: state.md suspect=$1 needs_human=$2 ($3)"
+}
+
+commit_state_flags true false "suspect baseline"
+clear_suspect_commits_before="$(git rev-list --count HEAD)"
+
+set +e
+clear_suspect_stderr="$(state_with_flags false false "clear my own suspect" \
+    | "$WRITE" -m "agent: clear suspect" docs/baton/state.md 2>&1 >/dev/null)"
+clear_suspect_rc=$?
+set -e
+
+assert_equals "$clear_suspect_rc" "3" "refuses to clear suspect: true in HEAD"
+assert_contains "$clear_suspect_stderr" "refusing to clear suspect" \
+    "the refusal names the field it will not let the agent clear"
+assert_contains "$(git show HEAD:docs/baton/state.md)" "suspect: true" \
+    "the flag the refused write tried to clear is still set in HEAD"
+assert_equals "$(git rev-list --count HEAD)" "$clear_suspect_commits_before" \
+    "the refused suspect-clearing write creates no commit"
+
+# needs_human is the expensive one: it is what halts the run, and a run that
+# can clear its own stop does not have one.
+commit_state_flags false true "needs_human baseline"
+clear_needs_human_commits_before="$(git rev-list --count HEAD)"
+
+set +e
+clear_needs_human_stderr="$(state_with_flags false false "clear my own stop" \
+    | "$WRITE" -m "agent: clear needs_human" docs/baton/state.md 2>&1 >/dev/null)"
+clear_needs_human_rc=$?
+set -e
+
+assert_equals "$clear_needs_human_rc" "3" "refuses to clear needs_human: true in HEAD"
+assert_contains "$clear_needs_human_stderr" "refusing to clear needs_human" \
+    "the refusal names needs_human, the flag that halts the run"
+assert_contains "$(git show HEAD:docs/baton/state.md)" "needs_human: true" \
+    "the stop the refused write tried to lift is still set in HEAD"
+assert_equals "$(git rev-list --count HEAD)" "$clear_needs_human_commits_before" \
+    "the refused needs_human-clearing write creates no commit"
+
+# The other direction, and not a formality: without it, a green run is
+# equally consistent with a script that refuses every write to state.md.
+# Raising is always the agent's.
+commit_state_flags false false "raise baseline"
+raise_commits_before="$(git rev-list --count HEAD)"
+
+set +e
+state_with_flags true false "raise suspect on a real divergence" \
+    | "$WRITE" -m "agent: raise suspect" docs/baton/state.md
+raise_rc=$?
+set -e
+
+assert_equals "$raise_rc" "0" "raising suspect from false to true is allowed"
+assert_equals "$(git rev-list --count HEAD)" "$((raise_commits_before + 1))" \
+    "the raised flag lands as an ordinary commit"
+assert_contains "$(git show HEAD:docs/baton/state.md)" "suspect: true" \
+    "the raise genuinely reached the log, rather than exiting 0 having written nothing"
+
+# False over false is not a clearing: it is every checkpoint of a run that
+# was never stopped in the first place.
+commit_state_flags false false "unchanged baseline"
+unchanged_commits_before="$(git rev-list --count HEAD)"
+
+set +e
+state_with_flags false false "an ordinary checkpoint, nothing stopped" \
+    | "$WRITE" -m "agent: ordinary checkpoint" docs/baton/state.md
+unchanged_rc=$?
+set -e
+
+assert_equals "$unchanged_rc" "0" "writing false over false is an ordinary checkpoint, not a clearing"
+assert_equals "$(git rev-list --count HEAD)" "$((unchanged_commits_before + 1))" \
+    "the unchanged-flags checkpoint commits like any other"
+assert_contains "$(cat docs/baton/state.md)" "an ordinary checkpoint, nothing stopped" \
+    "the unchanged-flags checkpoint lands its content on disk"
+
 finish

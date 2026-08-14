@@ -19,8 +19,10 @@
 #       git will not track (ignored, or outside the repository),
 #       docs/baton/constitution.md (the agent never writes the
 #       constitution -- see below), docs/baton/state.md over the 60-line
-#       cap, or empty-or-whitespace-only stdin over existing non-empty
-#       committed content
+#       cap, empty-or-whitespace-only stdin over existing non-empty
+#       committed content, or a docs/baton/state.md write that clears
+#       suspect or needs_human -- granted fields the agent may raise but
+#       never lower (see below)
 #   5   a git mutation failed after the file was written; the tree has
 #       been rolled back to its state before this run, or the commit
 #       landed but does not contain what this run wrote (see below)
@@ -247,9 +249,46 @@ strip_timestamp() {
     grep -v '^updated_at:' || true
 }
 
+# Reads a frontmatter field's value from stdin. Scoped to the frontmatter
+# block deliberately: state.md's body carries a `**Suspect:**` line in the
+# Now section, and a body match would read the prose as the flag.
+frontmatter_flag() {
+    awk -v field="$1" '
+        NR == 1 && $0 == "---" { infm = 1; next }
+        infm && $0 == "---" { exit }
+        infm && index($0, field ":") == 1 {
+            sub("^" field ": *", "")
+            gsub(/[ \t\r]/, "")
+            print
+            exit
+        }
+    '
+}
+
 target_in_head=0
 if git cat-file -e "HEAD:$target" 2>/dev/null; then
     target_in_head=1
+fi
+
+# Granted fields move one way only. The model skill states it as a rule --
+# "raising suspect or needs_human is always yours; clearing either is the
+# human's" -- and until now that was all it was. An agent that can clear
+# needs_human has no stop: the flag exists to halt the run, and the run is
+# what would be clearing it. /baton:clear writes this field directly, with
+# plain git, for the same reason /baton:init writes the constitution that
+# way: this refusal is why it has to.
+#
+# Refused on the transition, not on the value. Writing false over false is
+# an ordinary checkpoint of a run that was never stopped.
+if [ "$target" = "docs/baton/state.md" ] && [ "$target_in_head" -eq 1 ]; then
+    for flag in suspect needs_human; do
+        was="$(git show "HEAD:$target" | frontmatter_flag "$flag")"
+        now="$(frontmatter_flag "$flag" < "$tmp")"
+        if [ "$was" = "true" ] && [ "$now" = "false" ]; then
+            echo "baton-write: refusing to clear $flag: it is set, and clearing it is the human's -- see /baton:clear. Raising it is always yours; lowering it is not." >&2
+            exit 3
+        fi
+    done
 fi
 
 # True if $1 has no non-whitespace byte at all. `[ ! -s "$tmp" ]` (the old
