@@ -1105,6 +1105,48 @@ fi
 assert_equals "$(git rev-list --count HEAD)" "$absent_commits_before" \
     "the refused unreadable creation creates no commit"
 
+# The caller bug the empty-stdin guard above exists to name, arriving here
+# instead. That guard only speaks when HEAD already holds content, so on a
+# run's FIRST checkpoint -- exactly here, nothing committed at this path yet --
+# a failed command substitution or an empty heredoc falls through to the
+# frontmatter refusal. Told "line 1 is not a bare ---", the caller goes and
+# inspects line 1 of a document they believe they wrote and finds nothing
+# there, because there is nothing there: they wrote no document at all. It is
+# the same wrong trip the empty-block case sends its reader on, one branch
+# over, so it is refused in its own words. Whitespace-only is the same bug --
+# `printf '%s\n' "$unset"` produces a lone newline, not zero bytes -- and gets
+# the same words.
+for empty_shape in "nothing at all" "a lone newline" "spaces and tabs"; do
+    case "$empty_shape" in
+        "nothing at all") empty_doc="" ;;
+        "a lone newline") empty_doc=$'\n' ;;
+        *)                empty_doc=$'   \n\t\n' ;;
+    esac
+
+    set +e
+    unwritten_stderr="$(printf '%s' "$empty_doc" \
+        | "$WRITE" -m "agent: create state.md from an empty heredoc" docs/baton/state.md 2>&1 >/dev/null)"
+    unwritten_rc=$?
+    set -e
+
+    assert_equals "$unwritten_rc" "3" \
+        "refuses to create state.md from $empty_shape, at a path HEAD has nothing at"
+    assert_contains "$unwritten_stderr" "empty, or nothing but whitespace" \
+        "the refusal for $empty_shape says the document is empty, which is what the caller actually has"
+    assert_contains "$unwritten_stderr" "a command substitution that failed" \
+        "and names the caller bug, the way the empty-stdin refusal does"
+    assert_not_contains "$unwritten_stderr" "line 1 is not a bare ---" \
+        "rather than sending the reader to inspect line 1 of a document that was never written ($empty_shape)"
+    assert_equals "$(git rev-list --count HEAD)" "$absent_commits_before" \
+        "the refused $empty_shape creation creates no commit"
+done
+
+if [ -e docs/baton/state.md ]; then
+    fail "the refused empty creations leave nothing on disk either"
+else
+    pass "the refused empty creations leave nothing on disk either"
+fi
+
 set +e
 state_with_flags false false "the first state.md of a run" \
     | "$WRITE" -m "baton: initial state" docs/baton/state.md

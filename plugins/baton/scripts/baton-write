@@ -382,12 +382,28 @@ fi
 
 # Which of the shapes frontmatter_block reads back as nothing this document
 # is, so the refusal below can name the one repair its reader needs instead of
-# reciting every shape it turns away. It decides nothing -- frontmatter_block
-# alone says whether a write is refused, and this runs only once it already
-# has -- but it does duplicate that reader's two rules, the line-1 anchor and
-# the closing ---, so it has to stay in step with it: a shape named here that
-# frontmatter_block reads differently is a message describing a document
-# nobody has.
+# reciting every shape it turns away. Four names, against one rule for reading
+# -- so the pairing is worth stating plainly. frontmatter_block decides
+# everything: it alone says whether a write is refused, and this runs only once
+# it already has. Nothing here can accept a document that reader turned away,
+# or turn away one it read. What this does is duplicate two of that reader's
+# rules -- the line-1 anchor and the closing --- -- to sort the refusals it
+# already made, and so it has to stay in step with it. A shape named here that
+# frontmatter_block reads differently is a message describing a document nobody
+# has, which is the whole defect being repaired.
+#
+#   unwritten  nothing arrived: empty, or whitespace only. Not a shape of
+#              frontmatter at all but the absence of a document, so it is
+#              is_whitespace_only that decides it -- the same predicate, and
+#              the same definition of "empty", the empty-stdin guard above
+#              refuses on. That guard only speaks when HEAD already holds
+#              content, so on a run's first checkpoint the caller bug it
+#              exists to name arrives down here instead, and has to be named
+#              here too rather than told to go and look at line 1.
+#   unopened   line 1 is not a bare ---, so no block ever opens. A block
+#              starting any lower down is body text and is not read.
+#   unclosed   opens on line 1, and nothing closes it.
+#   empty      opens on line 1, is closed, and holds nothing but blank lines.
 #
 # `empty` is the shape that made the naming worth doing. A block that opens on
 # line 1 and closes on line 2 is refused correctly, there being no flag in it
@@ -395,16 +411,25 @@ fi
 # closed by a later ---", which is what the single message used to tell its
 # reader to go and check. Both were already true, so the reader checked both,
 # found both, and went hunting for a defect the file does not have; baton-gate
-# carries the same scar in unquote's comment. Blank lines between the two ---
-# lines land here too, and for the same reason: they leave the block just as
-# empty of fields.
+# carries the same scar in unquote's comment.
+#
+# Takes a path rather than stdin, unlike the readers above: it has to read the
+# document twice over -- once through is_whitespace_only, which takes a path
+# for the same reason -- and it is only ever asked about $tmp. The awk's own
+# NR==0 answer cannot be reached from here, a file with no lines in it being
+# whitespace-only by definition; it is left in so the awk is not quietly wrong
+# when read on its own.
 frontmatter_shape() {
+    if is_whitespace_only "$1"; then
+        printf '%s\n' unwritten
+        return
+    fi
     awk '
         { sub(/\r$/, "") }
         NR==1 && $0!="---" { shape="unopened"; exit }
         NR>1  && $0=="---" { shape="empty";    exit }
         END { if (shape == "") shape = (NR == 0 ? "unopened" : "unclosed"); print shape }
-    '
+    ' "$1"
 }
 
 # The same rule about the document rather than the transition, and refused
@@ -430,7 +455,10 @@ frontmatter_shape() {
 # baton-digest refuses that file outright, which halts the run harder than
 # needs_human does.
 if [ "$target" = "docs/baton/state.md" ] && [ -z "$(frontmatter_block < "$tmp")" ]; then
-    case "$(frontmatter_shape < "$tmp")" in
+    case "$(frontmatter_shape "$tmp")" in
+        unwritten)
+            echo "baton-write: refusing to write $target: what arrived on stdin is empty, or nothing but whitespace -- there is no frontmatter block to read here because there is no document at all. That is a caller bug rather than a file: a command substitution that failed, or a heredoc that came out empty, is exactly this shape. state.md wants suspect and needs_human inside a block opening with --- on line 1, closed by a later ---; write the document, then this tool will read it." >&2
+            ;;
         unopened)
             echo "baton-write: refusing to write $target: it has no frontmatter block this tool can read -- line 1 is not a bare ---, so nothing opens one, and a block that starts any lower down is body text. Open it on line 1 and close it with a later ---. suspect and needs_human live there, and flags that cannot be read are a stop nobody can see, this tool included." >&2
             ;;
