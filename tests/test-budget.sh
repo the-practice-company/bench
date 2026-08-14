@@ -24,11 +24,16 @@ SKILLS="$REPO_ROOT/plugins/baton/skills"
 BUDGET=1148
 
 total=0
-for f in "$SKILLS"/*/SKILL.md; do
+# Every .md file under a skill directory, not just SKILL.md: a
+# skills/<name>/references/*.md file is loaded into context exactly when the
+# skill pointing at it is loaded, so it costs exactly as much context as
+# prose that lived in SKILL.md itself. The budget rations context, and
+# context does not care which filename it arrived in.
+while IFS= read -r f; do
     n="$(wc -l < "$f" | tr -d ' ')"
     total=$((total + n))
-    echo "  $(basename "$(dirname "$f")"): $n"
-done
+    echo "  ${f#$SKILLS/}: $n"
+done < <(find "$SKILLS" -type f -name '*.md' | sort)
 
 if [ "$total" -le "$BUDGET" ]; then
     pass "skills total $total lines, within the $BUDGET-line budget"
