@@ -20,11 +20,9 @@
 #       docs/baton/constitution.md (the agent never writes the
 #       constitution -- see below), docs/baton/state.md over the 60-line
 #       cap, empty-or-whitespace-only stdin over existing non-empty
-#       committed content, or a docs/baton/state.md write that fails to
-#       carry a suspect or needs_human already set in HEAD forward as
-#       true -- by writing false, by leaving the field out, or by putting
-#       the frontmatter somewhere this tool cannot read it; they are
-#       granted fields the agent may raise but never lower (see below)
+#       committed content, a docs/baton/state.md whose frontmatter this
+#       tool cannot read, or one that fails to carry a suspect or
+#       needs_human already set in HEAD forward as true (see below)
 #   5   a git mutation failed after the file was written; the tree has
 #       been rolled back to its state before this run, or the commit
 #       landed but does not contain what this run wrote (see below)
@@ -251,16 +249,51 @@ strip_timestamp() {
     grep -v '^updated_at:' || true
 }
 
-# Reads a frontmatter field's value from stdin. Scoped to the frontmatter
-# block deliberately: state.md's body carries a `**Suspect:**` line in the
-# Now section, and a body match would read the prose as the flag.
+# The frontmatter block's lines, carriage returns already off, and only if
+# the block was closed. Reads stdin rather than a filename, so it composes
+# with `git show` the way strip_timestamp above does.
+#
+# This is baton-gate's reader (see its own comment, which argues the first
+# rule at length) and baton-digest's frontmatter_of, a third time. There is no
+# shared source to put it in, so the three are duplicated on purpose and must
+# stay in step: a difference between them is a difference of opinion about
+# what a file says.
+#
+# The carriage return comes off before the line-1 comparison, not after,
+# because that is the only place it can come off in time: a file a Windows
+# editor writes carries CRLF on every line, the opening --- included, and
+# `$0 == "---"` is an exact comparison, so "---\r" never opens the block and
+# every field reads back empty. Here that costs more than in either sibling.
+# An empty read is exactly what the guard below calls "the flag is not here",
+# so a needs_human raised from a CRLF editor was one baton-digest printed as
+# a stopped run and baton-write could not see -- and the run then cleared its
+# own stop, at exit 0, with no refusal anywhere. Reproduced in three steps.
+#
+# And the block has to be closed. An unterminated --- otherwise redefines
+# "frontmatter" as "everything after line 1", which promotes any body line
+# spelled like a field into one -- the malformed shape baton-gate refuses.
+frontmatter_block() {
+    awk '
+        { sub(/\r$/, "") }
+        NR==1 && $0=="---" { infm=1; next }
+        infm && $0=="---"  { closed=1; exit }
+        infm               { buf = buf $0 "\n" }
+        END                { if (closed) printf "%s", buf }
+    '
+}
+
+# Reads a frontmatter field's value from stdin. Scoped to the block above
+# deliberately, though not for the reason first given here: `index($0, field
+# ":") == 1` is column-anchored and case-sensitive, so state.md's
+# `- **Suspect:**` prose line never matched it, scoped or not. What the
+# scoping actually keeps out is a body line spelled exactly `suspect:` at
+# column 1 -- prose an agent writing its own state file can produce without
+# meaning anything by it, and which would then be read as the flag.
 frontmatter_flag() {
-    awk -v field="$1" '
-        NR == 1 && $0 == "---" { infm = 1; next }
-        infm && $0 == "---" { exit }
-        infm && index($0, field ":") == 1 {
+    frontmatter_block | awk -v field="$1" '
+        index($0, field ":") == 1 {
             sub("^" field ": *", "")
-            gsub(/[ \t\r]/, "")
+            gsub(/[ \t]/, "")
             print
             exit
         }
@@ -270,44 +303,6 @@ frontmatter_flag() {
 target_in_head=0
 if git cat-file -e "HEAD:$target" 2>/dev/null; then
     target_in_head=1
-fi
-
-# Granted fields move one way only. The model skill states it as a rule --
-# "raising suspect or needs_human is always yours; clearing either is the
-# human's" -- and until now that was all it was. An agent that can clear
-# needs_human has no stop: the flag exists to halt the run, and the run is
-# what would be clearing it. /baton:clear writes this field directly, with
-# plain git, for the same reason /baton:init writes the constitution that
-# way: this refusal is why it has to.
-#
-# Refused on the transition, not on the value: writing false over false is
-# an ordinary checkpoint of a run that was never stopped, and true over
-# true is an ordinary checkpoint of one that is stopped -- the flag is
-# un-clearable, not un-writable. But the test is "does this write still say
-# true", not "does it say false". `false` is only the honest spelling of a
-# clearing, and the agent controls every byte of what it pipes in: leaving
-# the field out clears the flag just as thoroughly (empty is not false, so
-# the old test never fired), and so does a document whose frontmatter
-# frontmatter_flag cannot find -- one leading blank line is enough, since
-# it anchors on line 1. Both were accepted, exit 0, flag gone from HEAD.
-# A flag this tool cannot read in what was written is not a flag still set,
-# so anything short of a positive `true` is refused. That also closes the
-# two-step version -- land an unreadable state.md, then read `was` as empty
-# from it and write freely -- because step one is now itself refused.
-if [ "$target" = "docs/baton/state.md" ] && [ "$target_in_head" -eq 1 ]; then
-    for flag in suspect needs_human; do
-        was="$(git show "HEAD:$target" | frontmatter_flag "$flag")"
-        [ "$was" = "true" ] || continue
-        now="$(frontmatter_flag "$flag" < "$tmp")"
-        if [ "$now" = "false" ]; then
-            echo "baton-write: refusing to clear $flag: it is set, and clearing it is the human's -- see /baton:clear. Raising it is always yours; lowering it is not." >&2
-            exit 3
-        fi
-        if [ "$now" != "true" ]; then
-            echo "baton-write: refusing to write $target: $flag is set in HEAD, and this write does not say '$flag: true' -- a flag that cannot be read in what was written is not a flag still set. Keep the line in the frontmatter block, which has to open on line 1. Clearing $flag is the human's -- see /baton:clear." >&2
-            exit 3
-        fi
-    done
 fi
 
 # True if $1 has no non-whitespace byte at all. `[ ! -s "$tmp" ]` (the old
@@ -335,6 +330,81 @@ if is_whitespace_only "$tmp" && [ "$target_in_head" -eq 1 ]; then
         echo "baton-write: refusing to write empty-or-whitespace-only content over existing committed state at $target" >&2
         exit 3
     fi
+fi
+
+# Granted fields move one way only. The model skill states it as a rule --
+# "raising suspect or needs_human is always yours; clearing either is the
+# human's" -- and until now that was all it was. An agent that can clear
+# needs_human has no stop: the flag exists to halt the run, and the run is
+# what would be clearing it. /baton:clear writes this field directly, with
+# plain git, for the same reason /baton:init writes the constitution that
+# way: this refusal is why it has to.
+#
+# Refused on the transition, not on the value: writing false over false is
+# an ordinary checkpoint of a run that was never stopped, and true over
+# true is an ordinary checkpoint of one that is stopped -- the flag is
+# un-clearable, not un-writable. But the test is "does this write still say
+# true", not "does it say false". `false` is only the honest spelling of a
+# clearing, and the agent controls every byte of what it pipes in: leaving
+# the field out clears the flag just as thoroughly (empty is not false, so
+# the old test never fired), and so does a document whose frontmatter cannot
+# be read at all. Both were accepted, exit 0, flag gone from HEAD. A flag
+# this tool cannot read in what was written is not a flag still set, so
+# anything short of a positive `true` is refused.
+#
+# `was` is only worth reading because HEAD's frontmatter is readable, which
+# this does not assume -- the guard below is what makes it true.
+#
+# After the whitespace-only refusal, and it has to be: empty stdin over a
+# state.md with a flag up is the failed-command-substitution caller bug that
+# guard exists to name, and this one would answer it by telling the caller to
+# keep a line in a document they never managed to write at all.
+if [ "$target" = "docs/baton/state.md" ] && [ "$target_in_head" -eq 1 ]; then
+    for flag in suspect needs_human; do
+        was="$(git show "HEAD:$target" | frontmatter_flag "$flag")"
+        [ "$was" = "true" ] || continue
+        now="$(frontmatter_flag "$flag" < "$tmp")"
+        # Two branches for two diagnostics, not two rules. The rule is the
+        # `!= true` below; `= false` is the sub-case that earns its own
+        # sentence, because a writer who spelled the clearing out needs to be
+        # told whose it is, not told to keep a line they deleted deliberately.
+        # Collapsing them keeps the rule and loses the message.
+        if [ "$now" = "false" ]; then
+            echo "baton-write: refusing to clear $flag: it is set, and clearing it is the human's -- see /baton:clear. Raising it is always yours; lowering it is not." >&2
+            exit 3
+        fi
+        if [ "$now" != "true" ]; then
+            echo "baton-write: refusing to write $target: $flag is set in HEAD, and this write does not say '$flag: true' -- a flag that cannot be read in what was written is not a flag still set. Keep the line in the frontmatter block, which has to open on line 1. Clearing $flag is the human's -- see /baton:clear." >&2
+            exit 3
+        fi
+    done
+fi
+
+# The same rule about the document rather than the transition, and refused
+# whatever HEAD says -- which is the part the guard above cannot do from where
+# it stands. It only engages once a flag is up, so the way past it was to go
+# first: land a state.md this tool cannot read while both flags are still
+# false, where nothing is set and nothing fires, and from then on `was` reads
+# empty out of an unreadable HEAD and every write is free. Reproduced in three
+# steps, all of them exit 0, ending with needs_human back to false in the log.
+#
+# Conditioned on nothing, therefore, so that "HEAD's frontmatter is readable"
+# stops being an assumption the guard above makes and becomes something this
+# tool maintains -- true of every state.md baton-write has committed, the
+# first one included. baton-digest refuses an unreadable state.md on the read
+# side for the same reason, rather than printing it as a run waiting for
+# nobody.
+#
+# A HEAD that is already unreadable can still be written over, by a readable
+# document and only by one. That is the repair path, and it has to exist:
+# baton-write is the only writer the agent has, and refusing there would leave
+# a run with no way back. Nothing is lost by allowing it, either -- a flag
+# inside an unreadable frontmatter was never a stop anyone could see, and
+# baton-digest refuses that file outright, which halts the run harder than
+# needs_human does.
+if [ "$target" = "docs/baton/state.md" ] && [ -z "$(frontmatter_block < "$tmp")" ]; then
+    echo "baton-write: refusing to write $target: it has no frontmatter block this tool can read -- one opening with --- on line 1, closed by a later ---. suspect and needs_human live there, and flags that cannot be read are a stop nobody can see, this tool included." >&2
+    exit 3
 fi
 
 # The idle short-circuit only fires when the working tree already matches

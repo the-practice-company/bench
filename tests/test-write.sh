@@ -7,7 +7,35 @@ WRITE="$REPO_ROOT/plugins/baton/scripts/baton-write"
 
 make_fixture_repo
 
-printf 'updated_at: 2026-08-03T10:00:00Z\nCurrent wave: 1\n' \
+# Every write to docs/baton/state.md below goes through this. baton-write
+# refuses a state.md whose frontmatter it cannot read -- flags it cannot see
+# are a stop it cannot enforce -- so a two-line fixture that was never a state
+# document would now be turned away for that, rather than for whatever the
+# case using it is actually testing. A seven-line header -- the block, then the
+# blank line under it -- and then whatever body the case wants; called with no
+# body at all it emits just the header, which is what the line-cap cases pad.
+state_doc() {
+    # state_doc <updated_at> [<body line>...]
+    local updated_at="$1"
+    shift
+    printf '%s\n' \
+        '---' \
+        'schema: baton/state/v1' \
+        "updated_at: $updated_at" \
+        'suspect: false' \
+        'needs_human: false' \
+        '---' \
+        ''
+    [ $# -eq 0 ] || printf '%s\n' "$@"
+    return 0
+}
+
+# CRLF on every line, the opening --- included, which is what a file written
+# by a Windows editor actually looks like. Used by the idle-checkpoint case
+# below and by the reader case at the end of this file.
+crlf() { awk '{ printf "%s\r\n", $0 }'; }
+
+state_doc 2026-08-03T10:00:00Z 'Current wave: 1' \
     | "$WRITE" -m "baton: first checkpoint" docs/baton/state.md
 
 assert_file_exists "docs/baton/state.md" "creates the file and its parents"
@@ -18,7 +46,7 @@ assert_contains "$(git log -1 --pretty=%s)" "baton: first checkpoint" "uses the 
 commits_before="$(git rev-list --count HEAD)"
 
 # Same content, later timestamp: nothing of substance changed.
-printf 'updated_at: 2026-08-03T11:00:00Z\nCurrent wave: 1\n' \
+state_doc 2026-08-03T11:00:00Z 'Current wave: 1' \
     | "$WRITE" -m "baton: idle checkpoint" docs/baton/state.md
 
 assert_equals "$(git rev-list --count HEAD)" "$commits_before" "an idle checkpoint creates no commit"
@@ -28,7 +56,7 @@ assert_contains "$(cat docs/baton/state.md)" "2026-08-03T10:00:00Z" \
     "an idle checkpoint does not even rewrite the timestamp"
 
 # Real change: commits.
-printf 'updated_at: 2026-08-03T12:00:00Z\nCurrent wave: 2\n' \
+state_doc 2026-08-03T12:00:00Z 'Current wave: 2' \
     | "$WRITE" -m "baton: wave 2" docs/baton/state.md
 
 assert_equals "$(git rev-list --count HEAD)" "$((commits_before + 1))" "a real change creates one commit"
@@ -88,7 +116,7 @@ fi
 dotfiles_before="$(find docs/baton -maxdepth 1 -name '.*' -type f | sort)"
 
 set +e
-printf 'updated_at: 2026-08-03T13:00:00Z\nCurrent wave: 2\n' \
+state_doc 2026-08-03T13:00:00Z 'Current wave: 2' \
     | "$WRITE" -m "checkpoint during merge" docs/baton/state.md
 merge_rc=$?
 set -e
@@ -113,7 +141,7 @@ head_sha_before="$(git rev-parse HEAD)"
 head_content_before="$(cat docs/baton/state.md)"
 
 set +e
-printf 'updated_at: 2026-08-03T14:00:00Z\nCurrent wave: 3\n' \
+state_doc 2026-08-03T14:00:00Z 'Current wave: 3' \
     | "$WRITE" -m "checkpoint blocked by hook" docs/baton/state.md
 hook_rc=$?
 set -e
@@ -150,7 +178,7 @@ assert_contains "$(git status --porcelain docs/baton)" "M docs/baton/state.md" \
     "sanity: the hand edit leaves docs/baton dirty before the call"
 
 dirty_commits_before="$(git rev-list --count HEAD)"
-printf 'updated_at: 2026-08-03T15:00:00Z\nCurrent wave: 2\n' \
+state_doc 2026-08-03T15:00:00Z 'Current wave: 2' \
     | "$WRITE" -m "checkpoint over a dirty tree" docs/baton/state.md
 
 assert_equals "$(git rev-list --count HEAD)" "$((dirty_commits_before + 1))" \
@@ -202,6 +230,10 @@ set -e
 
 assert_equals "$newline_rc" "3" "a single newline over existing committed content is refused like empty stdin"
 assert_contains "$newline_stderr" "docs/baton/state.md" "the whitespace-only refusal names the path"
+# A single newline has no frontmatter either, so this pins which guard answers
+# it: the caller bug it is, not the document shape it also happens to lack.
+assert_contains "$newline_stderr" "empty-or-whitespace-only content" \
+    "the single-newline refusal comes from the whitespace guard, which is the one that knows what went wrong"
 assert_equals "$(git rev-list --count HEAD)" "$whitespace_commits_before" \
     "the refused single-newline write creates no commit"
 assert_equals "$(cat docs/baton/state.md)" "$before_state_content_ws" \
@@ -279,7 +311,7 @@ fi
 unrecoverable_head_before="$(git rev-parse HEAD)"
 touch .git/index.lock
 set +e
-unrecoverable_stderr="$(printf 'updated_at: X\nunrecoverable attempt\n' \
+unrecoverable_stderr="$(state_doc 2026-08-03T14:30:00Z 'unrecoverable attempt' \
     | "$WRITE" -m "checkpoint that cannot roll back" docs/baton/state.md 2>&1 >/dev/null)"
 unrecoverable_rc=$?
 set -e
@@ -315,7 +347,7 @@ verify_fail_head_before="$(git rev-parse HEAD)"
 verify_fail_content_before="$(cat docs/baton/state.md)"
 chmod 000 .git/index
 set +e
-verify_fail_stderr="$(printf 'updated_at: X\nunverifiable rollback attempt\n' \
+verify_fail_stderr="$(state_doc 2026-08-03T14:45:00Z 'unverifiable rollback attempt' \
     | "$WRITE" -m "checkpoint whose rollback cannot even be checked" docs/baton/state.md 2>&1 >/dev/null)"
 verify_fail_rc=$?
 set -e
@@ -362,7 +394,7 @@ assert_equals "$(git status --porcelain docs/baton | wc -l | tr -d ' ')" "0" \
 # nested under the subdirectory ---
 mkdir -p somewhere/deep
 subdir_commits_before="$(git rev-list --count HEAD)"
-(cd somewhere/deep && printf 'updated_at: 2026-08-03T16:00:00Z\nCurrent wave: 4\n' \
+(cd somewhere/deep && state_doc 2026-08-03T16:00:00Z 'Current wave: 4' \
     | "$WRITE" -m "checkpoint from a subdirectory" docs/baton/state.md)
 
 assert_equals "$(git rev-list --count HEAD)" "$((subdir_commits_before + 1))" \
@@ -390,12 +422,24 @@ assert_equals "$outside_rc" "3" "an absolute path outside the repository is refu
 
 # --- CRLF content that differs from HEAD only by the timestamp is still
 # idle under core.autocrlf=input: the comparison goes through git's own
-# normalisation (git hash-object), not raw bytes ---
+# normalisation (git hash-object), not raw bytes.
+#
+# Captured rather than run bare, because a state.md written in CRLF now has to
+# get past the frontmatter reader before the idle comparison is even reached.
+# A reader that stopped stripping \r would refuse it, and a bare call refused
+# under set -e takes the whole file down mid-run -- reporting nothing, with
+# every case after this one silently unrun. Named assertions instead. ---
 git config core.autocrlf input
 crlf_commits_before="$(git rev-list --count HEAD)"
-printf 'updated_at: 2026-08-03T17:00:00Z\r\nCurrent wave: 4\r\n' \
-    | "$WRITE" -m "checkpoint, CRLF, should be idle" docs/baton/state.md
+set +e
+crlf_idle_stderr="$(state_doc 2026-08-03T17:00:00Z 'Current wave: 4' | crlf \
+    | "$WRITE" -m "checkpoint, CRLF, should be idle" docs/baton/state.md 2>&1 >/dev/null)"
+crlf_idle_rc=$?
+set -e
 
+assert_equals "$crlf_idle_rc" "0" \
+    "a CRLF state.md is read like any other, not turned away for its line endings"
+assert_equals "$crlf_idle_stderr" "" "the CRLF idle checkpoint prints no refusal"
 assert_equals "$(git rev-list --count HEAD)" "$crlf_commits_before" \
     "a CRLF-only, timestamp-only diff under autocrlf=input still creates no commit"
 assert_equals "$(git status --porcelain docs/baton | wc -l | tr -d ' ')" "0" \
@@ -505,10 +549,23 @@ assert_contains "$(cat docs/baton/plain.md 2>/dev/null)" "plain content" \
 
 # --- docs/baton/state.md's 60-line cap is enforced here, not only checked
 # against the shipped template: a state file grown past the cap by real
-# checkpoints must be refused too, not just the day-one copy. ---
+# checkpoints must be refused too, not just the day-one copy.
+#
+# Both documents are real state files, header and all, padded to length with
+# body lines -- sixty lines of bare filler is a shape state.md cannot take, and
+# a cap tested against a document that could never exist tests nothing. It also
+# turns the 61-line case into the wrong refusal: baton-write would turn it away
+# for its unreadable frontmatter, which is exit 3 with the right number on it
+# for the wrong reason, so the assertions below name the cap's own message. ---
 cap_commits_before="$(git rev-list --count HEAD)"
 
-sixty_lines="$(for i in $(seq 1 60); do echo "line $i"; done)"
+# state_doc's header is 7 lines, so $1 filler lines make a document of $1 + 7.
+cap_filler() {
+    local i
+    for i in $(seq 1 "$1"); do echo "line $i"; done
+}
+
+sixty_lines="$(state_doc 2026-08-03T19:00:00Z; cap_filler 53)"
 printf '%s\n' "$sixty_lines" | "$WRITE" -m "checkpoint at exactly 60 lines" docs/baton/state.md
 assert_equals "$(git rev-list --count HEAD)" "$((cap_commits_before + 1))" \
     "exactly 60 lines is accepted, not refused by an off-by-one"
@@ -516,14 +573,18 @@ assert_equals "$(wc -l < docs/baton/state.md | tr -d ' ')" "60" \
     "the 60-line file lands with exactly 60 lines"
 
 over_cap_commits_before="$(git rev-list --count HEAD)"
-sixty_one_lines="$(for i in $(seq 1 61); do echo "line $i"; done)"
+sixty_one_lines="$(state_doc 2026-08-03T19:05:00Z; cap_filler 54)"
+assert_equals "$(printf '%s\n' "$sixty_one_lines" | wc -l | tr -d ' ')" "61" \
+    "sanity: the over-cap fixture is one line over the cap, not merely long"
 set +e
 cap_stderr="$(printf '%s\n' "$sixty_one_lines" | "$WRITE" -m "checkpoint at 61 lines" docs/baton/state.md 2>&1 >/dev/null)"
 cap_rc=$?
 set -e
 
 assert_equals "$cap_rc" "3" "refuses docs/baton/state.md at 61 lines, over the 60-line cap"
-assert_contains "$cap_stderr" "60" "the refusal message names the 60-line cap"
+assert_contains "$cap_stderr" "at 61 lines: the cap is 60" "the refusal message names the 60-line cap"
+assert_not_contains "$cap_stderr" "no frontmatter block this tool can read" \
+    "the over-cap write is refused for being over the cap, not for a frontmatter block it has"
 assert_equals "$(git rev-list --count HEAD)" "$over_cap_commits_before" \
     "the refused over-cap write creates no commit"
 assert_equals "$(wc -l < docs/baton/state.md | tr -d ' ')" "60" \
@@ -548,7 +609,8 @@ do
     set -e
 
     assert_equals "$spelling_cap_rc" "3" "refuses docs/baton/state.md at 61 lines spelled as $spelling"
-    assert_contains "$spelling_cap_stderr" "60" "the $spelling refusal message names the 60-line cap"
+    assert_contains "$spelling_cap_stderr" "at 61 lines: the cap is 60" \
+        "the $spelling refusal message names the 60-line cap"
     assert_equals "$(git rev-list --count HEAD)" "$spelling_cap_commits_before" \
         "the refused $spelling over-cap write creates no commit"
     assert_equals "$(wc -l < docs/baton/state.md | tr -d ' ')" "60" \
@@ -591,10 +653,16 @@ state_with_flags() {
 # The baseline goes into HEAD with plain git, never through baton-write: the
 # `suspect: true` baseline could not be arrived at through the refusal it is
 # about to test, and a fixture built out of the thing under test proves less.
+#
+# --allow-empty because a baseline is allowed to repeat one: with nothing
+# staged, `git commit` exits 1 and set -e kills this file mid-run, reporting
+# git's "nothing to commit" instead of any named assertion. Only the third
+# argument -- which reads as a label, and is one -- keeps that from happening
+# today, and a label is not a thing to make load-bearing.
 commit_state_flags() {
     state_with_flags "$1" "$2" "$3" > docs/baton/state.md
     git add docs/baton/state.md
-    git commit -q -m "fixture: state.md suspect=$1 needs_human=$2 ($3)"
+    git commit -q --allow-empty -m "fixture: state.md suspect=$1 needs_human=$2 ($3)"
 }
 
 commit_state_flags true false "suspect baseline"
@@ -792,5 +860,224 @@ assert_contains "$(git show HEAD:docs/baton/state.md)" "suspect: true" \
     "the flag is still set in HEAD after every alternate-spelling attempt on it"
 assert_equals "$(git rev-list --count HEAD)" "$spelling_flag_commits_before" \
     "no alternate spelling of the path produced a commit"
+
+# --- carriage returns, on both sides of the same reader. baton-gate and
+# baton-digest strip \r from every line before comparing any of it, and both
+# carry a comment saying why: a file a Windows editor writes has CRLF on
+# EVERY line, the opening --- included, and the line-1 test is an exact string
+# comparison -- "---\r" is not "---", so the block is never entered and every
+# field reads empty. baton-write's reader did not strip it, and an empty read
+# is exactly what this guard treats as "the flag is not here".
+#
+# Which made the flag clearable in two steps, both of them exit 0: raise
+# needs_human from a CRLF editor (baton-write reads no flag, allows it;
+# baton-digest reads the same commit and prints needs_human: true, because it
+# strips), then clear it from an LF one (`was` is empty, so nothing fires).
+#
+# The suite could not see any of it. The fixture has run under
+# core.autocrlf=input since the idle-CRLF case above, and this machine's
+# global config says the same, so git normalises CRLF away on commit and the
+# committed blob is always LF -- a regression test added anywhere else in this
+# file would have passed against the unfixed reader. This block turns that off
+# for its own scope only, and the first assertion is that the baseline blob
+# genuinely kept its carriage returns: without it, green here proves nothing.
+crlf_autocrlf_before="$(git config --local --get core.autocrlf || true)"
+git config core.autocrlf false
+
+commit_state_flags_crlf() {
+    state_with_flags "$1" "$2" "$3" | crlf > docs/baton/state.md
+    git add docs/baton/state.md
+    git commit -q --allow-empty -m "fixture: CRLF state.md suspect=$1 needs_human=$2 ($3)"
+}
+
+commit_state_flags_crlf false true "a stop raised from a CRLF editor"
+assert_contains "$(git show HEAD:docs/baton/state.md | tr '\r' '@')" "needs_human: true@" \
+    "sanity: what baton-write reads back from HEAD still carries its carriage returns, so this case is genuinely reproduced and not normalised away by autocrlf"
+
+crlf_bypass_commits_before="$(git rev-list --count HEAD)"
+
+set +e
+crlf_clear_stderr="$(state_with_flags false false "clear a stop the reader could not see" \
+    | "$WRITE" -m "agent: clear a CRLF stop" docs/baton/state.md 2>&1 >/dev/null)"
+crlf_clear_rc=$?
+set -e
+
+assert_equals "$crlf_clear_rc" "3" \
+    "refuses to clear a needs_human that HEAD spells with CRLF line endings"
+assert_contains "$crlf_clear_stderr" "needs_human" \
+    "the CRLF-HEAD refusal names the stop it will not let the agent clear"
+assert_contains "$(git show HEAD:docs/baton/state.md)" "needs_human: true" \
+    "the CRLF stop is still set in HEAD after the refused clearing write"
+assert_equals "$(git rev-list --count HEAD)" "$crlf_bypass_commits_before" \
+    "the refused CRLF-HEAD clearing write creates no commit"
+
+# The same defect from the other side, and the reason this is a reader fix
+# rather than another refusal: HEAD spells the flag in LF, the agent writes
+# the same document from an editor that ends lines with CRLF, and every byte
+# of `suspect: true` is there in a block opening on line 1. That was refused,
+# with a message telling the writer to keep a line it had kept.
+commit_state_flags true false "an LF baseline a CRLF writer checkpoints over"
+crlf_carry_commits_before="$(git rev-list --count HEAD)"
+
+set +e
+crlf_carry_stderr="$(state_with_flags true false "checkpoint from a CRLF editor" | crlf \
+    | "$WRITE" -m "agent: CRLF checkpoint under a raised suspect" docs/baton/state.md 2>&1 >/dev/null)"
+crlf_carry_rc=$?
+set -e
+
+assert_equals "$crlf_carry_rc" "0" \
+    "a CRLF write that plainly carries suspect: true forward is accepted, not turned away for its line endings"
+assert_equals "$crlf_carry_stderr" "" "the accepted CRLF checkpoint prints no refusal"
+assert_equals "$(git rev-list --count HEAD)" "$((crlf_carry_commits_before + 1))" \
+    "the CRLF checkpoint commits like any other"
+assert_contains "$(git show HEAD:docs/baton/state.md)" "checkpoint from a CRLF editor" \
+    "the CRLF checkpoint's content reached the log, not just its exit code"
+
+# Put the fixture's line-ending policy back exactly as it was, and its
+# state.md back to LF with it: everything after this block is written and read
+# in LF, and a stray autocrlf=false -- or a CRLF blob in HEAD -- would quietly
+# change what those cases mean rather than failing them.
+if [ -n "$crlf_autocrlf_before" ]; then
+    git config core.autocrlf "$crlf_autocrlf_before"
+else
+    git config --unset core.autocrlf || true
+fi
+assert_equals "$(git config --local --get core.autocrlf || true)" "$crlf_autocrlf_before" \
+    "the fixture's core.autocrlf is back to what the rest of this file runs under"
+
+commit_state_flags false false "back to LF after the CRLF block"
+assert_equals "$(git status --porcelain docs/baton | wc -l | tr -d ' ')" "0" \
+    "sanity: the fixture is back to an LF state.md and a clean tree"
+
+# --- and the entry into an unreadable HEAD, which was the hole the guard
+# above could not close from where it stands: it only engages once a flag is
+# up, so the way past it was to go first. Land a document this tool cannot
+# read while both flags are still false -- no flag is set, nothing fires --
+# and every step after it is unguarded, because `was` reads empty from a HEAD
+# that cannot be read. Reproduced end to end at exit 0 three times over.
+#
+# So the rule is about the document, not the transition: a state.md whose
+# frontmatter this tool cannot read is refused whatever HEAD says, which is
+# what makes "HEAD is readable" an invariant instead of an assumption.
+state_unterminated() {
+    state_with_flags "$@" | awk 'NR == 1 || $0 != "---"'
+}
+
+commit_state_flags false false "readable HEAD, nothing raised"
+unreadable_entry_commits_before="$(git rev-list --count HEAD)"
+unreadable_entry_head_before="$(git show HEAD:docs/baton/state.md)"
+
+set +e
+unreadable_entry_stderr="$(state_after_blank_line false false "land an unreadable state.md first" \
+    | "$WRITE" -m "agent: step one, nothing raised yet" docs/baton/state.md 2>&1 >/dev/null)"
+unreadable_entry_rc=$?
+set -e
+
+assert_equals "$unreadable_entry_rc" "3" \
+    "refuses an unreadable state.md even with both flags false -- the step that used to be free"
+assert_contains "$unreadable_entry_stderr" "no frontmatter block this tool can read" \
+    "the refusal says what it could not read, rather than naming a flag that is not set"
+assert_equals "$(git show HEAD:docs/baton/state.md)" "$unreadable_entry_head_before" \
+    "HEAD still holds the readable document after the refused unreadable write"
+assert_equals "$(git rev-list --count HEAD)" "$unreadable_entry_commits_before" \
+    "the refused unreadable write creates no commit"
+assert_equals "$(git status --porcelain docs/baton | wc -l | tr -d ' ')" "0" \
+    "docs/baton is clean after the refused unreadable write"
+
+# The other malformed shape, and the one the reader's siblings both name: a
+# block that opens on line 1 and never closes. Left unrefused, "frontmatter"
+# quietly means "everything after line 1", so any body line spelled like a
+# field reads as one.
+set +e
+unterminated_stderr="$(state_unterminated false false "a block that never closes" \
+    | "$WRITE" -m "agent: unterminated frontmatter" docs/baton/state.md 2>&1 >/dev/null)"
+unterminated_rc=$?
+set -e
+
+assert_equals "$unterminated_rc" "3" \
+    "refuses a state.md whose frontmatter block opens on line 1 and is never closed"
+assert_contains "$unterminated_stderr" "no frontmatter block this tool can read" \
+    "the unterminated-block refusal is the same one, for the same reason"
+assert_equals "$(git rev-list --count HEAD)" "$unreadable_entry_commits_before" \
+    "the refused unterminated write creates no commit either"
+
+# The neighbour every refusal needs. Nothing is raised, nothing is being
+# carried, and the document is an ordinary one: this is the path the new rule
+# must leave completely alone, and a suite without it is just as green against
+# a script that refuses every state.md write.
+ordinary_commits_before="$(git rev-list --count HEAD)"
+
+set +e
+ordinary_stderr="$(state_with_flags false false "an ordinary checkpoint of a readable state.md" \
+    | "$WRITE" -m "agent: ordinary readable checkpoint" docs/baton/state.md 2>&1 >/dev/null)"
+ordinary_rc=$?
+set -e
+
+assert_equals "$ordinary_rc" "0" "a well-formed state.md write is still an ordinary checkpoint"
+assert_equals "$ordinary_stderr" "" "the well-formed write prints no refusal"
+assert_equals "$(git rev-list --count HEAD)" "$((ordinary_commits_before + 1))" \
+    "the well-formed write commits like any other"
+assert_contains "$(git show HEAD:docs/baton/state.md)" "an ordinary checkpoint of a readable state.md" \
+    "the well-formed write's content reached the log"
+
+# And on a path HEAD has nothing at. The rule cannot be conditioned on the
+# previous version, because the first state.md a run ever writes is the one
+# every later `was` gets read from -- an unreadable one there poisons the
+# whole run from its first commit.
+git rm -q docs/baton/state.md
+git commit -q -m "fixture: a run with no state.md yet"
+absent_commits_before="$(git rev-list --count HEAD)"
+
+set +e
+absent_stderr="$(state_after_blank_line false false "create it unreadable from the start" \
+    | "$WRITE" -m "agent: create an unreadable state.md" docs/baton/state.md 2>&1 >/dev/null)"
+absent_rc=$?
+set -e
+
+assert_equals "$absent_rc" "3" \
+    "refuses to create an unreadable state.md at a path HEAD has nothing at"
+assert_contains "$absent_stderr" "no frontmatter block this tool can read" \
+    "the creation refusal names the same unreadable frontmatter"
+if [ -e docs/baton/state.md ]; then
+    fail "the refused unreadable creation leaves nothing on disk"
+else
+    pass "the refused unreadable creation leaves nothing on disk"
+fi
+assert_equals "$(git rev-list --count HEAD)" "$absent_commits_before" \
+    "the refused unreadable creation creates no commit"
+
+set +e
+state_with_flags false false "the first state.md of a run" \
+    | "$WRITE" -m "baton: initial state" docs/baton/state.md
+first_state_rc=$?
+set -e
+
+assert_equals "$first_state_rc" "0" \
+    "a well-formed first state.md is still created normally -- /baton:init writes this one"
+assert_contains "$(git show HEAD:docs/baton/state.md)" "the first state.md of a run" \
+    "the created state.md reached the log"
+
+# --- empty stdin over a state.md with a flag up. Both guards refuse it, so
+# the only thing at stake is which one says why -- and the whitespace guard is
+# the one that knows: a failed command substitution or an empty heredoc is a
+# caller bug, and being told instead to "keep the line in the frontmatter
+# block" sends the reader to look at a document that does not exist yet. ---
+commit_state_flags true false "a raised flag for the empty-stdin diagnostic"
+empty_under_flag_commits_before="$(git rev-list --count HEAD)"
+
+set +e
+empty_under_flag_stderr="$(: | "$WRITE" -m "oops empty under a raised flag" docs/baton/state.md 2>&1 >/dev/null)"
+empty_under_flag_rc=$?
+set -e
+
+assert_equals "$empty_under_flag_rc" "3" "empty stdin over a state.md with suspect set is still refused"
+assert_contains "$empty_under_flag_stderr" "empty-or-whitespace-only content" \
+    "the refusal reports the caller bug it is, rather than a flag line the caller never had a chance to write"
+assert_not_contains "$empty_under_flag_stderr" "Keep the line in the frontmatter block" \
+    "the flag guard no longer shadows the empty-stdin diagnostic"
+assert_contains "$(git show HEAD:docs/baton/state.md)" "suspect: true" \
+    "the flag survives the refused empty write"
+assert_equals "$(git rev-list --count HEAD)" "$empty_under_flag_commits_before" \
+    "the refused empty write under a raised flag creates no commit"
 
 finish
