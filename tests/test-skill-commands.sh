@@ -259,13 +259,74 @@ set -u
 # The scripted autopilot test pins the fixture's premise and says so itself:
 # what an agent does with that fixture is the runbook's job, run by a human.
 # Without a scenario there, the fixture is built and checked by nobody.
-runbook="$(cat "$REPO_ROOT/tests/fixtures/cold-start/RUNBOOK.md")"
+RUNBOOK="$REPO_ROOT/tests/fixtures/cold-start/RUNBOOK.md"
+runbook="$(cat "$RUNBOOK")"
 # The heading, not the bare words: "Scenario 4" alone appears in the bullet
 # list and in "Recording the result" too, so deleting the entire section
 # would leave that assertion green off a mention elsewhere in the file.
 assert_contains "$runbook" "## Scenario 4: autopilot" "the runbook has a scenario for the autopilot"
 assert_contains "$runbook" "build-autopilot.sh" "scenario 4 names the fixture it runs against"
 assert_contains "$runbook" "/baton:continue" "scenario 4 exercises the fresh-session pickup"
+
+# --- and the barrier, from the side no script watches ---
+# baton-write refuses the write and test-write.sh pins the refusal; the digest
+# prints verify_cmd verbatim and test-digest.sh pins that. Neither can watch an
+# agent go around a tool that said no, or a human miss a substitution printed
+# in front of them. Same needle shape as above -- the heading, because both
+# scenarios are named in the contents list too, and the fixture path, because
+# it is the one string unique to each Setup (both build from a builder another
+# scenario already names).
+assert_contains "$runbook" "## Scenario 6: the stop the run cannot lift" \
+    "the runbook has a scenario for a run that may not lift its own stop"
+assert_contains "$runbook" "/tmp/baton-stopped" "scenario 6 names the fixture it builds"
+assert_contains "$runbook" '**It names `/baton:clear`.**' \
+    "scenario 6 requires the agent to name the command it is barred from running"
+
+assert_contains "$runbook" "## Scenario 7: ratification without opening a file" \
+    "the runbook has a scenario for ratifying entirely in chat"
+assert_contains "$runbook" "/tmp/baton-ratify" "scenario 7 names the fixture it builds"
+assert_contains "$runbook" '**The digest was enough to catch the substitution.**' \
+    "scenario 7 turns on a human catching a substituted verify_cmd in the digest"
+
+# --- the header's count, the contents list and the sections agree ---
+# Three places that have to say the same thing, and the way they came apart
+# before was two of them being checked and the third left to a reader's eye: a
+# section whose contents line said something else, with the assertion pinned to
+# the contents line and green over a section that was not there. Derived from
+# the headings rather than pinned to a number, so the eighth scenario is
+# checked on the day it lands rather than the day someone remembers this.
+headings="$(grep '^## Scenario ' "$RUNBOOK" || true)"
+scenario_count="$(grep -c '^## Scenario ' "$RUNBOOK" || true)"
+
+while IFS= read -r heading; do
+    [ -n "$heading" ] || continue
+    title="${heading#\#\# }"
+    assert_contains "$runbook" "- **$title**" \
+        "the contents list names \"$title\" exactly as its section heading does"
+done <<EOF
+$headings
+EOF
+
+# The header counts in words, so the check needs the word. A count with no
+# entry in this table fails rather than skipping it: an unanticipated number of
+# scenarios is precisely the case where the header was left behind.
+case "$scenario_count" in
+    5) count_word="Five" ;;
+    6) count_word="Six" ;;
+    7) count_word="Seven" ;;
+    8) count_word="Eight" ;;
+    9) count_word="Nine" ;;
+    *) count_word="" ;;
+esac
+if [ -z "$count_word" ]; then
+    fail "the runbook's $scenario_count scenarios have a word in the table above"
+else
+    assert_contains "$runbook" "$count_word scenarios follow" \
+        "the runbook's header counts the sections the file actually has"
+    lower_word="$(printf '%s' "$count_word" | tr 'A-Z' 'a-z')"
+    assert_contains "$runbook" "Run all $lower_word by hand before each release" \
+        "the line telling the human to run them all counts them the same way"
+fi
 
 # --- auto refuses a spec-less wave ---
 auto_cmd="$(cat "$PLUGIN/commands/auto.md")"
