@@ -226,9 +226,13 @@ write the constitution and then sign it — the only two ways around
 `baton-write`'s refusal to touch that path, and a refusal reachable through a
 command the agent can invoke on itself would not be a refusal at all.
 `/baton:clear` is that same shape one file down: `baton-write` refuses any
-`state.md` write that lowers `suspect` or `needs_human`, and this is the one
-thing that lowers them. `/baton:auto` and `/baton:continue` grant unattended
-work and resume it — the human's calls, not the agent's to make for itself.
+`state.md` write that does not carry a `suspect` or `needs_human` already set
+in the committed file forward as a positive `true` — spelling it `false`,
+leaving the line out, and frontmatter the tool cannot read are one refusal
+rather than three, since what it tests for is the flag still being there — and
+this is the one thing that lowers them. `/baton:auto` and `/baton:continue`
+grant unattended work and resume it — the human's calls, not the agent's to
+make for itself.
 
 The barrier in every one of the five is a single line of frontmatter,
 `disable-model-invocation: true`, and it works per file. That is why these

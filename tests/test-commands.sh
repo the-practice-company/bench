@@ -39,9 +39,9 @@ done
 # destination from auto.md, which is loaded every time it runs. This cap is
 # what makes that distinction cost something to ignore.
 #
-# Measured, never derived: 855 is what `wc -l plugins/baton/commands/*.md`
-# reports with both new commands landed (auto 205, init 170, clear 140,
-# continue 128, ratify 103, status 71, checkpoint 38), and 858 is that floor
+# Measured, never derived: 856 is what `wc -l plugins/baton/commands/*.md`
+# reports with both new commands landed (auto 205, init 170, clear 141,
+# continue 128, ratify 103, status 71, checkpoint 38), and 859 is that floor
 # plus room for a line or two. A ceiling arrived at by arithmetic rather than
 # measurement shipped on a previous branch here and was unreachable, which
 # nobody noticed until review.
@@ -51,14 +51,16 @@ done
 # between them, so the budget sat at 853 -- exactly the total, a ceiling with
 # no room to restore a single line. Re-measured rather than nudged.
 #
-# The floor moved again for this commit, and for content rather than for
-# drift: the no-dead-ends rule reached an eighth place, and checkpoint.md's
-# report now names `/baton:clear` beside the `suspect` it leads with -- two
-# lines that file did not carry, taking the floor from 853 to 855. Both
-# ceilings move with it rather than absorbing it, which is what measuring
-# rather than deriving costs when the measurement goes up: left at 856, this
-# one would have room for a line and the byte ceiling below would have room
-# for none, and the two stop describing the same room.
+# The floor moved twice more, both times for content rather than for drift.
+# The no-dead-ends rule reached an eighth place, and checkpoint.md's report
+# now names `/baton:clear` beside the `suspect` it leads with: two lines,
+# 853 to 855. Then clear.md's CRLF bullet stopped claiming the guard cannot
+# read a carriage return -- true when written, false since 5eac836 -- and
+# gives step 5's own check as the reason instead: one line, 855 to 856.
+# Both ceilings move with the floor rather than absorbing it, which is what
+# measuring rather than deriving costs when the measurement goes up: at 856
+# this one would have had room for nothing at all, and its neighbour below
+# room for two bytes, and the two would stop describing the same room.
 #
 # It grew from 620 because the human-never-opens-a-file work added two
 # commands that did not exist: ratify.md and clear.md, the human's two halves
@@ -66,12 +68,12 @@ done
 # is drift, not the pattern continuing. Each is its own file because
 # `disable-model-invocation` is a per-file flag -- the separate file is the
 # barrier, not a presentational choice.
-CMD_BUDGET=858
+CMD_BUDGET=859
 
 # A second ceiling, in bytes, because the first one cannot see a rewrap.
-# `fmt -w 100` across these seven files takes them from 855 lines to 701 while
+# `fmt -w 100` across these seven files takes them from 856 lines to 703 while
 # the byte count moves by 46. No word is deleted and nothing is said more
-# briefly: it opens 154 lines of headroom under CMD_BUDGET, and the roughly
+# briefly: it opens 153 lines of headroom under CMD_BUDGET, and the roughly
 # 7.5 KB of new prose that could then be poured into that headroom is exactly
 # what the line cap exists to make someone argue for. The same trick was
 # demonstrated on this plugin's skills before their byte budget went in, and
@@ -84,8 +86,8 @@ CMD_BUDGET=858
 # content arriving at any wrap width at all, and is blind in turn to a rewrap
 # that genuinely does say less.
 #
-# Measured on a clean tree, like CMD_BUDGET: 42882 bytes (auto 10126, init
-# 8736, clear 6711, continue 6558, ratify 4764, status 4028, checkpoint 1959),
+# Measured on a clean tree, like CMD_BUDGET: 43034 bytes (auto 10126, init
+# 8736, clear 6863, continue 6558, ratify 4764, status 4028, checkpoint 1959),
 # so this is that floor plus 154 -- three lines at the 50 bytes a line in
 # these files averages, which is the room CMD_BUDGET's floor-plus-three
 # describes. The two are set to agree, deliberately. A line ceiling saying
@@ -102,10 +104,13 @@ CMD_BUDGET=858
 #
 # It is not set tighter than that, though test-budget.sh's own BYTE_BUDGET is
 # -- 49 bytes over the skills floor as this lands. This ceiling is here to
-# catch a rewrap that frees 154 lines while saying nothing new, and it clears
-# that by 14 KB. Metering single lines of prose is CMD_BUDGET's job, and it
-# does it more legibly, in the unit the writer is working in.
-BYTE_BUDGET=43036
+# catch a rewrap that frees 153 lines while saying nothing new, and it does,
+# by a margin measured rather than waved at: the rewrap itself lands at 42988
+# bytes, and the 153 lines of prose that headroom invites weigh about 7650
+# more at the 50 bytes a line above -- some 7.4 KB past this number. Metering
+# single lines of prose is CMD_BUDGET's job, and it does it more legibly, in
+# the unit the writer is working in.
+BYTE_BUDGET=43188
 
 cmd_total=0
 cmd_bytes=0
@@ -185,6 +190,32 @@ for f in "$CMD"/*.md; do
         esac
     fi
 done
+
+# The README describes the guard that makes /baton:clear necessary, and it is
+# the description a first-time reader meets. It said `baton-write` "refuses any
+# state.md write that lowers suspect or needs_human" -- the rule by its value,
+# where the tool tests for a transition: a flag already set in the committed
+# file has to come back as a positive `true`, so writing `false`, dropping the
+# line, and frontmatter it cannot read are one refusal and not three. The same
+# value-framed wording sat in baton-resume's step 4 earlier on this branch and
+# is pinned against there, at test-skills.sh's "resume states the refusal the
+# way baton-write actually tests for it", for a concrete reason: an agent that
+# reads the rule as being about the word `false` deletes the flag line instead
+# -- it is resolving the flag, after all -- and meets a guard it was just told
+# it was obeying.
+#
+# Two needles because the sentence carries two things, and losing either one
+# restores the old reading: the transition, and that the three shapes are one
+# refusal. The `assert_not_contains` guards the wording specifically rather
+# than the topic -- the README says "lowers" elsewhere, correctly, about what
+# the human does.
+readme="$(cat "$README")"
+assert_contains "$readme" '`state.md` write that does not carry a `suspect` or `needs_human` already set' \
+    "the README states the refusal as the transition baton-write tests for"
+assert_contains "$readme" 'leaving the line out, and frontmatter the tool cannot read are one refusal' \
+    "the README says the three shapes of a dropped flag are one refusal"
+assert_not_contains "$readme" 'write that lowers `suspect` or `needs_human`' \
+    "the README no longer describes the guard by the value it refuses"
 
 init="$(cat "$CMD/init.md")"
 assert_contains "$init" "superpowers" "init checks for the companion plugin"
