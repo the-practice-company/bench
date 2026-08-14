@@ -275,6 +275,33 @@ ghost="$("$DIGEST" stop)"
 assert_contains "$ghost" "the constitution declares no wave 7" \
     "a blocked wave the constitution never declared is reported as unknown, not as waiting on nothing"
 
+# The other two answers a blocked wave can get. All three fit the same
+# sentence and two of them begin with the same word, so each has to be
+# pinned to what tells it from the other two: an assertion on "unknown"
+# alone is green against a digest that reaches for the wrong unknown.
+#
+# A wave the constitution does declare, with depends_on: []. It waits on
+# nothing the files record -- which is not the same as a dependency nobody
+# could look up. Wave 1 in the fixture is exactly that shape.
+write_constitution
+write_state false false "none"
+sed -i.bak 's/^| 1 | exchange | done |/| 1 | exchange | blocked |/' docs/baton/state.md
+rm -f docs/baton/state.md.bak
+no_deps="$("$DIGEST" stop)"
+assert_contains "$no_deps" "wave 1 — exchange (depends_on: none declared in the constitution)" \
+    "a wave declared with depends_on: [] is reported as declaring none, not as an unknown"
+
+# No constitution at all. The stop digest does not fail over it -- what is
+# stopped is still worth printing -- and the dependency it could not look up
+# names the reason, so that the reader is not left choosing between a
+# constitution that is missing and one that disagrees with state.md.
+write_state false false "none" "blocked"
+rm -f docs/baton/constitution.md
+no_constitution="$("$DIGEST" stop)"
+assert_contains "$no_constitution" "wave 2 — refresh (depends_on: unknown, there is no constitution here to read it from)" \
+    "with no constitution to read, the blocked wave is still printed and the unknown says which unknown it is"
+write_constitution
+
 write_state false false "none" "doing"
 unblocked="$("$DIGEST" stop)"
 assert_not_contains "$unblocked" "Blocked:" \
