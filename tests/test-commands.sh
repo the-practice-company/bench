@@ -21,10 +21,19 @@ done
 # destination from auto.md, which is loaded every time it runs. This cap is
 # what makes that distinction cost something to ignore.
 #
-# 606 is what commands/ weighs as this cap is added (auto 205, init 169,
-# continue 128, status 68, checkpoint 36); 620 leaves a little room without
-# being a fraction of what it used to weigh.
-CMD_BUDGET=620
+# Measured, never derived: 707 is what `wc -l plugins/baton/commands/*.md`
+# reports with ratify.md landed (auto 205, init 169, continue 128, ratify 100,
+# status 69, checkpoint 36), and 710 is that floor plus room for a line or
+# two. A ceiling arrived at by arithmetic rather than measurement shipped on a
+# previous branch here and was unreachable, which nobody noticed until review.
+#
+# It grew from 620 because the human-never-opens-a-file work adds commands
+# that did not exist -- ratify.md here, and the same again when clear.md
+# lands, which is the second move a reader should expect rather than read as
+# drift. Each is its own file because `disable-model-invocation` is a per-file
+# flag: the separate file is the barrier, not a presentational choice. The cap
+# is re-measured and argued in full once both commands exist.
+CMD_BUDGET=710
 cmd_total=0
 for f in "$CMD"/*.md; do
     n="$(wc -l < "$f" | tr -d ' ')"
