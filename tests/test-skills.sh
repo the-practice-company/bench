@@ -304,7 +304,13 @@ assert_contains "$autopilot" 'nothing in its `consumes` appears in the `produces
 # list still calls available is a wave the loop can take, skip, and take
 # again, with "if no wave is available" never becoming true. So the refusal
 # has to live HERE, not only in step 1.
-assert_contains "$autopilot" 'its `spec` cell is not `—`' \
+#
+# The needle names where the field is read from, and it is chosen so the old
+# text cannot satisfy it: the rule used to say "cell", meaning a column of
+# state.md the agent writes at every checkpoint. It now says the constitution,
+# which `baton-write` refuses outright -- so an agent that wrote its own spec
+# could no longer put the path where the rule looks.
+assert_contains "$autopilot" 'its `spec` in the constitution is not `—`' \
     "a wave with no spec is unavailable, not merely skipped once it has been taken"
 # The count and the enumeration rot independently -- the same lesson as
 # "eleven keys" over the key table, and "four edits" over the gate bullet. A
@@ -541,13 +547,29 @@ assert_contains "$autopilot" "superpowers:finishing-a-development-branch" \
 assert_contains "$resume" "Write nothing, not even" \
     "the branch stop writes no flag into a state.md it cannot establish is this run's"
 
-# Step 1 skips a wave whose spec cell is `—` rather than deriving one, and a
+# Step 1 skips a wave whose spec is `—` rather than deriving one, and a
 # skipped wave stays `todo` -- so nothing on disk records that it was passed
 # over. The end-of-run report is the only place it can appear, and the run it
 # appears in is the one that most wants a human: what the wave needs is a
 # brainstorming session.
 assert_contains "$autopilot" "skipped for want of a spec" \
-    "a wave skipped for an empty spec cell is named in the end-of-run report"
+    "a wave skipped for an empty spec is named in the end-of-run report"
+
+# Where step 1 reads the document from, which is the whole of this change. The
+# refusal above ("Never derive that document yourself") was already there and
+# stayed green while the path came off a state.md column the agent writes at
+# every checkpoint: it could write its own spec, put the path in the cell, and
+# take the wave at the next checkpoint -- the self-judging loop rebuilt one
+# level up. Naming the constitution is what closes that, because `baton-write`
+# refuses that path, so this needle cannot pass off the old wording.
+assert_contains "$autopilot" "The wave's \`spec\` in the constitution names" \
+    "the autopilot reads a wave's spec from the file it cannot write"
+
+# The same failure the workspace preference had: step 1 enumerates what it
+# takes from the constitution, and a field missing from that list is a field
+# the resumed session never loads. Found only by final review last time.
+assert_contains "$resume" "each wave's \`spec\`" \
+    "resume step 1 takes the per-wave spec off the constitution with the rest"
 
 # The workspace preference was a field nothing read: /baton:init collected it,
 # the constitution declared it, baton/SKILL.md called using-git-worktrees

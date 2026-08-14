@@ -53,13 +53,15 @@ Create nothing: not the directory, not a state file, not a constitution.
 **1. Read both files.** Pin the working directory to the repository root with
 `cd "$(git rev-parse --show-toplevel)"`; every path here resolves against it.
 Then read `docs/baton/constitution.md` first, `docs/baton/state.md` second.
-Four things from the constitution, none optional: the goal, your operating
-mode, the non-negotiables, and `workspace`. The operating mode is who you are
-for the rest of the session, and step 8 means it literally: orchestrator means
-you delegate rather than implement here. `workspace` — `in-place` or
-`worktree` — is the consent `superpowers:using-git-worktrees` would stop to
-ask for: state it to that skill rather than letting it ask, since under the
-autopilot nobody is there to answer.
+Five things from the constitution, none optional: the goal, your operating
+mode, the non-negotiables, `workspace`, and each wave's `spec`. The operating
+mode is who you are for the rest of the session, and step 8 means it
+literally: orchestrator means you delegate rather than implement here. A
+wave's `spec` is the document it builds to; state.md carries no column for
+it, so a spec you wrote is one nothing downstream would read. `workspace` —
+`in-place` or `worktree` — is the consent `superpowers:using-git-worktrees`
+would stop to ask for: state it to that skill rather than letting it ask,
+since under the autopilot nobody is there to answer.
 
 Check `status` in its frontmatter before acting on any of it: anything other
 than `ratified` means the human has not finished writing it — stop and ask for

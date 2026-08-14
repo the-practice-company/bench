@@ -44,10 +44,11 @@ One question at a time. Cover, in this order:
   cannot be checked: "the API is solid" is not a criterion.
 - **Which document each wave builds to.** Per wave: does the umbrella spec
   cover it closely enough, does one section of it, or does this wave need its
-  own spec from `superpowers:brainstorming`? Whatever they answer goes in the
-  wave's `spec` cell. Ask it here, wave by wave, because the alternative is
-  asking it the evening someone hands the run over — and a wave whose cell is
-  empty then is a wave the autopilot will not take.
+  own spec from `superpowers:brainstorming`? Whatever they answer becomes the
+  wave's `spec:` in the constitution, beside its exit criteria — the agent
+  cannot write that file, so the answer stays theirs. Ask it here, wave by
+  wave, because the alternative is asking it the evening someone hands the run
+  over — and a wave with no spec then is a wave the autopilot will not take.
 - **Non-negotiables.** What must no wave break.
 - **Operating mode.** Confirm the default (orchestrator delegating to
   subagents and workflows) or take what they want instead.

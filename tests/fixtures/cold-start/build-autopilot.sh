@@ -2,23 +2,24 @@
 # Build a run that was handed over and then hit a pat: wave 1 closed, wave
 # 2 blocked, waves 3 and 4 still todo -- and only wave 4 available.
 #
-# All four waves carry a real spec cell, not build.sh's `—`. Availability has
-# a fourth rule (SKILL.md's "its spec cell is not —"), and a wave whose cell
-# reads `—` is unavailable regardless of the other three -- a fixture where
-# every wave's cell read `—`, this one included until this comment was
-# written, leaves nothing available under any grant, wave 4 included, and
-# turns this into a fixture for a run that had to stop rather than the one it
-# is for. Wave 1 and 2 get a real cell too, for a reason that is not about
-# what the test checks: a `blocked` wave that reached three attempts, and a
-# `done` wave that already closed, could not have been started under this
-# rule with an empty cell either, so leaving one there would model a state
-# the autopilot could never actually have reached.
+# All four waves carry a real `spec:` in the constitution -- which is where
+# that field lives now; state.md has no spec column at all. Availability has
+# a fourth rule (SKILL.md's "its spec in the constitution is not —"), and a
+# wave whose spec reads `—` is unavailable regardless of the other three -- a
+# fixture where every wave's spec read `—`, this one included until this
+# comment was written, leaves nothing available under any grant, wave 4
+# included, and turns this into a fixture for a run that had to stop rather
+# than the one it is for. Wave 1 and 2 get a real spec too, for a reason that
+# is not about what the test checks: a `blocked` wave that reached three
+# attempts, and a `done` wave that already closed, could not have been
+# started under this rule with an empty one either, so leaving one there
+# would model a state the autopilot could never actually have reached.
 #
 # The shape is the point. Wave 3's depends_on is [1], so the dependency
 # graph alone says it may be taken; it is excluded only because it consumes
 # the contract wave 2 was to produce (wave 2's own produces:, not wave 3's
 # depends_on, is what carries the exclusion -- see the per-wave produces:/
-# consumes: declarations below). Its spec cell is filled so it is excluded
+# consumes: declarations below). Its spec is filled so it is excluded
 # for that one reason, not two -- a wave with no spec fails the contract
 # check and the spec check at once, and nothing then tells a reader which of
 # the two this fixture is for. A fixture where the blocked wave was also a
@@ -109,6 +110,7 @@ Never change the token format.
   name: login
   depends_on: []
   parallel_with: []
+  spec: docs/superpowers/specs/2026-08-03-fixture-auth.md
   exit_criteria:
     - The system shall return a token for a valid user
 
@@ -118,6 +120,7 @@ Never change the token format.
   parallel_with: [3]
   produces: [session-contract]
   consumes: []
+  spec: docs/superpowers/specs/2026-08-03-fixture-auth.md
   exit_criteria:
     - When a token is renewed, the system shall preserve its subject
 
@@ -127,6 +130,7 @@ Never change the token format.
   parallel_with: [2]
   produces: []
   consumes: [session-contract]
+  spec: docs/superpowers/specs/2026-08-03-fixture-auth.md
   exit_criteria:
     - When a session expires, the system shall issue a refreshed token
 
@@ -134,6 +138,7 @@ Never change the token format.
   name: docs
   depends_on: [1]
   parallel_with: []
+  spec: docs/superpowers/specs/2026-08-03-fixture-auth.md
   exit_criteria:
     - The system shall document the login endpoint
 EOF
@@ -300,12 +305,12 @@ autopilot_grant: DEC-0001
 
 ## Waves
 
-| # | name | status | spec | plan | closed_at_sha | gate |
-|---|------|--------|------|------|---------------|------|
-| 1 | login | done | docs/superpowers/specs/2026-08-03-fixture-auth.md | — | $wave1_sha | auto |
-| 2 | session | blocked | docs/superpowers/specs/2026-08-03-fixture-auth.md | — | — | — |
-| 3 | refresh | todo | docs/superpowers/specs/2026-08-03-fixture-auth.md | — | — | — |
-| 4 | docs | todo | docs/superpowers/specs/2026-08-03-fixture-auth.md | — | — | — |
+| # | name | status | plan | closed_at_sha | gate |
+|---|------|--------|------|---------------|------|
+| 1 | login | done | — | $wave1_sha | auto |
+| 2 | session | blocked | — | — | — |
+| 3 | refresh | todo | — | — | — |
+| 4 | docs | todo | — | — | — |
 
 **Current wave:** — none in progress; wave 2 blocked
 

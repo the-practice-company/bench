@@ -23,9 +23,9 @@ autopilot_grant: —
 
 ## Waves
 
-| # | name | status | spec | plan | closed_at_sha | gate |
-|---|------|--------|------|------|---------------|------|
-| 1 | REPLACE-WITH-WAVE-NAME | todo | REPLACE-WITH-SPEC-DOC | — | — | — |
+| # | name | status | plan | closed_at_sha | gate |
+|---|------|--------|------|---------------|------|
+| 1 | REPLACE-WITH-WAVE-NAME | todo | — | — | — |
 
 **Status:** `todo | doing | done | blocked`.
 `blocked` waits on a dependency; `needs_human: true` (frontmatter) stops the whole run.

@@ -14,6 +14,10 @@ assert_contains "$constitution" "placeholder_patterns:" "constitution carries th
 assert_contains "$constitution" "## Operating mode" "constitution states who the agent is in this run"
 assert_contains "$constitution" "## Non-negotiables" "constitution has the rules that survive into state"
 assert_contains "$constitution" "exit_criteria" "constitution declares per-wave exit criteria"
+# Two leading spaces, not the bare word: `umbrella_spec:` in the frontmatter
+# ends in the same five characters, so a needle without them goes green off a
+# field that has nothing to do with any wave.
+assert_contains "$constitution" "  spec: " "constitution declares which document each wave builds to"
 assert_contains "$constitution" "The system shall" "constitution shows exit criteria in EARS form"
 assert_contains "$constitution" "## Amendments" "constitution has an append-only amendments section"
 
@@ -24,6 +28,12 @@ assert_contains "$state" "**Non-negotiables:**" "state restates the live constra
 assert_contains "$state" "**Operating mode:**" "state restates who the agent is"
 assert_contains "$state" "**Suspect:**" "state has a place to describe a divergence"
 assert_not_contains "$state" "branch/worktree" "state's wave table carries no per-wave worktree column"
+# The spec moved to the constitution, which `baton-write` refuses outright, so
+# who names a wave's document is now a mechanical fact rather than a sentence
+# saying a human put it there. The column does not stay behind as a mirror: a
+# copy of an authoritative fact is one more place it can drift, and the copy
+# is the one the agent can write.
+assert_not_contains "$state" "| spec |" "state's wave table carries no spec column"
 
 lines="$(wc -l < "$TPL/state.md" | tr -d ' ')"
 if [ "$lines" -le 60 ]; then
@@ -37,13 +47,20 @@ fi
 # YAML ends and Markdown prose resumes.
 assert_contains "$constitution" '```yaml' "constitution's wave list is fenced as a machine-readable block"
 
+# `|| true` on both python blocks below, and it is not sloppiness: each
+# script exits non-zero to say what it found, and `set -e` turns a failing
+# command substitution in an assignment into an abort. Every assertion after
+# this point then never runs, and the run reports one exit code and no [FAIL]
+# line naming the cause -- which is how the wrong reason for a red suite gets
+# chased. The `if` on the captured output is what renders the verdict.
+#
 # Structurally parse the fenced block. PyYAML is not guaranteed to be
 # installed wherever this suite runs, so this uses a small dependency-free
 # parser (python3 stdlib only) that understands just enough of the YAML
 # subset the template uses (block sequences of mappings, flow lists,
 # nested block lists) to reject bad indentation or a missing colon, not
 # just to grep for expected substrings.
-fence_check_output="$(python3 - "$TPL/constitution.md" <<'PY'
+fence_check_output="$(python3 - "$TPL/constitution.md" <<'PY' || true
 import re, sys
 
 def parse_scalar(s):
@@ -122,13 +139,22 @@ for w in waves:
     if not isinstance(ec, list) or not ec:
         print("MISSING_EXIT_CRITERIA: %r" % w)
         sys.exit(1)
+    # Structural, because a grep cannot be: `spec:` anywhere in the file
+    # says nothing about whether every wave carries one, and a wave with no
+    # spec is a wave the autopilot must refuse to take. This parser already
+    # knows where each wave begins and ends, so it is the only check that
+    # can ask the question per wave.
+    sp = w.get('spec')
+    if not isinstance(sp, str) or not sp:
+        print("MISSING_SPEC: %r" % w)
+        sys.exit(1)
 print("OK")
 PY
 )"
 if [ "$fence_check_output" = "OK" ]; then
-    pass "constitution's fenced YAML wave block parses and yields two wave entries with exit_criteria"
+    pass "constitution's fenced YAML wave block parses and yields two wave entries, each with a spec and exit_criteria"
 else
-    fail "constitution's fenced YAML wave block parses and yields two wave entries with exit_criteria"
+    fail "constitution's fenced YAML wave block parses and yields two wave entries, each with a spec and exit_criteria"
     echo "    $fence_check_output"
 fi
 
@@ -137,7 +163,7 @@ fi
 # line may start with a bare "# " -- that is Markdown ATX-heading syntax,
 # and a "#"-prefixed line meant as a YAML comment renders as a heading the
 # same weight as the document title once it leaves the fence.
-heading_check_output="$(python3 - "$TPL/constitution.md" <<'PY'
+heading_check_output="$(python3 - "$TPL/constitution.md" <<'PY' || true
 import re, sys
 
 path = sys.argv[1]
@@ -223,19 +249,20 @@ assert_contains "$constitution" "workspace: in-place" "constitution declares the
 assert_contains "$constitution" "in-place | worktree" "constitution names both workspace values"
 assert_contains "$constitution" "subagent-driven-development" "constitution's operating mode names the procedure work is delegated to"
 
-# The seeded spec cell used to be `—`, and `—` is not a `REPLACE-` marker, so
+# The seeded spec used to be `—`, and `—` is not a `REPLACE-` marker, so
 # init's sweep for leftover markers passed straight over it. An agent filling
-# the template mechanically then shipped a state.md whose every wave the
-# autopilot reads as unavailable, and nothing said so until /baton:auto refused
-# the entire scope. Seeded as a marker, the existing sweep covers it.
+# the template mechanically then shipped a run whose every wave the autopilot
+# reads as unavailable, and nothing said so until /baton:auto refused the
+# entire scope. Seeded as a marker, the existing sweep covers it. Both
+# assertions now read the constitution, which is where the seed lives.
 #
-# Both assertions, and the second is the one doing the work: the first goes
-# green off any mention of the marker anywhere in the file -- including a
-# comment about this rule -- while the second fails on a re-seed, which is the
-# regression. Deleting the "redundant" one deletes the coverage.
-assert_contains "$state" "REPLACE-WITH-SPEC-DOC" \
-    "the seeded wave row makes its spec cell a marker init has to clear"
-assert_not_contains "$state" "| todo | — |" \
-    "the seeded spec cell is not the em dash the autopilot reads as unavailable"
+# Both, and the second is the one doing the work: the first goes green off any
+# mention of the marker anywhere in the file -- including a comment about this
+# rule -- while the second fails on a re-seed, which is the regression.
+# Deleting the "redundant" one deletes the coverage.
+assert_contains "$constitution" "REPLACE-WITH-SPEC-DOC" \
+    "the seeded wave makes its spec a marker init has to clear"
+assert_not_contains "$constitution" "spec: —" \
+    "the seeded spec is not the em dash the autopilot reads as unavailable"
 
 finish
