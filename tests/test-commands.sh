@@ -21,19 +21,20 @@ done
 # destination from auto.md, which is loaded every time it runs. This cap is
 # what makes that distinction cost something to ignore.
 #
-# Measured, never derived: 707 is what `wc -l plugins/baton/commands/*.md`
-# reports with ratify.md landed (auto 205, init 169, continue 128, ratify 100,
-# status 69, checkpoint 36), and 710 is that floor plus room for a line or
-# two. A ceiling arrived at by arithmetic rather than measurement shipped on a
-# previous branch here and was unreachable, which nobody noticed until review.
+# Measured, never derived: 850 is what `wc -l plugins/baton/commands/*.md`
+# reports with both new commands landed (auto 205, init 169, clear 140,
+# continue 128, ratify 103, status 69, checkpoint 36), and 853 is that floor
+# plus room for a line or two. A ceiling arrived at by arithmetic rather than
+# measurement shipped on a previous branch here and was unreachable, which
+# nobody noticed until review.
 #
-# It grew from 620 because the human-never-opens-a-file work adds commands
-# that did not exist -- ratify.md here, and the same again when clear.md
-# lands, which is the second move a reader should expect rather than read as
-# drift. Each is its own file because `disable-model-invocation` is a per-file
-# flag: the separate file is the barrier, not a presentational choice. The cap
-# is re-measured and argued in full once both commands exist.
-CMD_BUDGET=710
+# It grew from 620 because the human-never-opens-a-file work added two
+# commands that did not exist: ratify.md and clear.md, the human's two halves
+# of what the agent may not do to its own run. Both moves are now in; a third
+# is drift, not the pattern continuing. Each is its own file because
+# `disable-model-invocation` is a per-file flag -- the separate file is the
+# barrier, not a presentational choice.
+CMD_BUDGET=853
 cmd_total=0
 for f in "$CMD"/*.md; do
     n="$(wc -l < "$f" | tr -d ' ')"

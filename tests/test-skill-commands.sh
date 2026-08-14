@@ -16,6 +16,42 @@ PLUGIN="$REPO_ROOT/plugins/baton"
 LOCK="$PLUGIN/scripts/baton-lock"
 . "$SCRIPT_DIR/helpers.sh"
 
+# --- readers for the two parts of a doc that mean different things ---
+# A needle matched against a whole command file is matched against its prose
+# too, and prose discusses the things it does. Both readers below exist because
+# that difference was not academic: the two assertions at the bottom of this
+# file were mutation-tested against ratify.md, and both survived. Deleting
+# `disable-model-invocation: true` from the frontmatter left the barrier
+# assertion green off the sentence further down that names the flag while
+# explaining it; replacing the digest call with an `echo` left the digest
+# assertion green off a prose mention, which was the only place the literal
+# `baton-digest constitution` ever appeared -- the real call has a quote
+# between the script and its argument, so that needle had never once matched
+# the thing it was named after.
+
+# The frontmatter block alone: line 1's --- up to the next one. A file whose
+# first line is not --- yields nothing, which is the correct answer for the
+# assertions below -- a flag Claude Code will not read is not a flag set.
+frontmatter_of_doc() {
+    awk '
+        NR == 1 && $0 == "---" { infm = 1; next }
+        infm && $0 == "---"    { exit }
+        infm
+    ' "$1"
+}
+
+# The lines inside ```bash fences: what the agent actually runs, as opposed to
+# what the file says about it. The bare-name guard further down parses exactly
+# this and needs a file:line prefix to report with, so the prefix is a
+# parameter rather than a second copy of the parser.
+bash_lines_of() {
+    awk -v prefix="${2:-}" '
+        /^```bash$/ { inblock = 1; next }
+        /^```/      { inblock = 0; next }
+        inblock     { print (prefix == "" ? "" : prefix ":" FNR ": ") $0 }
+    ' "$1"
+}
+
 # The one place the session-id expression is written down in this suite.
 # The docs must match it (below), and the acquire test further down runs the
 # docs' own copy of it -- so the name in the plugin and the name the tests
@@ -30,6 +66,7 @@ commands/status.md
 commands/auto.md
 commands/continue.md
 commands/ratify.md
+commands/clear.md
 skills/baton/SKILL.md
 skills/baton-resume/SKILL.md
 skills/baton-checkpoint/SKILL.md
@@ -150,11 +187,7 @@ rm -f "$referenced"
 # extended to the files that call it.
 bare="$(
     for rel in $DOC_FILES; do
-        awk -v rel="$rel" '
-            /^```bash$/ { inblock = 1; next }
-            /^```/      { inblock = 0; next }
-            inblock     { print rel ":" FNR ": " $0 }
-        ' "$PLUGIN/$rel"
+        bash_lines_of "$PLUGIN/$rel" "$rel"
     done | sed 's#scripts/baton-[a-z]*##g' | grep -E 'baton-(lock|observe|write|journal|gate|digest)' || true
 )"
 if [ -n "$bare" ]; then
@@ -237,7 +270,7 @@ assert_contains "$runbook" "/baton:continue" "scenario 4 exercises the fresh-ses
 # --- auto refuses a spec-less wave ---
 auto_cmd="$(cat "$PLUGIN/commands/auto.md")"
 assert_not_contains "$auto_cmd" "I will derive it from the constitution" "the readiness review no longer offers to write the spec itself"
-assert_contains "$auto_cmd" 'its `spec` cell must name a document' "the scope rules refuse a wave with no spec"
+assert_contains "$auto_cmd" 'its `spec` in the constitution must name a document' "the scope rules refuse a wave with no spec"
 assert_contains "$auto_cmd" "If that leaves no waves at all" \
     "the scope rules say what happens when dropping spec-less waves empties the scope"
 # The availability list grew to four when the spec rule went in, and this
@@ -254,12 +287,28 @@ assert_contains "$init_cmd" "Which document each wave builds to" "init settles t
 assert_contains "$init_cmd" "Where the run works" "init settles the workspace preference"
 assert_contains "$init_cmd" "before you compact" "init tells the human to ratify before compacting"
 
+# --- the two commands the model may not invoke ---
+# The barrier is a frontmatter flag, so it is checked in the frontmatter: a
+# file that discusses `disable-model-invocation: true` in prose while carrying
+# it nowhere Claude Code reads is a command the model can invoke, and it is
+# the shape a careless edit produces.
+for rel in commands/ratify.md commands/clear.md; do
+    name="${rel#commands/}"; name="${name%.md}"
+    fm="$(frontmatter_of_doc "$PLUGIN/$rel")"
+    assert_contains "$fm" "disable-model-invocation: true" \
+        "$name is human-typed only -- that flag is the entire barrier"
+done
+
+# And the digest is checked where it is run. The needle carries the closing
+# quote of the path, so it matches the invocation and cannot be satisfied by a
+# sentence naming the script: `"${CLAUDE_PLUGIN_ROOT}/scripts/baton-digest"
+# <object>` is the only way to write a call that matches.
+ratify_bash="$(bash_lines_of "$PLUGIN/commands/ratify.md")"
+assert_contains "$ratify_bash" '/scripts/baton-digest" constitution' \
+    "ratify shows the digest the script prints, not one it composes"
+
 # --- ratify is a signature, and only a human can sign ---
 ratify_cmd="$(cat "$PLUGIN/commands/ratify.md")"
-assert_contains "$ratify_cmd" "disable-model-invocation: true" \
-    "ratify is human-typed only -- that flag is the entire barrier"
-assert_contains "$ratify_cmd" "baton-digest constitution" \
-    "ratify shows the digest the script prints, not one it composes"
 # The two values the command does not get to invent. Pinned to the commands
 # themselves rather than to the field names: a ratify.md that names
 # `ratified_by` in prose while filling it from anywhere it likes would keep a
@@ -269,5 +318,26 @@ assert_contains "$ratify_cmd" "git config user.name" \
     "ratified_by is read from git, not composed"
 assert_contains "$ratify_cmd" "git rev-parse HEAD" \
     "git_anchor is the commit the human approved against, read from the repository"
+
+# --- clear is the other half of the granted-flag rule ---
+clear_bash="$(bash_lines_of "$PLUGIN/commands/clear.md")"
+assert_contains "$clear_bash" '/scripts/baton-digest" stop' \
+    "clear shows why the run stopped before offering to un-stop it"
+
+clear_cmd="$(cat "$PLUGIN/commands/clear.md")"
+# The two below are not stylistic. baton-write's granted-flag guard reads the
+# previous value out of HEAD:docs/baton/state.md with a parser that anchors on
+# line 1, so a state.md in HEAD that parser cannot read is a guard that finds no
+# flag set and refuses nothing, for every write after it. /baton:clear is the
+# only writer left that can put such a file in HEAD -- it writes with plain git,
+# and plain git checks nothing. The requirement that its write stay readable is
+# therefore load-bearing, and pinned here so deleting it costs something.
+#
+# Pinned to the shape the write has to keep rather than to "frontmatter", which
+# the command has half a dozen other reasons to say.
+assert_contains "$clear_cmd" "opening on the very first line" \
+    "clear requires the frontmatter it writes to stay where baton-write's guard looks"
+assert_contains "$clear_cmd" "both flags present as an explicit" \
+    "clear keeps the flag it lowers as a readable false, rather than deleting the line"
 
 finish
