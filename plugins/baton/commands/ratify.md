@@ -63,7 +63,10 @@ An empty first line means `user.name` is unset: ask what name to record, in
 the same message as the confirmation below so it costs one reply and not two.
 Do not substitute the git email, the system username, or the last committer —
 `ratified_by` is a signature, and one nobody typed is not one. If they decline
-to give a name, stop.
+to give a name, stop — and leave them the way back rather than at a wall:
+`git config user.name "Their Name"` records it for this repository, and
+`/baton:ratify` reads it the next time they type it. Signing for them is the
+one thing this command must not do.
 
 Then ask one question, phrased so that no is an available answer: does this
 constitution say what they want this run held to? Name the signature and the
