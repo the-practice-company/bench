@@ -668,4 +668,129 @@ assert_equals "$(git rev-list --count HEAD)" "$((unchanged_commits_before + 1))"
 assert_contains "$(cat docs/baton/state.md)" "an ordinary checkpoint, nothing stopped" \
     "the unchanged-flags checkpoint lands its content on disk"
 
+# --- the same rule from the other side. `false` is only the honest spelling
+# of a clearing, and the agent writes every byte of what is piped in, so a
+# refusal that fires on true -> false alone leaves it two quieter ways to
+# put the flag down: write a document this reader finds no frontmatter in,
+# or leave the line out. Both were accepted, exit 0, flag gone from HEAD.
+# What the rule actually cares about is that a set flag is still set in what
+# was written -- so anything that is not a positive `true` is refused. ---
+
+# The reader anchors its frontmatter on line 1, so a document that opens
+# with a single blank line has, as far as it can tell, no frontmatter at all
+# and therefore no flags in it. Every other line is the ordinary template.
+state_after_blank_line() {
+    printf '\n'
+    state_with_flags "$@"
+}
+
+# The other spelling: the line is simply not there. Built by dropping it
+# from the template, so the document stays the template in every other
+# respect -- this is a plausible write, not a corrupt file.
+state_without_flag() {
+    local field="$1"
+    shift
+    state_with_flags "$@" | grep -v "^$field: "
+}
+
+commit_state_flags true false "unreadable-frontmatter baseline"
+blank_line_commits_before="$(git rev-list --count HEAD)"
+
+set +e
+blank_line_stderr="$(state_after_blank_line false false "clear suspect past the reader" \
+    | "$WRITE" -m "agent: clear suspect past the reader" docs/baton/state.md 2>&1 >/dev/null)"
+blank_line_rc=$?
+set -e
+
+assert_equals "$blank_line_rc" "3" \
+    "refuses a clearing write whose frontmatter starts one line late, where the reader cannot see it"
+assert_contains "$blank_line_stderr" "suspect" \
+    "the refusal names the field the write failed to carry forward"
+assert_contains "$blank_line_stderr" "/baton:clear" \
+    "the refusal points at the command that does clear it"
+assert_contains "$(git show HEAD:docs/baton/state.md)" "suspect: true" \
+    "the flag is still set in HEAD after the refused unreadable-frontmatter write"
+assert_equals "$(git rev-list --count HEAD)" "$blank_line_commits_before" \
+    "the refused unreadable-frontmatter write creates no commit"
+assert_equals "$(git status --porcelain docs/baton | wc -l | tr -d ' ')" "0" \
+    "docs/baton is clean after the refused unreadable-frontmatter write"
+
+# needs_human with the line dropped: the stop is gone from the file just as
+# completely as if it had been written false, and empty is not false, so the
+# transition test never saw this one at all.
+commit_state_flags false true "dropped-field baseline"
+dropped_commits_before="$(git rev-list --count HEAD)"
+
+set +e
+dropped_stderr="$(state_without_flag needs_human false true "drop the stop rather than lower it" \
+    | "$WRITE" -m "agent: drop needs_human" docs/baton/state.md 2>&1 >/dev/null)"
+dropped_rc=$?
+set -e
+
+assert_equals "$dropped_rc" "3" "refuses a write that omits needs_human while HEAD has it set"
+assert_contains "$dropped_stderr" "needs_human" \
+    "the refusal names the stop the write left out"
+assert_contains "$dropped_stderr" "/baton:clear" \
+    "the omission refusal points at the command that does clear the stop"
+assert_contains "$(git show HEAD:docs/baton/state.md)" "needs_human: true" \
+    "the stop is still set in HEAD after the refused omitting write"
+assert_equals "$(git rev-list --count HEAD)" "$dropped_commits_before" \
+    "the refused omitting write creates no commit"
+
+# The case the tightening puts most at risk, and the reason it is a "still
+# set" test and not a "never write it" one: a stopped run still checkpoints.
+# Refusing this would make the flag un-writable rather than un-clearable,
+# and a green suite without it is equally consistent with that.
+commit_state_flags true false "true-over-true baseline"
+carry_commits_before="$(git rev-list --count HEAD)"
+
+set +e
+state_with_flags true false "checkpoint while suspect stands" \
+    | "$WRITE" -m "agent: checkpoint under a raised suspect" docs/baton/state.md
+carry_rc=$?
+set -e
+
+assert_equals "$carry_rc" "0" "writing true over true is an ordinary checkpoint of a stopped run"
+assert_equals "$(git rev-list --count HEAD)" "$((carry_commits_before + 1))" \
+    "the checkpoint under a raised flag commits like any other"
+assert_contains "$(git show HEAD:docs/baton/state.md)" "checkpoint while suspect stands" \
+    "the checkpoint's content genuinely reached the log, not just its exit code"
+assert_contains "$(git show HEAD:docs/baton/state.md)" "suspect: true" \
+    "the flag carried forward through the checkpoint is still set in HEAD"
+
+# --- and the spellings, as for the constitution and the cap above. This
+# refusal is spelling-safe only because it sits after canonicalize_target;
+# nothing else in this file pins that it stays there, and gated on the
+# literal string instead, `./docs/baton/state.md` walks past it. Every write
+# in the loop is refused, so the one baseline holds for all of them. ---
+commit_state_flags true false "spelling baseline"
+spelling_flag_commits_before="$(git rev-list --count HEAD)"
+
+for spelling in \
+    "./docs/baton/state.md" \
+    "docs/baton/../baton/state.md" \
+    "docs//baton/state.md"
+do
+    set +e
+    spelling_clear_stderr="$(state_with_flags false false "clear suspect via $spelling" \
+        | "$WRITE" -m "agent: clear suspect via $spelling" "$spelling" 2>&1 >/dev/null)"
+    spelling_clear_rc=$?
+    spelling_drop_stderr="$(state_without_flag suspect false false "drop suspect via $spelling" \
+        | "$WRITE" -m "agent: drop suspect via $spelling" "$spelling" 2>&1 >/dev/null)"
+    spelling_drop_rc=$?
+    set -e
+
+    assert_equals "$spelling_clear_rc" "3" "refuses to clear suspect spelled as $spelling"
+    assert_contains "$spelling_clear_stderr" "/baton:clear" \
+        "the $spelling clearing refusal still points at /baton:clear"
+    assert_equals "$spelling_drop_rc" "3" "refuses to drop suspect entirely spelled as $spelling"
+    assert_contains "$spelling_drop_stderr" "suspect" \
+        "the $spelling omission refusal names the field"
+done
+
+assert_contains "$(git show HEAD:docs/baton/state.md)" "suspect: true" \
+    "the flag is still set in HEAD after every alternate-spelling attempt on it"
+assert_equals "$(git rev-list --count HEAD)" "$spelling_flag_commits_before" \
+    "no alternate spelling of the path produced a commit"
+
 finish

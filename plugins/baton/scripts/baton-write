@@ -20,9 +20,11 @@
 #       docs/baton/constitution.md (the agent never writes the
 #       constitution -- see below), docs/baton/state.md over the 60-line
 #       cap, empty-or-whitespace-only stdin over existing non-empty
-#       committed content, or a docs/baton/state.md write that clears
-#       suspect or needs_human -- granted fields the agent may raise but
-#       never lower (see below)
+#       committed content, or a docs/baton/state.md write that fails to
+#       carry a suspect or needs_human already set in HEAD forward as
+#       true -- by writing false, by leaving the field out, or by putting
+#       the frontmatter somewhere this tool cannot read it; they are
+#       granted fields the agent may raise but never lower (see below)
 #   5   a git mutation failed after the file was written; the tree has
 #       been rolled back to its state before this run, or the commit
 #       landed but does not contain what this run wrote (see below)
@@ -278,14 +280,31 @@ fi
 # plain git, for the same reason /baton:init writes the constitution that
 # way: this refusal is why it has to.
 #
-# Refused on the transition, not on the value. Writing false over false is
-# an ordinary checkpoint of a run that was never stopped.
+# Refused on the transition, not on the value: writing false over false is
+# an ordinary checkpoint of a run that was never stopped, and true over
+# true is an ordinary checkpoint of one that is stopped -- the flag is
+# un-clearable, not un-writable. But the test is "does this write still say
+# true", not "does it say false". `false` is only the honest spelling of a
+# clearing, and the agent controls every byte of what it pipes in: leaving
+# the field out clears the flag just as thoroughly (empty is not false, so
+# the old test never fired), and so does a document whose frontmatter
+# frontmatter_flag cannot find -- one leading blank line is enough, since
+# it anchors on line 1. Both were accepted, exit 0, flag gone from HEAD.
+# A flag this tool cannot read in what was written is not a flag still set,
+# so anything short of a positive `true` is refused. That also closes the
+# two-step version -- land an unreadable state.md, then read `was` as empty
+# from it and write freely -- because step one is now itself refused.
 if [ "$target" = "docs/baton/state.md" ] && [ "$target_in_head" -eq 1 ]; then
     for flag in suspect needs_human; do
         was="$(git show "HEAD:$target" | frontmatter_flag "$flag")"
+        [ "$was" = "true" ] || continue
         now="$(frontmatter_flag "$flag" < "$tmp")"
-        if [ "$was" = "true" ] && [ "$now" = "false" ]; then
+        if [ "$now" = "false" ]; then
             echo "baton-write: refusing to clear $flag: it is set, and clearing it is the human's -- see /baton:clear. Raising it is always yours; lowering it is not." >&2
+            exit 3
+        fi
+        if [ "$now" != "true" ]; then
+            echo "baton-write: refusing to write $target: $flag is set in HEAD, and this write does not say '$flag: true' -- a flag that cannot be read in what was written is not a flag still set. Keep the line in the frontmatter block, which has to open on line 1. Clearing $flag is the human's -- see /baton:clear." >&2
             exit 3
         fi
     done
