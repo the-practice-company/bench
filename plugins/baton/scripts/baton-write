@@ -289,11 +289,51 @@ frontmatter_block() {
 # scoping actually keeps out is a body line spelled exactly `suspect:` at
 # column 1 -- prose an agent writing its own state file can produce without
 # meaning anything by it, and which would then be read as the flag.
+#
+# The unquoting is baton-digest's field reader and baton-gate's, to the rule:
+# one layer, and only a matched pair, so a value that opens a quote it never
+# closes keeps both characters and reads as neither true nor false. Without
+# it this was the third reader holding the only dissenting opinion --
+# `suspect: "true"` said `true` to the other two and `"true"` here -- and the
+# disagreement ran the one direction that loses a stop, because the reader
+# that could not see the flag was the guard. Raise it quoted (allowed:
+# raising always is), and baton-digest and /baton:status both report the run
+# stopped. Clear it plainly at the next checkpoint and the guard below finds
+# nothing set in HEAD to carry forward, so it refuses nothing: exit 0, flag
+# down in the log, the run unstopped by the run, and no reader anywhere
+# printing a word about it. Reproduced in three steps. Quoted frontmatter is
+# not an exotic shape here -- the constitution's verify_cmd is conventionally
+# written that way -- so an agent regenerating state.md wholesale can spell
+# it so without meaning anything by it.
+#
+# Read, then, rather than refused. "A flag must be a bare true or false"
+# would close the same hole, and it is the rule /baton:clear's own
+# verification awk already holds itself to -- the human-typed command being
+# stricter than the guard that watches the agent. Two reasons it is not the
+# rule here. First, refusing the shape refuses a RAISE spelled that way, and
+# an agent whose stop is turned away is stopped only if it reads the exit
+# code, where an agent whose stop is read is stopped whatever it does next;
+# raising is the direction that must never get harder. Second, baton-write
+# does not own this file's spelling. /baton:clear writes state.md with plain
+# git and a human may edit it by hand, so "only bare flags reach HEAD" is not
+# an invariant this tool can maintain -- only one it could assume, and
+# assuming things about HEAD's frontmatter is precisely what the guard
+# further down stopped doing after the last bypass of this class.
+#
+# What has to hold, and what the unquoting restores, is one-directional: any
+# value another reader calls a raised flag, this reader must call one too.
+# Stricter than its siblings is safe -- a guard engaging where baton-digest
+# sees nothing refuses a write nobody needed to make. Laxer is a bypass,
+# every time.
 frontmatter_flag() {
     frontmatter_block | awk -v field="$1" '
         index($0, field ":") == 1 {
             sub("^" field ": *", "")
             gsub(/[ \t]/, "")
+            quote = substr($0, 1, 1)
+            if (length($0) >= 2 && (quote == "\"" || quote == "\047") &&
+                substr($0, length($0), 1) == quote)
+                $0 = substr($0, 2, length($0) - 2)
             print
             exit
         }

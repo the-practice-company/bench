@@ -102,10 +102,10 @@ all of this:
 - both flags present as an explicit `true` or `false` line inside it. Lowering
   a flag means writing `false` — deleting the line lowers it too, and lowers it
   where nothing can see it any more;
-- no CRLF line endings introduced. The guard compares line 1 against `---`
-  exactly and does not strip a carriage return first, so a file saved with
-  Windows endings goes unreadable to it while `baton-digest`, which does strip
-  them, carries on printing the flags as though nothing had happened.
+- no CRLF line endings introduced. Not because the guard cannot read them —
+  `baton-write` strips a trailing carriage return before comparing line 1, as
+  `baton-digest` does — but because step 5's check compares line 1 exactly, and
+  because a Windows save turns this one-line clearing into a whole-file diff.
 
 `state.md` also stays within 60 lines, which is `baton-write`'s cap. You are
 around that tool for the flag, not for the size, and the cap is a property of
@@ -113,8 +113,9 @@ the file rather than of the tool that usually enforces it.
 
 ## 5. Check what landed is still readable, then say what is left
 
-Confirm it by applying the guard's own test to what was just committed —
-nothing else will:
+Confirm it by testing what was just committed — nothing else will. The test is
+narrower than the guard on purpose: the guard strips carriage returns and reads
+one matched pair of quotes off a value; this wants both flags bare:
 
 ```bash
 git show HEAD:docs/baton/state.md | awk '

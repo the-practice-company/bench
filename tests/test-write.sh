@@ -949,6 +949,189 @@ commit_state_flags false false "back to LF after the CRLF block"
 assert_equals "$(git status --porcelain docs/baton | wc -l | tr -d ' ')" "0" \
     "sanity: the fixture is back to an LF state.md and a clean tree"
 
+# --- the same reader out of step with its siblings again, over two
+# characters this time. baton-digest's field reader strips one matched pair
+# of surrounding quotes before it decides anything, and so does baton-gate's;
+# baton-write's did not. So `suspect: "true"` said `true` to two readers and
+# `"true"` to the third, and the disagreement ran the one direction that
+# loses a stop -- the guard is the reader that saw no flag.
+#
+# Raise the flag quoted (allowed: raising always is), and every reader agrees
+# the run is stopped -- /baton:status and baton-digest both print `Raised:
+# suspect`. Clear it plainly at the next checkpoint and the guard finds
+# nothing set in HEAD to carry forward, so it says nothing: exit 0, flag down
+# in the log, the run unstopped by the run. Reproduced in three steps, all of
+# them exit 0. Nothing else changed its report along the way, which is what
+# made it worth a test rather than a curiosity: the human had no signal at all.
+#
+# Quoted frontmatter is this repository's own idiom, not a corrupt file --
+# the constitution's verify_cmd is conventionally written that way, and
+# test-digest.sh writes it so. An agent regenerating state.md wholesale
+# quotes a value without meaning anything by it.
+#
+# Both quote characters, both flags, and both sides of the write: HEAD's
+# spelling and the incoming document's are read by the same function, so a
+# fix that unquoted only what it read out of HEAD would leave the incoming
+# `"false"` landing in the wrong branch and telling the writer to keep a line
+# they deleted on purpose. The refusals below are paired with the writes that
+# must still be accepted -- including a quoted RAISE, which a guard that
+# refused the shape outright would have turned away, and refusing a raise is
+# refusing a stop. ---
+
+commit_state_flags '"true"' false "a suspect raised in the quoted spelling"
+assert_contains "$(git show HEAD:docs/baton/state.md)" 'suspect: "true"' \
+    "sanity: HEAD really does spell the flag with quotes, so this case is reproduced and not normalised away"
+
+quoted_clear_commits_before="$(git rev-list --count HEAD)"
+
+set +e
+quoted_clear_stderr="$(state_with_flags false false "clear a quoted suspect plainly" \
+    | "$WRITE" -m "agent: clear a quoted suspect" docs/baton/state.md 2>&1 >/dev/null)"
+quoted_clear_rc=$?
+set -e
+
+assert_equals "$quoted_clear_rc" "3" \
+    "refuses to clear a suspect that HEAD spells suspect: \"true\""
+assert_contains "$quoted_clear_stderr" "refusing to clear suspect" \
+    "the quoted-HEAD refusal names the field, and names it as a clearing rather than an unreadable write"
+assert_contains "$quoted_clear_stderr" "/baton:clear" \
+    "the quoted-HEAD refusal still points at the command that does clear it"
+assert_contains "$(git show HEAD:docs/baton/state.md)" 'suspect: "true"' \
+    "the quoted flag is still set in HEAD after the refused clearing write"
+assert_equals "$(git rev-list --count HEAD)" "$quoted_clear_commits_before" \
+    "the refused quoted-HEAD clearing write creates no commit"
+
+# The incoming side of the same reader. `suspect: "false"` is a clearing
+# spelled exactly as the raise was, and it has to arrive at the branch that
+# says whose the clearing is -- not at the generic one, which would tell a
+# writer who deleted the flag deliberately to go and put a line back.
+set +e
+quoted_false_stderr="$(state_with_flags '"false"' false "clear a quoted suspect, quoted" \
+    | "$WRITE" -m "agent: clear a quoted suspect with a quoted false" docs/baton/state.md 2>&1 >/dev/null)"
+quoted_false_rc=$?
+set -e
+
+assert_equals "$quoted_false_rc" "3" \
+    "refuses a quoted false written over a quoted true"
+assert_contains "$quoted_false_stderr" "refusing to clear suspect" \
+    "the incoming quoted false reaches the clearing branch, so the reader unquotes what is written as well as what is in HEAD"
+assert_equals "$(git rev-list --count HEAD)" "$quoted_clear_commits_before" \
+    "the refused quoted-false write creates no commit"
+
+# The other quote character, on the flag that halts the run. Single quotes
+# are the second half of the matched pair both siblings strip, and a fix that
+# handled only the double kind would leave this one exactly as it was.
+commit_state_flags false "'true'" "a stop raised in the single-quoted spelling"
+squoted_clear_commits_before="$(git rev-list --count HEAD)"
+
+set +e
+squoted_clear_stderr="$(state_with_flags false false "clear a single-quoted stop" \
+    | "$WRITE" -m "agent: clear a single-quoted stop" docs/baton/state.md 2>&1 >/dev/null)"
+squoted_clear_rc=$?
+set -e
+
+assert_equals "$squoted_clear_rc" "3" \
+    "refuses to clear a needs_human that HEAD spells needs_human: 'true'"
+assert_contains "$squoted_clear_stderr" "refusing to clear needs_human" \
+    "the single-quoted refusal names the stop it will not let the agent clear"
+assert_contains "$(git show HEAD:docs/baton/state.md)" "needs_human: 'true'" \
+    "the single-quoted stop is still set in HEAD after the refused clearing write"
+assert_equals "$(git rev-list --count HEAD)" "$squoted_clear_commits_before" \
+    "the refused single-quoted clearing write creates no commit"
+
+# --- and the other direction, which is most of the point. A guard that
+# refused the quoted shape outright would be just as green on all three
+# refusals above, and would have refused every write below. ---
+
+# A stopped run still checkpoints, in the spelling its own frontmatter uses.
+commit_state_flags '"true"' false "quoted baseline a quoted checkpoint carries forward"
+quoted_carry_commits_before="$(git rev-list --count HEAD)"
+
+set +e
+state_with_flags '"true"' false "checkpoint while a quoted suspect stands" \
+    | "$WRITE" -m "agent: quoted checkpoint under a raised suspect" docs/baton/state.md
+quoted_carry_rc=$?
+set -e
+
+assert_equals "$quoted_carry_rc" "0" \
+    "writing a quoted true over a quoted true is an ordinary checkpoint of a stopped run"
+assert_equals "$(git rev-list --count HEAD)" "$((quoted_carry_commits_before + 1))" \
+    "the checkpoint under a quoted flag commits like any other"
+assert_contains "$(git show HEAD:docs/baton/state.md)" "checkpoint while a quoted suspect stands" \
+    "the quoted checkpoint's content genuinely reached the log, not just its exit code"
+
+# The spelling may change between HEAD and the write without that being a
+# clearing: what the rule asks is whether this document still says the flag
+# is up, and a bare true over a quoted true says so.
+mixed_carry_commits_before="$(git rev-list --count HEAD)"
+
+set +e
+mixed_carry_stderr="$(state_with_flags true false "carry a quoted flag forward, bare" \
+    | "$WRITE" -m "agent: bare checkpoint over a quoted flag" docs/baton/state.md 2>&1 >/dev/null)"
+mixed_carry_rc=$?
+set -e
+
+assert_equals "$mixed_carry_rc" "0" \
+    "a bare true written over a quoted true still says the flag is set, and is accepted"
+assert_equals "$mixed_carry_stderr" "" "the accepted cross-spelling checkpoint prints no refusal"
+assert_equals "$(git rev-list --count HEAD)" "$((mixed_carry_commits_before + 1))" \
+    "the cross-spelling checkpoint commits like any other"
+assert_contains "$(git show HEAD:docs/baton/state.md)" "suspect: true" \
+    "the flag carried forward in the other spelling is still set in HEAD"
+
+# And the raise itself, in both quote characters. This is the write a rule
+# reading "a flag must be spelled bare" would have turned away, and a refused
+# raise is a stop that did not land -- the one direction this guard must
+# never make harder.
+for quoted_raise in '"true"' "'true'"; do
+    commit_state_flags false false "raise baseline for $quoted_raise"
+    quoted_raise_commits_before="$(git rev-list --count HEAD)"
+
+    set +e
+    quoted_raise_stderr="$(state_with_flags "$quoted_raise" false "raise suspect as $quoted_raise" \
+        | "$WRITE" -m "agent: raise suspect as $quoted_raise" docs/baton/state.md 2>&1 >/dev/null)"
+    quoted_raise_rc=$?
+    set -e
+
+    assert_equals "$quoted_raise_rc" "0" "raising suspect spelled $quoted_raise is allowed"
+    assert_equals "$quoted_raise_stderr" "" "the accepted $quoted_raise raise prints no refusal"
+    assert_equals "$(git rev-list --count HEAD)" "$((quoted_raise_commits_before + 1))" \
+        "the $quoted_raise raise lands as an ordinary commit"
+    assert_contains "$(git show HEAD:docs/baton/state.md)" "suspect: $quoted_raise" \
+        "the $quoted_raise raise genuinely reached the log, rather than exiting 0 having written nothing"
+done
+
+# One matched pair, and only a matched pair -- which is unquote's rule in
+# both siblings, not an incidental detail of how they are written. A value
+# that opens a quote and never closes it is not a quoted flag: baton-digest
+# refuses the whole file rather than reading it as true, and here it reads as
+# neither true nor false, so a write spelling the carried-forward flag that
+# way has not carried it forward. Pinned as a refusal so that "strip one
+# matched pair" cannot drift into "strip any quote you find" -- which would
+# read this as a flag still set here while baton-digest went on refusing the
+# file, the same disagreement rebuilt from the other side.
+commit_state_flags true false "bare baseline an unbalanced write tries to carry"
+unbalanced_commits_before="$(git rev-list --count HEAD)"
+
+set +e
+unbalanced_stderr="$(state_with_flags '"true' false "carry the flag with a quote that never closes" \
+    | "$WRITE" -m "agent: unbalanced quote on a carried flag" docs/baton/state.md 2>&1 >/dev/null)"
+unbalanced_rc=$?
+set -e
+
+assert_equals "$unbalanced_rc" "3" \
+    "refuses a write whose carried-forward flag opens a quote it never closes: that is not a readable true"
+assert_contains "$unbalanced_stderr" "suspect" \
+    "the unbalanced-quote refusal names the flag the write failed to carry forward"
+assert_contains "$(git show HEAD:docs/baton/state.md)" "suspect: true" \
+    "the flag is still set in HEAD after the refused unbalanced-quote write"
+assert_equals "$(git rev-list --count HEAD)" "$unbalanced_commits_before" \
+    "the refused unbalanced-quote write creates no commit"
+
+commit_state_flags false false "back to bare flags after the quoted block"
+assert_equals "$(git status --porcelain docs/baton | wc -l | tr -d ' ')" "0" \
+    "sanity: the fixture is back to bare flags and a clean tree"
+
 # --- and the entry into an unreadable HEAD, which was the hole the guard
 # above could not close from where it stands: it only engages once a flag is
 # up, so the way past it was to go first. Land a document this tool cannot
