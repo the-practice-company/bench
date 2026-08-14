@@ -29,6 +29,7 @@ commands/checkpoint.md
 commands/status.md
 commands/auto.md
 commands/continue.md
+commands/ratify.md
 skills/baton/SKILL.md
 skills/baton-resume/SKILL.md
 skills/baton-checkpoint/SKILL.md
@@ -154,7 +155,7 @@ bare="$(
             /^```/      { inblock = 0; next }
             inblock     { print rel ":" FNR ": " $0 }
         ' "$PLUGIN/$rel"
-    done | sed 's#scripts/baton-[a-z]*##g' | grep -E 'baton-(lock|observe|write|journal|gate)' || true
+    done | sed 's#scripts/baton-[a-z]*##g' | grep -E 'baton-(lock|observe|write|journal|gate|digest)' || true
 )"
 if [ -n "$bare" ]; then
     fail "no bash block invokes a baton script by bare name (it is not on PATH)"
@@ -252,5 +253,21 @@ init_cmd="$(cat "$PLUGIN/commands/init.md")"
 assert_contains "$init_cmd" "Which document each wave builds to" "init settles the spec source per wave"
 assert_contains "$init_cmd" "Where the run works" "init settles the workspace preference"
 assert_contains "$init_cmd" "before you compact" "init tells the human to ratify before compacting"
+
+# --- ratify is a signature, and only a human can sign ---
+ratify_cmd="$(cat "$PLUGIN/commands/ratify.md")"
+assert_contains "$ratify_cmd" "disable-model-invocation: true" \
+    "ratify is human-typed only -- that flag is the entire barrier"
+assert_contains "$ratify_cmd" "baton-digest constitution" \
+    "ratify shows the digest the script prints, not one it composes"
+# The two values the command does not get to invent. Pinned to the commands
+# themselves rather than to the field names: a ratify.md that names
+# `ratified_by` in prose while filling it from anywhere it likes would keep a
+# field-name assertion green, and where those two values come from is the
+# whole of what "the human signed this" means.
+assert_contains "$ratify_cmd" "git config user.name" \
+    "ratified_by is read from git, not composed"
+assert_contains "$ratify_cmd" "git rev-parse HEAD" \
+    "git_anchor is the commit the human approved against, read from the repository"
 
 finish
