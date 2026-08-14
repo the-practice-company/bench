@@ -380,6 +380,33 @@ if [ "$target" = "docs/baton/state.md" ] && [ "$target_in_head" -eq 1 ]; then
     done
 fi
 
+# Which of the shapes frontmatter_block reads back as nothing this document
+# is, so the refusal below can name the one repair its reader needs instead of
+# reciting every shape it turns away. It decides nothing -- frontmatter_block
+# alone says whether a write is refused, and this runs only once it already
+# has -- but it does duplicate that reader's two rules, the line-1 anchor and
+# the closing ---, so it has to stay in step with it: a shape named here that
+# frontmatter_block reads differently is a message describing a document
+# nobody has.
+#
+# `empty` is the shape that made the naming worth doing. A block that opens on
+# line 1 and closes on line 2 is refused correctly, there being no flag in it
+# to read -- but it is not a document missing "one opening with --- on line 1,
+# closed by a later ---", which is what the single message used to tell its
+# reader to go and check. Both were already true, so the reader checked both,
+# found both, and went hunting for a defect the file does not have; baton-gate
+# carries the same scar in unquote's comment. Blank lines between the two ---
+# lines land here too, and for the same reason: they leave the block just as
+# empty of fields.
+frontmatter_shape() {
+    awk '
+        { sub(/\r$/, "") }
+        NR==1 && $0!="---" { shape="unopened"; exit }
+        NR>1  && $0=="---" { shape="empty";    exit }
+        END { if (shape == "") shape = (NR == 0 ? "unopened" : "unclosed"); print shape }
+    '
+}
+
 # The same rule about the document rather than the transition, and refused
 # whatever HEAD says -- which is the part the guard above cannot do from where
 # it stands. It only engages once a flag is up, so the way past it was to go
@@ -403,7 +430,17 @@ fi
 # baton-digest refuses that file outright, which halts the run harder than
 # needs_human does.
 if [ "$target" = "docs/baton/state.md" ] && [ -z "$(frontmatter_block < "$tmp")" ]; then
-    echo "baton-write: refusing to write $target: it has no frontmatter block this tool can read -- one opening with --- on line 1, closed by a later ---. suspect and needs_human live there, and flags that cannot be read are a stop nobody can see, this tool included." >&2
+    case "$(frontmatter_shape < "$tmp")" in
+        unopened)
+            echo "baton-write: refusing to write $target: it has no frontmatter block this tool can read -- line 1 is not a bare ---, so nothing opens one, and a block that starts any lower down is body text. Open it on line 1 and close it with a later ---. suspect and needs_human live there, and flags that cannot be read are a stop nobody can see, this tool included." >&2
+            ;;
+        unclosed)
+            echo "baton-write: refusing to write $target: it has no frontmatter block this tool can read -- the block opens with --- on line 1 and nothing closes it. Add a bare --- after the fields; until one is there this tool reads no frontmatter at all, rather than reading the rest of the document as frontmatter. suspect and needs_human live there, and flags that cannot be read are a stop nobody can see, this tool included." >&2
+            ;;
+        *)
+            echo "baton-write: refusing to write $target: its frontmatter block is empty -- it opens with --- on line 1 and it is closed, so the shape of it is right, but there is nothing between those two lines except blank space and no field in it for this tool to read. Write suspect: and needs_human: inside the block -- flags that cannot be read are a stop nobody can see, this tool included." >&2
+            ;;
+    esac
     exit 3
 fi
 

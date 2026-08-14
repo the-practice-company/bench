@@ -977,6 +977,8 @@ assert_equals "$unreadable_entry_rc" "3" \
     "refuses an unreadable state.md even with both flags false -- the step that used to be free"
 assert_contains "$unreadable_entry_stderr" "no frontmatter block this tool can read" \
     "the refusal says what it could not read, rather than naming a flag that is not set"
+assert_contains "$unreadable_entry_stderr" "line 1 is not a bare ---" \
+    "and says which shape this document has, so the reader repairs the opening rather than checking all three"
 assert_equals "$(git show HEAD:docs/baton/state.md)" "$unreadable_entry_head_before" \
     "HEAD still holds the readable document after the refused unreadable write"
 assert_equals "$(git rev-list --count HEAD)" "$unreadable_entry_commits_before" \
@@ -998,8 +1000,65 @@ assert_equals "$unterminated_rc" "3" \
     "refuses a state.md whose frontmatter block opens on line 1 and is never closed"
 assert_contains "$unterminated_stderr" "no frontmatter block this tool can read" \
     "the unterminated-block refusal is the same one, for the same reason"
+assert_contains "$unterminated_stderr" "nothing closes it" \
+    "the unterminated-block refusal names the close, not the opening this document already has"
 assert_equals "$(git rev-list --count HEAD)" "$unreadable_entry_commits_before" \
     "the refused unterminated write creates no commit either"
+
+# The third shape, and the one the single message was untrue about. A block
+# that opens on line 1 and closes on line 2 has nothing in it to read, so the
+# refusal is right -- but "one opening with --- on line 1, closed by a later
+# ---" described a document this one already is. The reader checked both,
+# found both, and was sent hunting for a defect the file does not have, which
+# is the failure baton-gate names for its own diagnostics at unquote. So the
+# assertions below pin which message arrives, not just that one does: without
+# that, the wording drifts back and nothing goes red.
+state_empty_block() {
+    printf '%s\n' '---' '---' '' '# State' '' '## Now' '' "- **Next action:** $1"
+}
+
+# Same block, spelled with blank lines inside it rather than none. Nothing
+# separates the two as far as any reader here is concerned -- the block is
+# just as empty of fields -- so it must arrive at the same diagnostic and not
+# at the unterminated one.
+state_blank_block() {
+    printf '%s\n' '---' '' '' '---' '' '# State' '' "- **Next action:** $1"
+}
+
+empty_block_commits_before="$(git rev-list --count HEAD)"
+empty_block_head_before="$(git show HEAD:docs/baton/state.md)"
+
+set +e
+empty_block_stderr="$(state_empty_block "a block with nothing in it" \
+    | "$WRITE" -m "agent: empty frontmatter block" docs/baton/state.md 2>&1 >/dev/null)"
+empty_block_rc=$?
+set -e
+
+assert_equals "$empty_block_rc" "3" \
+    "refuses a state.md whose frontmatter block opens on line 1, closes, and holds nothing"
+assert_contains "$empty_block_stderr" "its frontmatter block is empty" \
+    "the empty-block refusal says the block is empty, which is the shape this document actually has"
+assert_not_contains "$empty_block_stderr" "no frontmatter block this tool can read" \
+    "it no longer claims the document has no block, when the block is right there and closed"
+assert_not_contains "$empty_block_stderr" "closed by a later ---" \
+    "and no longer sends the reader to check a close this document already has"
+assert_equals "$(git show HEAD:docs/baton/state.md)" "$empty_block_head_before" \
+    "HEAD still holds the readable document after the refused empty-block write"
+assert_equals "$(git rev-list --count HEAD)" "$empty_block_commits_before" \
+    "the refused empty-block write creates no commit"
+
+set +e
+blank_block_stderr="$(state_blank_block "a block holding only blank lines" \
+    | "$WRITE" -m "agent: blank frontmatter block" docs/baton/state.md 2>&1 >/dev/null)"
+blank_block_rc=$?
+set -e
+
+assert_equals "$blank_block_rc" "3" \
+    "refuses a state.md whose frontmatter block holds only blank lines"
+assert_contains "$blank_block_stderr" "its frontmatter block is empty" \
+    "a block of blank lines gets the empty-block diagnostic, not the unterminated one -- it is closed"
+assert_equals "$(git rev-list --count HEAD)" "$empty_block_commits_before" \
+    "the refused blank-block write creates no commit either"
 
 # The neighbour every refusal needs. Nothing is raised, nothing is being
 # carried, and the document is an ordinary one: this is the path the new rule
