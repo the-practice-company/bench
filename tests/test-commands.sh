@@ -58,10 +58,49 @@ done
 # `disable-model-invocation` is a per-file flag -- the separate file is the
 # barrier, not a presentational choice.
 CMD_BUDGET=856
+
+# A second ceiling, in bytes, because the first one cannot see a rewrap.
+# `fmt -w 100` across these seven files takes them from 853 lines to 700 while
+# the byte count moves by 47. No word is deleted and nothing is said more
+# briefly: it opens 153 lines of headroom under CMD_BUDGET, and the roughly
+# 7.5 KB of new prose that could then be poured into that headroom is exactly
+# what the line cap exists to make someone argue for. The same trick was
+# demonstrated on this plugin's skills before their byte budget went in, and
+# still reproduces -- baton-autopilot rewraps from 339 lines to 298 while its
+# bytes go UP, 15637 to 15639.
+#
+# So the two numbers see different things, and moving whichever one is in the
+# way leaves the other still to be argued with. CMD_BUDGET sees a paragraph
+# appended at the wrap width these files are written in; BYTE_BUDGET sees
+# content arriving at any wrap width at all, and is blind in turn to a rewrap
+# that genuinely does say less.
+#
+# Measured on a clean tree, like CMD_BUDGET: 42746 bytes (auto 10126, init
+# 8710, clear 6711, continue 6558, ratify 4764, status 4028, checkpoint 1849),
+# so this is that floor plus about fifty. Deliberately tighter headroom than
+# the line budget's three lines, for the reason test-budget.sh gives at length
+# about the skills: a generous byte budget is the one that lets a rewrap buy
+# real content. Its BYTE_BUDGET sits 49 bytes over its own floor for the same
+# reason, so this is the shape that already governs skills/.
+#
+# Which means this is the one that will stop you, and knowing that before you
+# start is the point of the comment. CMD_BUDGET leaves three lines; this
+# leaves less than one, since a full line in these files runs about 66 bytes.
+# Adding anything to a command file is therefore expected to move this number
+# in the same commit, and to say there what arrived and why a command file is
+# where it belongs -- that is the argument the ceiling exists to require, not
+# an obstacle to route around by moving CMD_BUDGET instead. What passes
+# untouched is what does not grow: a reword, a deletion, a rewrap that
+# genuinely says less.
+BYTE_BUDGET=42800
+
 cmd_total=0
+cmd_bytes=0
 for f in "$CMD"/*.md; do
     n="$(wc -l < "$f" | tr -d ' ')"
+    b="$(wc -c < "$f" | tr -d ' ')"
     cmd_total=$((cmd_total + n))
+    cmd_bytes=$((cmd_bytes + b))
 done
 if [ "$cmd_total" -le "$CMD_BUDGET" ]; then
     pass "commands total $cmd_total lines, within the $CMD_BUDGET-line budget"
@@ -69,6 +108,14 @@ else
     fail "commands total $cmd_total lines, over the $CMD_BUDGET-line budget"
     echo "    commands/ is not where prose evicted from skills/ belongs -- that"
     echo "    goes in plugins/baton/README.md, which is not loaded into context."
+fi
+if [ "$cmd_bytes" -le "$BYTE_BUDGET" ]; then
+    pass "commands total $cmd_bytes bytes, within the $BYTE_BUDGET-byte budget"
+else
+    fail "commands total $cmd_bytes bytes, over the $BYTE_BUDGET-byte budget"
+    echo "    A rewrap lowers the line count and not this one. If the lines are"
+    echo "    within budget and the bytes are not, the content grew -- say in the"
+    echo "    commit message what arrived and why a command file is where it goes."
 fi
 
 # The README's command table, checked against the directory rather than
