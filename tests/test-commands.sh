@@ -77,22 +77,26 @@ CMD_BUDGET=856
 #
 # Measured on a clean tree, like CMD_BUDGET: 42746 bytes (auto 10126, init
 # 8710, clear 6711, continue 6558, ratify 4764, status 4028, checkpoint 1849),
-# so this is that floor plus about fifty. Deliberately tighter headroom than
-# the line budget's three lines, for the reason test-budget.sh gives at length
-# about the skills: a generous byte budget is the one that lets a rewrap buy
-# real content. Its BYTE_BUDGET sits 49 bytes over its own floor for the same
-# reason, so this is the shape that already governs skills/.
+# so this is that floor plus 154 -- three lines at the 50 bytes a line in
+# these files averages, which is the room CMD_BUDGET's floor-plus-three
+# describes. The two are set to agree, deliberately. A line ceiling saying
+# three lines while the byte ceiling permitted less than one would make that
+# `+ 3` decoration, discoverable only by going red on the other number, and a
+# reader who cannot tell which of two ceilings is the real one moves whichever
+# is in the way.
 #
-# Which means this is the one that will stop you, and knowing that before you
-# start is the point of the comment. CMD_BUDGET leaves three lines; this
-# leaves less than one, since a full line in these files runs about 66 bytes.
-# Adding anything to a command file is therefore expected to move this number
-# in the same commit, and to say there what arrived and why a command file is
-# where it belongs -- that is the argument the ceiling exists to require, not
-# an obstacle to route around by moving CMD_BUDGET instead. What passes
-# untouched is what does not grow: a reword, a deletion, a rewrap that
-# genuinely says less.
-BYTE_BUDGET=42800
+# The margin is worth knowing exactly, because 154 bytes is not three lines of
+# every kind: three full-width lines, at the seventy-odd columns this prose
+# wraps to, run about 210 and trip this. What the headroom buys is a restored
+# line or two, which is what CMD_BUDGET's three were for as well. Content that
+# is really new moves both numbers in one commit and argues for itself there.
+#
+# It is not set tighter than that, though test-budget.sh's own BYTE_BUDGET is
+# -- 49 bytes over the skills floor as this lands. This ceiling is here to
+# catch a rewrap that frees 153 lines while saying nothing new, and it clears
+# that by 14 KB. Metering single lines of prose is CMD_BUDGET's job, and it
+# does it more legibly, in the unit the writer is working in.
+BYTE_BUDGET=42900
 
 cmd_total=0
 cmd_bytes=0
