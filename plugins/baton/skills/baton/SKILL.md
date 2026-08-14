@@ -93,9 +93,10 @@ diverged.
   `autopilot_grant`. Neither observed nor claimed: they say how much of a
   human this run currently needs. You may only move them
   **toward more human involvement**. Raising `suspect` or `needs_human` is
-  always yours; clearing either is the human's. `autopilot` runs the same rule
-  in the other direction — writing `off` is always yours, writing anything
-  else is the human's, through `/baton:auto`, a command you cannot invoke.
+  always yours; clearing either is the human's, through `/baton:clear`.
+  `autopilot` runs the same rule in the other direction — writing `off` is
+  always yours, writing anything else is the human's, through `/baton:auto`.
+  Neither is a command you can invoke.
 
 A field named nowhere above is claimed. These bullets are what the schema
 carries today, and the default has to be the reading that preserves evidence.

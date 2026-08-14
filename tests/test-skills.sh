@@ -103,6 +103,16 @@ assert_contains "$core" "git log" "core skill names git history as the event log
 assert_contains "$core" "Granted fields" "core skill classifies the autopilot flag as a third kind of field"
 assert_contains "$core" "toward more human involvement" \
     "core skill states which direction the agent may move a granted field"
+# This is the canonical statement of the rule, and it named a command for one
+# half of it only: the autopilot direction sent the reader to /baton:auto,
+# while "clearing either is the human's" named nothing -- in the one paragraph
+# an agent consults to learn who may move these fields. A runbook scenario now
+# pins that a session finding needs_human names /baton:clear, and baton-resume
+# step 4 is the other place it can come from; both are worth having, since a
+# compacted session carries this file and need not be at step 4 when it meets
+# the flag. Pinned to the clause: the file has other reasons to say the word.
+assert_contains "$core" 'clearing either is the human'"'"'s, through `/baton:clear`' \
+    "the granted-fields rule names the command for the flag half, as it already does for the autopilot half"
 # NOT `assert_contains "$core" "auto"`: `auto` is a substring of `autopilot`,
 # so the bare word goes green off the granted-fields bullet and stays green
 # with the gate paragraph deleted outright. Pinned to the clause that says
