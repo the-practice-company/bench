@@ -373,6 +373,15 @@ assert_contains "$autopilot" "And between attempts, not only between waves" \
     "autopilot checkpoints per attempt, so the ceiling survives a compaction"
 
 # What autonomy never covers.
+# The end-of-run report is not the only place this skill stops on the flag:
+# the unattributable dirty path and every bullet below raise it MID-RUN, and
+# when one of those fires the end-of-run report is never written at all. So the
+# place already fixed cannot cover them, and a human meeting one of these gets
+# the flag, no command, and no later report that would have named one. Stated
+# once at the section lead rather than six times: the rule is the same rule,
+# and six copies of it is how a section gets tidied back down to five.
+assert_contains "$autopilot" '`needs_human` — here or above — names `/baton:clear`' \
+    "every stop that raises the flag names the command that lowers it, not only the last one"
 assert_contains "$autopilot" "contradicts the constitution" "autopilot skill stops on a constitution contradiction"
 # Both of the next two are pinned to the whole clause rather than to the bare
 # word. "suspect" appears in the Red Flags and in the divergence prose alike,

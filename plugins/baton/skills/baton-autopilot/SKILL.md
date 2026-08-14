@@ -302,7 +302,8 @@ leave `needs_human` alone — that run wants no one.
 ## What the autopilot never covers
 
 Autonomy removes the need to confirm each step. It adds no authority. These
-stop the run regardless of how many waves are left:
+stop the run regardless of how many waves are left, and every stop that raises
+`needs_human` — here or above — names `/baton:clear` in what it reports:
 
 - **New input that contradicts the constitution.** Journal it as `incoming`,
   wave → `blocked`, `needs_human: true`. The amendment is the human's.

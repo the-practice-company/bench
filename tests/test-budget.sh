@@ -44,13 +44,14 @@ BUDGET=1156
 # that grows the word count without ever wrapping past its line.
 #
 # Measured, like BUDGET above, and for the same sentences: the skills weigh
-# 59893 bytes with the no-dead-ends rule landed -- the last 82 of them
-# baton-resume step 4 stating baton-write's refusal the way the guard tests
-# for it, rather than as the word `false` -- so this is that floor plus about
-# sixty bytes, against the seventy the old 59500 left over 59426. It is
+# 59997 bytes with the no-dead-ends rule landed -- the last 104 of them
+# baton-autopilot saying that every stop raising `needs_human` names
+# `/baton:clear`, which is the two stops that fire MID-RUN, where no
+# end-of-run report is ever written to name it later -- so this is that floor
+# plus about fifty bytes, against the seventy the old 59500 left over. It is
 # deliberately not proportional headroom -- see the paragraph above for why a
 # generous byte budget is the one that lets a rewrap buy real content.
-BYTE_BUDGET=59950
+BYTE_BUDGET=60050
 
 total=0
 total_bytes=0
