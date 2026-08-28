@@ -48,9 +48,20 @@ def matcher_is_known(matcher):
 # непрерывной подстроки, совпадающей с тем, что ищет сам детектор: тогда
 # файл сканируется на общих основаниях, без самоисключения из периметра.
 _ABSOLUTE_PREFIXES = (
-    "/" + "Users/", "/" + "home/", "/" + "opt/", "/" + "etc/", "~" + "/",
+    "/" + "Users/", "/" + "home/", "/" + "root/", "/" + "opt/", "/" + "etc/",
+    "/" + "tmp/", "/" + "var/", "/" + "usr/", "/" + "srv/", "/" + "mnt/",
+    "/" + "media/", "/" + "private/", "/" + "Volumes/", "/" + "Applications/",
+    "/" + "Library/", "/" + "System/", "~" + "/",
 )
-ABSOLUTE = re.compile(r"(?<![\w.])(?:%s)" % "|".join(re.escape(p) for p in _ABSOLUTE_PREFIXES))
+ABSOLUTE = re.compile(
+    "(?<![\\w.])(?:%s)" % "|".join(re.escape(p) for p in _ABSOLUTE_PREFIXES)
+    # Буква диска Windows: одна латинская буква, двоеточие и разделитель
+    # пути. Однобуквенность и отсутствие слова слева разводят её с
+    # `http` + двоеточие, где перед двоеточием стоит `p`.
+    + r"|(?<![\w.])[A-Za-z]:[\\/]"
+    # UNC \\сервер\ресурс
+    + r"|(?<![\w.])\\\\[A-Za-z0-9._-]+\\"
+)
 # Вызов скрипта пакета из прозы скилла.
 SCRIPT_CALL = re.compile(r"(?:python3?\s+|sh\s+|bash\s+|\./)\S*scripts/\S+")
 # Разрушающий пример в инструкциях ADOPT.

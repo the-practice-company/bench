@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from scripts import check_package
 from scripts.check_package import check, check_read_only, _check_tests_touched_product
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -98,6 +99,26 @@ class TestPackageCheck(unittest.TestCase):
                 "---\nname: drain-inbox\ndescription: x\n---\nЗовёт /Users/artem/x.py\n",
                 encoding="utf-8")
             self.assertIn("absolute-path", check(root).counts())
+
+    def test_every_absolute_form_is_caught(self):
+        """Критерий 3: пять префиксов оставляли зелёными шесть форм."""
+        forms = [
+            "/Users/artem/x.py", "/home/artem/x.py", "/tmp/scratch/x.py",
+            "/var/log/x.txt", "/usr/local/bin/tool", "/Volumes/disk/x.md",
+            "/private/tmp/x.py", "~/notes/x.md", "C:\\Users\\artem\\x.py",
+            "D:/data/x.py", "\\\\server\\share\\x.py",
+        ]
+        for form in forms:
+            with self.subTest(form=form):
+                self.assertIsNotNone(
+                    check_package.ABSOLUTE.search("Зовёт %s отсюда" % form), form)
+
+    def test_relative_and_route_like_tokens_are_not_absolute(self):
+        """Ложные срабатывания, ради которых периметр уже откатывали."""
+        for token in ("scripts/x.py", "../core/me.md", "/backlinks/:path",
+                      "/twinkle:auto 1", "http://example.com/x"):
+            with self.subTest(token=token):
+                self.assertIsNone(check_package.ABSOLUTE.search(token), token)
 
     def test_skill_without_description_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
