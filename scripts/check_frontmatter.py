@@ -68,7 +68,7 @@ def scan(root, today=None):
                     findings.append(Finding("unparseable", rel, error.line, str(error)))
                     continue
                 findings.extend(check_record(rel, fields, base, vocabulary))
-    return Report(findings)
+    return Report(findings, today=today)
 
 
 def main(argv=None):

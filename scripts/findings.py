@@ -99,8 +99,12 @@ class Finding:
 
 
 class Report:
-    def __init__(self, findings):
+    def __init__(self, findings, today=None):
         self.findings = list(findings)
+        # Дата прогона, если её передали. Правил, зависящих от даты, в волне 1
+        # нет; параметр несётся явно, чтобы принятое значение было наблюдаемо,
+        # а не проглочено молча (незыблемое №4).
+        self.today = today
 
     def counts(self):
         out = {}

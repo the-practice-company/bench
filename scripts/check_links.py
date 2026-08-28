@@ -308,7 +308,7 @@ def scan(root, today=None):
         if rel not in referenced:
             findings.append(Finding("orphan", rel, 1, "на файл никто не сослался"))
 
-    return Report(findings)
+    return Report(findings, today=today)
 
 
 def main(argv=None):

@@ -161,3 +161,27 @@ class TestDeterminism(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout.strip(), "")
+
+    def test_no_module_in_scripts_reads_the_clock(self):
+        """Настоящая гарантия детерминизма: часов в гейтах нет вовсе.
+
+        `--today` существует ради правил, зависящих от даты (волна 5). Пока
+        таких правил нет, единственное, что делает отчёт воспроизводимым, —
+        отсутствие обращений к часам.
+        """
+        offenders = []
+        for path in sorted((ROOT / "scripts").glob("*.py")):
+            text = path.read_text(encoding="utf-8")
+            for marker in ("import datetime", "import time", "datetime.now",
+                           "date.today", "time.time"):
+                if marker in text:
+                    offenders.append("%s: %s" % (path.name, marker))
+        self.assertEqual(offenders, [])
+
+    def test_today_is_carried_on_the_report(self):
+        """Принятый параметр обязан быть наблюдаем, а не проглочен молча."""
+        self.assertEqual(check_links.scan(BROKEN, today="2026-01-01").today,
+                          "2026-01-01")
+        self.assertIsNone(check_links.scan(BROKEN).today)
+        self.assertEqual(check_frontmatter.scan(BROKEN, today="2026-01-01").today,
+                          "2026-01-01")
