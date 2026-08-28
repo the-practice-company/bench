@@ -11,6 +11,16 @@
 **Спека:** `docs/superpowers/specs/2026-08-08-context-repo-plugin-design.md`, секции 1, 2, 13, 14, 16 и «Общее для гейтов».
 **Критерии выхода волны:** `docs/roadmap.md`, раздел «Волна 1».
 
+## Состояние плана
+
+**Задачи 1–15 исполнены** — код в дереве, `./check` зелёный, 117 тестов,
+галочки проставлены. Перечитывать и переисполнять их не нужно.
+
+**Начинать с задачи 16.** Задачи 16–23 закрывают дыры, которые нашла
+состязательная проверка уже после того, как `./check` позеленел: зелёный
+набор не краснел на посаженном нарушении, значит проверка в этих местах
+слепа. Порядок и три решения, ждущие автора, — в разделе «Задачи 16–23».
+
 ---
 
 ## Структура файлов
@@ -26,7 +36,7 @@
 | `scripts/check_links.py` | гейт ссылок: семь классов |
 | `scripts/check_frontmatter.py` | гейт frontmatter: контракт из видов |
 | `scripts/check_package.py` | проверка пакета перед выпуском |
-| `check` | `verify_cmd` конституции: тесты + проверка пакета одной командой |
+| `check` | единственная команда проверки: тесты + проверка пакета, один код возврата |
 | `fixtures/broken/` | битая фикстура: все классы обоих гейтов сразу |
 | `fixtures/green/` | зелёный образец: гейты обязаны молчать |
 | `tests/test_*.py` | утверждают точный список находок, не «что-то нашлось» |
@@ -46,7 +56,7 @@
 - Create: `tests/test_smoke.py`
 - Create: `scripts/__init__.py`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 `tests/test_smoke.py`:
 
@@ -65,12 +75,12 @@ class TestManifest(unittest.TestCase):
         self.assertRegex(manifest["version"], r"^\d+\.\d+\.\d+$")
 ```
 
-- [ ] **Step 2: Прогнать и убедиться, что падает**
+- [x] **Step 2: Прогнать и убедиться, что падает**
 
 Run: `python3 -m unittest tests.test_smoke -v`
 Expected: FAIL — `FileNotFoundError: .claude-plugin/plugin.json`
 
-- [ ] **Step 3: Минимальная реализация**
+- [x] **Step 3: Минимальная реализация**
 
 `.claude-plugin/plugin.json`:
 
@@ -95,14 +105,14 @@ python3 -m unittest discover -s tests -t . -q
 python3 scripts/check_package.py .
 ```
 
-- [ ] **Step 4: Сделать исполняемым и прогнать**
+- [x] **Step 4: Сделать исполняемым и прогнать**
 
 Run: `chmod +x check && python3 -m unittest tests.test_smoke -v`
 Expected: PASS (1 test)
 
 `./check` на этом шаге ещё падает: `check_package.py` не существует. Так и задумано — Task 14 его закрывает. До тех пор `verify_cmd` красный, и это честно.
 
-- [ ] **Step 5: Коммит**
+- [x] **Step 5: Коммит**
 
 ```bash
 git add .claude-plugin/plugin.json check scripts/__init__.py tests/__init__.py tests/test_smoke.py
@@ -117,7 +127,7 @@ git commit -m "wave1: манифест пакета и точка входа ver
 - Create: `scripts/zones.py`
 - Create: `tests/test_zones.py`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 `tests/test_zones.py`:
 
@@ -172,12 +182,12 @@ class TestSingleDefinition(unittest.TestCase):
         self.assertEqual(offenders, [], "второе определение зон — импортируй scripts.zones")
 ```
 
-- [ ] **Step 2: Прогнать и убедиться, что падает**
+- [x] **Step 2: Прогнать и убедиться, что падает**
 
 Run: `python3 -m unittest tests.test_zones -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'scripts.zones'`
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 `scripts/zones.py`:
 
@@ -222,12 +232,12 @@ def zone_of(path):
     return parts[0] if parts[0] in ZONES else None
 ```
 
-- [ ] **Step 4: Прогнать — должно пройти**
+- [x] **Step 4: Прогнать — должно пройти**
 
 Run: `python3 -m unittest tests.test_zones -v`
 Expected: PASS (5 tests)
 
-- [ ] **Step 5: Коммит**
+- [x] **Step 5: Коммит**
 
 ```bash
 git add scripts/zones.py tests/test_zones.py
@@ -242,7 +252,7 @@ git commit -m "wave1: модуль зон, единственное опреде
 - Create: `scripts/findings.py`
 - Create: `tests/test_findings.py`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 `tests/test_findings.py`:
 
@@ -298,12 +308,12 @@ class TestReportDeterminism(unittest.TestCase):
         self.assertEqual(r.counts(), {"unresolved": 2, "ambiguous": 1})
 ```
 
-- [ ] **Step 2: Прогнать и убедиться, что падает**
+- [x] **Step 2: Прогнать и убедиться, что падает**
 
 Run: `python3 -m unittest tests.test_findings -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'scripts.findings'`
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 `scripts/findings.py`:
 
@@ -404,12 +414,12 @@ class Report:
         return EXIT_OK
 ```
 
-- [ ] **Step 4: Прогнать — должно пройти**
+- [x] **Step 4: Прогнать — должно пройти**
 
 Run: `python3 -m unittest tests.test_findings -v`
 Expected: PASS (5 tests)
 
-- [ ] **Step 5: Коммит**
+- [x] **Step 5: Коммит**
 
 ```bash
 git add scripts/findings.py tests/test_findings.py
@@ -426,7 +436,7 @@ git commit -m "wave1: классы находок, детерминирован�
 - Create: `scripts/frontmatter.py`
 - Create: `tests/test_frontmatter.py`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 `tests/test_frontmatter.py`:
 
@@ -496,12 +506,12 @@ class TestNeverGuesses(unittest.TestCase):
         self.assertEqual(parse(text), {"tags": ["a"]})
 ```
 
-- [ ] **Step 2: Прогнать и убедиться, что падает**
+- [x] **Step 2: Прогнать и убедиться, что падает**
 
 Run: `python3 -m unittest tests.test_frontmatter -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'scripts.frontmatter'`
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 `scripts/frontmatter.py`:
 
@@ -614,14 +624,14 @@ def parse(text):
     return out
 ```
 
-- [ ] **Step 4: Прогнать — должно пройти**
+- [x] **Step 4: Прогнать — должно пройти**
 
 Run: `python3 -m unittest tests.test_frontmatter -v`
 Expected: PASS (12 tests)
 
 Если `test_empty_value_is_none_not_empty_string` или `test_block_list` падают — дело в финальной нормализации пустых списков: список, в который что-то положили, пустым не остаётся, а ключ без продолжения обязан стать `None`. Правь только этот блок.
 
-- [ ] **Step 5: Коммит**
+- [x] **Step 5: Коммит**
 
 ```bash
 git add scripts/frontmatter.py tests/test_frontmatter.py
@@ -636,7 +646,7 @@ git commit -m "wave1: парсер frontmatter из stdlib, громкий от�
 - Create: `scripts/paths.py`
 - Create: `tests/test_paths.py`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 `tests/test_paths.py`:
 
@@ -691,12 +701,12 @@ class TestRootBoundary(unittest.TestCase):
             self.assertFalse(escapes_root(url, base="areas"))
 ```
 
-- [ ] **Step 2: Прогнать и убедиться, что падает**
+- [x] **Step 2: Прогнать и убедиться, что падает**
 
 Run: `python3 -m unittest tests.test_paths -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'scripts.paths'`
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 `scripts/paths.py`:
 
@@ -760,12 +770,12 @@ def escapes_root(target, base=""):
     return normalised == ".." or normalised.startswith("../")
 ```
 
-- [ ] **Step 4: Прогнать — должно пройти**
+- [x] **Step 4: Прогнать — должно пройти**
 
 Run: `python3 -m unittest tests.test_paths -v`
 Expected: PASS (10 tests)
 
-- [ ] **Step 5: Коммит**
+- [x] **Step 5: Коммит**
 
 ```bash
 git add scripts/paths.py tests/test_paths.py
@@ -782,7 +792,7 @@ git commit -m "wave1: признак пути и граница корня ре�
 - Create: `scripts/basefile.py`
 - Create: `tests/test_basefile.py`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 `tests/test_basefile.py`:
 
@@ -847,12 +857,12 @@ class TestBaseFile(unittest.TestCase):
         self.assertEqual(base.required, set())
 ```
 
-- [ ] **Step 2: Прогнать и убедиться, что падает**
+- [x] **Step 2: Прогнать и убедиться, что падает**
 
 Run: `python3 -m unittest tests.test_basefile -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'scripts.basefile'`
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 `scripts/basefile.py`:
 
@@ -951,12 +961,12 @@ def parse_base(text):
     return Base(folders, required, known, formulas)
 ```
 
-- [ ] **Step 4: Прогнать — должно пройти**
+- [x] **Step 4: Прогнать — должно пройти**
 
 Run: `python3 -m unittest tests.test_basefile -v`
 Expected: PASS (6 tests)
 
-- [ ] **Step 5: Коммит**
+- [x] **Step 5: Коммит**
 
 ```bash
 git add scripts/basefile.py tests/test_basefile.py
@@ -974,7 +984,7 @@ git commit -m "wave1: статический разбор views.base, форму
 - Create: `fixtures/green/` (дерево, см. шаг 2)
 - Create: `fixtures/broken/ЧТО-ЗДЕСЬ-СЛОМАНО.md`
 
-- [ ] **Step 1: Собрать битую фикстуру**
+- [x] **Step 1: Собрать битую фикстуру**
 
 Каждый файл несёт комментарий прямо в себе — «здесь намеренно нет frontmatter».
 
@@ -1118,7 +1128,7 @@ cat > fixtures/broken/.link-allow <<'EOF'
 EOF
 ```
 
-- [ ] **Step 2: Собрать зелёный образец**
+- [x] **Step 2: Собрать зелёный образец**
 
 ```bash
 mkdir -p fixtures/green/{core,decisions/items}
@@ -1171,12 +1181,12 @@ mkdir -p fixtures/green/scripts && cat > fixtures/green/scripts/move.py <<'EOF'
 EOF
 ```
 
-- [ ] **Step 3: Проверить, что дерево на месте**
+- [x] **Step 3: Проверить, что дерево на месте**
 
 Run: `find fixtures -type f | sort | wc -l`
 Expected: `22`
 
-- [ ] **Step 4: Коммит**
+- [x] **Step 4: Коммит**
 
 ```bash
 git add fixtures
@@ -1191,7 +1201,7 @@ git commit -m "wave1: битая фикстура на все классы и з
 - Create: `scripts/check_links.py`
 - Create: `tests/test_check_links.py`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 `tests/test_check_links.py`:
 
@@ -1236,12 +1246,12 @@ class TestUnresolved(unittest.TestCase):
         self.assertGreaterEqual(report.counts().get("unresolved", 0), 1)
 ```
 
-- [ ] **Step 2: Прогнать и убедиться, что падает**
+- [x] **Step 2: Прогнать и убедиться, что падает**
 
 Run: `python3 -m unittest tests.test_check_links -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'scripts.check_links'`
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 `scripts/check_links.py`:
 
@@ -1354,12 +1364,12 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-- [ ] **Step 4: Прогнать — должно пройти**
+- [x] **Step 4: Прогнать — должно пройти**
 
 Run: `python3 -m unittest tests.test_check_links -v`
 Expected: PASS (6 tests)
 
-- [ ] **Step 5: Коммит**
+- [x] **Step 5: Коммит**
 
 ```bash
 git add scripts/check_links.py tests/test_check_links.py
@@ -1374,7 +1384,7 @@ git commit -m "wave1: гейт ссылок, извлечение и класс 
 - Modify: `scripts/check_links.py`
 - Modify: `tests/test_check_links.py`
 
-- [ ] **Step 1: Дописать падающие тесты**
+- [x] **Step 1: Дописать падающие тесты**
 
 Добавить в `tests/test_check_links.py`:
 
@@ -1400,12 +1410,12 @@ class TestForbiddenShapes(unittest.TestCase):
         self.assertEqual(report.counts().get("escapes-root"), 2)
 ```
 
-- [ ] **Step 2: Прогнать и убедиться, что падает**
+- [x] **Step 2: Прогнать и убедиться, что падает**
 
 Run: `python3 -m unittest tests.test_check_links.TestForbiddenShapes -v`
 Expected: FAIL — `AssertionError: None != 1`
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 В `scripts/check_links.py` добавить функцию и включить её в `scan`:
 
@@ -1473,7 +1483,7 @@ def _transient_violation(source_rel, target):
                     findings.append(Finding("unresolved", rel, lineno, "`%s`" % token))
 ```
 
-- [ ] **Step 4: Дописать периметр и `settings*.json`**
+- [x] **Step 4: Дописать периметр и `settings*.json`**
 
 Спека называет два места, которых в коде выше нет.
 
@@ -1546,12 +1556,12 @@ class TestPerimeter(unittest.TestCase):
             self.assertEqual(scan(root).counts(), {})
 ```
 
-- [ ] **Step 5: Прогнать — должно пройти**
+- [x] **Step 5: Прогнать — должно пройти**
 
 Run: `python3 -m unittest tests.test_check_links -v`
 Expected: PASS (12 tests)
 
-- [ ] **Step 6: Коммит**
+- [x] **Step 6: Коммит**
 
 ```bash
 git add scripts/check_links.py tests/test_check_links.py
@@ -1566,7 +1576,7 @@ git commit -m "wave1: md-link-to-file, link-to-transient, escapes-root, пери
 - Modify: `scripts/check_links.py`
 - Modify: `tests/test_check_links.py`
 
-- [ ] **Step 1: Дописать падающие тесты**
+- [x] **Step 1: Дописать падающие тесты**
 
 ```python
 class TestAmbiguous(unittest.TestCase):
@@ -1595,12 +1605,12 @@ class TestAllowlist(unittest.TestCase):
         self.assertEqual(entries[1].reason, "причина")
 ```
 
-- [ ] **Step 2: Прогнать и убедиться, что падает**
+- [x] **Step 2: Прогнать и убедиться, что падает**
 
 Run: `python3 -m unittest tests.test_check_links.TestAllowlist -v`
 Expected: FAIL — `ImportError: cannot import name 'parse_allowlist'`
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 Добавить в `scripts/check_links.py`:
 
@@ -1669,12 +1679,12 @@ def parse_allowlist(text):
                 findings.append(Finding("unresolved", rel, link.line, link.raw))
 ```
 
-- [ ] **Step 4: Прогнать — должно пройти**
+- [x] **Step 4: Прогнать — должно пройти**
 
 Run: `python3 -m unittest tests.test_check_links -v`
 Expected: PASS (14 tests)
 
-- [ ] **Step 5: Коммит**
+- [x] **Step 5: Коммит**
 
 ```bash
 git add scripts/check_links.py tests/test_check_links.py
@@ -1691,7 +1701,7 @@ git commit -m "wave1: ambiguous и гигиена аллоулиста"
 - Modify: `scripts/check_links.py`
 - Modify: `tests/test_check_links.py`
 
-- [ ] **Step 1: Дописать падающий тест**
+- [x] **Step 1: Дописать падающий тест**
 
 ```python
 class TestOrphan(unittest.TestCase):
@@ -1708,12 +1718,12 @@ class TestOrphan(unittest.TestCase):
         self.assertNotIn("orphan", report.counts())
 ```
 
-- [ ] **Step 2: Прогнать и убедиться, что падает**
+- [x] **Step 2: Прогнать и убедиться, что падает**
 
 Run: `python3 -m unittest tests.test_check_links.TestOrphan -v`
 Expected: FAIL — `AssertionError: None != 1`
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 ```python
 from scripts.frontmatter import FrontmatterError, parse as parse_frontmatter
@@ -1763,12 +1773,12 @@ def _orphan_perimeter(root):
         findings.append(Finding("orphan", rel, 1, "на файл никто не сослался"))
 ```
 
-- [ ] **Step 4: Прогнать — должно пройти**
+- [x] **Step 4: Прогнать — должно пройти**
 
 Run: `python3 -m unittest tests.test_check_links -v`
 Expected: PASS (17 tests)
 
-- [ ] **Step 5: Коммит**
+- [x] **Step 5: Коммит**
 
 ```bash
 git add scripts/check_links.py tests/test_check_links.py
@@ -1783,7 +1793,7 @@ git commit -m "wave1: orphan по объявлению, а не обобщени
 - Create: `scripts/check_frontmatter.py`
 - Create: `tests/test_check_frontmatter.py`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 `tests/test_check_frontmatter.py`:
 
@@ -1833,12 +1843,12 @@ class TestContract(unittest.TestCase):
         self.assertEqual(check_record("x/a.md", fields, base, {}), [])
 ```
 
-- [ ] **Step 2: Прогнать и убедиться, что падает**
+- [x] **Step 2: Прогнать и убедиться, что падает**
 
 Run: `python3 -m unittest tests.test_check_frontmatter -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'scripts.check_frontmatter'`
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 `scripts/check_frontmatter.py`:
 
@@ -1932,12 +1942,12 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-- [ ] **Step 4: Прогнать — должно пройти**
+- [x] **Step 4: Прогнать — должно пройти**
 
 Run: `python3 -m unittest tests.test_check_frontmatter -v`
 Expected: PASS (6 tests)
 
-- [ ] **Step 5: Коммит**
+- [x] **Step 5: Коммит**
 
 ```bash
 git add scripts/check_frontmatter.py tests/test_check_frontmatter.py
@@ -1953,7 +1963,7 @@ git commit -m "wave1: гейт frontmatter, контракт из видов"
 **Files:**
 - Create: `tests/test_fixtures.py`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 `tests/test_fixtures.py`:
 
@@ -2024,14 +2034,14 @@ class TestDeterminism(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), "")
 ```
 
-- [ ] **Step 2: Прогнать и увидеть настоящие числа**
+- [x] **Step 2: Прогнать и увидеть настоящие числа**
 
 Run: `python3 -m unittest tests.test_fixtures -v`
 Expected: FAIL с расхождением счётчиков.
 
 **Здесь есть развилка, и она важна.** Расхождение значит одно из двух: гейт ловит не то, или фикстура содержит не то, что задумано. Разбираться обязательно по существу — открыть фикстуру и убедиться глазами, какие находки в ней действительно должны быть. **Подгонять числа под то, что выдал гейт, запрещено**: тогда тест перестаёт быть проверкой и становится снимком поведения, включая ошибочного.
 
-- [ ] **Step 3: Починить настоящую причину**
+- [x] **Step 3: Починить настоящую причину**
 
 Правится либо гейт, либо фикстура — в зависимости от того, что оказалось неверным. Ожидаемые числа выведены из состава фикстуры Task 7:
 
@@ -2045,12 +2055,12 @@ Expected: FAIL с расхождением счётчиков.
 | `dead-allow` 2 | строка без причины и строка, ничего не исключающая |
 | `orphan` 1 | транскрипт, на который никто не сослался |
 
-- [ ] **Step 4: Прогнать — должно пройти**
+- [x] **Step 4: Прогнать — должно пройти**
 
 Run: `python3 -m unittest tests.test_fixtures -v`
 Expected: PASS (6 tests)
 
-- [ ] **Step 5: Коммит**
+- [x] **Step 5: Коммит**
 
 ```bash
 git add tests/test_fixtures.py
@@ -2065,7 +2075,7 @@ git commit -m "wave1: точный список находок и детерми
 - Create: `scripts/check_package.py`
 - Create: `tests/test_check_package.py`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 `tests/test_check_package.py`:
 
@@ -2179,12 +2189,12 @@ class TestThisPackage(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
 ```
 
-- [ ] **Step 2: Прогнать и убедиться, что падает**
+- [x] **Step 2: Прогнать и убедиться, что падает**
 
 Run: `python3 -m unittest tests.test_check_package -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'scripts.check_package'`
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 `scripts/check_package.py`:
 
@@ -2374,12 +2384,12 @@ def check_read_only(root, gate, fixture):
 тот же приём вокруг `python3 -m unittest discover`, хеш берётся по `scripts/`
 и `.claude-plugin/`; расхождение даёт `tests-touched-product`.
 
-- [ ] **Step 4: Прогнать — должно пройти**
+- [x] **Step 4: Прогнать — должно пройти**
 
 Run: `python3 -m unittest tests.test_check_package -v`
 Expected: PASS (10 tests)
 
-- [ ] **Step 5: Коммит**
+- [x] **Step 5: Коммит**
 
 ```bash
 git add scripts/check_package.py scripts/findings.py tests/test_check_package.py
@@ -2396,7 +2406,7 @@ git commit -m "wave1: проверка пакета — хуки, абсолют
 - Create: `tests/test_gate_coverage.py`
 - Create: `docs/gate-coverage.md`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 `tests/test_gate_coverage.py`:
 
@@ -2430,12 +2440,12 @@ class TestEveryClassIsProven(unittest.TestCase):
             self.assertTrue(all(cells), "пустая клетка в строке: %s" % line)
 ```
 
-- [ ] **Step 2: Прогнать и убедиться, что падает**
+- [x] **Step 2: Прогнать и убедиться, что падает**
 
 Run: `python3 -m unittest tests.test_gate_coverage -v`
 Expected: FAIL — `FileNotFoundError: docs/gate-coverage.md`
 
-- [ ] **Step 3: Написать таблицу покрытия**
+- [x] **Step 3: Написать таблицу покрытия**
 
 `docs/gate-coverage.md`:
 
@@ -2471,12 +2481,12 @@ Expected: FAIL — `FileNotFoundError: docs/gate-coverage.md`
 | `skill-name-mismatch` | `tests/test_check_package.py`, имя не совпало с папкой |
 ```
 
-- [ ] **Step 4: Прогнать всё разом**
+- [x] **Step 4: Прогнать всё разом**
 
 Run: `./check`
 Expected: все тесты PASS, проверка пакета молчит, код возврата 0
 
-- [ ] **Step 5: Коммит**
+- [x] **Step 5: Коммит**
 
 ```bash
 git add docs/gate-coverage.md tests/test_gate_coverage.py
