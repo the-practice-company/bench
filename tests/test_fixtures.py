@@ -8,7 +8,7 @@
 
 | класс | образцы |
 |---|---|
-| `unresolved` 4 | `[[несуществующая заметка]]` в `areas/hiring/note.md`; `scripts/move.py` в `CLAUDE.md` («его нет»); `areas/hiring/items/` и `scripts/rename.py` в `.claude/rules/areas.md` |
+| `unresolved` 5 | `[[несуществующая заметка]]` в `areas/hiring/note.md`; `scripts/move.py` в `CLAUDE.md` («его нет»); `areas/hiring/items/` и `scripts/rename.py` в `.claude/rules/areas.md`; `[[projects/dup]]` в `areas/hiring/pathlink.md` — путь не существует, откат на basename запрещён |
 | `md-link-to-file` 1 | `[профиль](../../core/me.md)` |
 | `link-to-transient` 1 | `[[tmp/plan]]` из `areas` |
 | `escapes-root` 2 | абсолютный путь в `CLAUDE.md` и `[[../../../soseddniy-repo/file]]` |
@@ -73,7 +73,7 @@ class TestExactFindings(unittest.TestCase):
         self.assertEqual(
             check_links.scan(BROKEN).counts(),
             {
-                "unresolved": 4,
+                "unresolved": 5,
                 "md-link-to-file": 1,
                 "link-to-transient": 1,
                 "escapes-root": 2,
@@ -102,6 +102,7 @@ class TestExactFindings(unittest.TestCase):
                 ("areas/hiring/md-link.md", 4, "md-link-to-file",
                  "[профиль](../../core/me.md)"),
                 ("areas/hiring/note.md", 4, "unresolved", "[[несуществующая заметка]]"),
+                ("areas/hiring/pathlink.md", 6, "unresolved", "[[projects/dup]]"),
                 ("areas/hiring/transient.md", 4, "link-to-transient", "[[tmp/plan]]"),
                 ("sources/transcripts/items/2026-07-14-call.md", 1, "orphan",
                  "на файл никто не сослался"),
