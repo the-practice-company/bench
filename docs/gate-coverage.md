@@ -19,7 +19,7 @@
 | `unknown-hook-event` | временный пакет с `OnFullMoon` | `tests/test_check_package.py::TestPackageCheck::test_unknown_hook_event_fails` |
 | `unknown-hook-type` | тип вне закрытого списка | `tests/test_check_package.py::TestPackageCheck::test_unknown_hook_type_fails` |
 | `unknown-matcher` | матчер вне закрытого множества, включая опечатку `Bahs` | `tests/test_check_package.py::TestPackageCheck::test_matcher_typo_is_caught` |
-| `absolute-path` | одиннадцать форм абсолютного пути, включая Windows и UNC | `tests/test_check_package.py::TestPackageCheck::test_every_absolute_form_is_caught` |
+| `absolute-path` | двадцать пять форм абсолютного пути, включая Windows, UNC и чужой домашний каталог | `tests/test_check_package.py::TestPackageCheck::test_every_absolute_form_is_caught` |
 | `relative-path-in-skill` | вызов `scripts/*` без `${CLAUDE_PLUGIN_ROOT}` | `tests/test_check_package.py::TestPackageCheck::test_relative_script_call_in_a_skill_fails` |
 | `destructive-example` | пример `mv` в инструкциях ADOPT | `tests/test_check_package.py::TestPackageCheck::test_destructive_example_in_adopt_instructions_fails` |
 | `gate-not-read-only` | хеш дерева фикстуры до и после прогона гейта | `tests/test_check_package.py::TestGateNotReadOnlyMechanism::test_mutating_gate_is_caught` |

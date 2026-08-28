@@ -8,8 +8,19 @@ from pathlib import Path
 
 from scripts import check_package
 from scripts.check_package import check, check_read_only, _check_tests_touched_product
+from scripts.findings import Finding
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def places(report):
+    """Находки как (путь, строка, класс, деталь) — та же форма, что в test_fixtures.
+
+    Утверждается точный список: `assertIn("absolute-path", counts())` держится
+    зелёным, даже когда находка села не на ту строку и показывает не тот текст.
+    """
+    return [(f.path, f.line, f.cls, f.detail)
+            for f in sorted(report.findings, key=Finding.key)]
 
 
 def _minimal_package(root):
@@ -101,12 +112,21 @@ class TestPackageCheck(unittest.TestCase):
             self.assertIn("absolute-path", check(root).counts())
 
     def test_every_absolute_form_is_caught(self):
-        """Критерий 3: пять префиксов оставляли зелёными шесть форм."""
+        """Критерий 3: пять префиксов оставляли зелёными шесть форм.
+
+        Второй ряд — корни, которых список не знал вовсе: каждый абсолютен
+        и верен ровно на одной машине, а `/bin/` из них ещё и делал
+        невидимым shebang с захардкоженным интерпретатором.
+        """
         forms = [
             "/Users/artem/x.py", "/home/artem/x.py", "/tmp/scratch/x.py",
             "/var/log/x.txt", "/usr/local/bin/tool", "/Volumes/disk/x.md",
             "/private/tmp/x.py", "~/notes/x.md", "C:\\Users\\artem\\x.py",
             "D:/data/x.py", "\\\\server\\share\\x.py",
+            "/bin/sh", "/sbin/init", "/dev/null", "/sys/class/net",
+            "/proc/1/cwd", "/run/user/501", "/lib/x.so", "/lib64/ld.so",
+            "/boot/vmlinuz", "/snap/bin/tool", "/nix/store/hash-x",
+            "/cores/core.1", "/Network/Servers/x", "~artem/notes/x.md",
         ]
         for form in forms:
             with self.subTest(form=form):
@@ -114,9 +134,16 @@ class TestPackageCheck(unittest.TestCase):
                     check_package.ABSOLUTE.search("Зовёт %s отсюда" % form), form)
 
     def test_relative_and_route_like_tokens_are_not_absolute(self):
-        """Ложные срабатывания, ради которых периметр уже откатывали."""
+        """Ложные срабатывания, ради которых периметр уже откатывали.
+
+        Последние три — цена новых корней: имя каталога, совпавшее с
+        корнем, остаётся относительной ссылкой, пока перед ним нет косой,
+        не приклеенной к слову или точке.
+        """
         for token in ("scripts/x.py", "../core/me.md", "/backlinks/:path",
-                      "/twinkle:auto 1", "http://example.com/x"):
+                      "/twinkle:auto 1", "http://example.com/x",
+                      "dev/mutate.py", "tools/dev/mutate.py",
+                      "http://example.com/lib/x"):
             with self.subTest(token=token):
                 self.assertIsNone(check_package.ABSOLUTE.search(token), token)
 
@@ -163,6 +190,124 @@ class TestPackageCheck(unittest.TestCase):
             (root / "tool.py").write_text(
                 "#!/usr/bin/python3\nprint(1)\n", encoding="utf-8")
             self.assertIn("absolute-path", check(root).counts())
+
+    def test_a_posix_shell_shebang_is_portable(self):
+        """`#!` + POSIX-шелл — вторая портируемая форма, а не находка.
+
+        Корня `/bin/` детектор не знал вовсе, и `#!/bin/sh` проходил зелёным
+        не потому, что портируем, а потому что был невидим. Стоило корень
+        добавить — и первая строка собственного `./check` этого репозитория
+        стала бы находкой. Портируемых форм ровно две: шелл, гарантированный
+        стандартом по этому пути, и `env` из стандартного каталога.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "run.sh").write_text("#!/bin/sh\necho ok\n", encoding="utf-8")
+            self.assertEqual(places(check(root)), [])
+
+    def test_a_bash_shebang_is_still_caught(self):
+        """`bash` по этому пути не гарантирован никем.
+
+        На NixOS его там нет, на macOS это другая сборка. Портируемость
+        `/bin/sh` даёт стандарт, а не каталог, — на соседа по каталогу она
+        не распространяется.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "run.sh").write_text("#!/bin/bash\necho ok\n", encoding="utf-8")
+            self.assertEqual(
+                places(check(root)),
+                [("run.sh", 1, "absolute-path", "#!/bin/bash")])
+
+    def test_an_absolute_path_in_shebang_arguments_is_caught(self):
+        """Исключение снимает токен, а не всю строку.
+
+        `env -S` — портируемая форма, и она же несёт произвольную команду с
+        аргументами. Исключая строку целиком, гейт слеп ровно к тому месту,
+        куда абсолютный путь и попадает.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            line = "#!/usr/bin/env -S python3 -c \"p='/Users/artem/lib'\""
+            (root / "tool.py").write_text(line + "\n", encoding="utf-8")
+            self.assertEqual(
+                places(check(root)),
+                [("tool.py", 1, "absolute-path", line)])
+
+    def test_a_comment_after_a_portable_shebang_is_scanned(self):
+        """Хвост первой строки — обычный текст, а не часть директивы ядра."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            line = "#!/usr/bin/env python3  # см. /Users/artem/notes.md"
+            (root / "tool.py").write_text(line + "\nprint(1)\n", encoding="utf-8")
+            self.assertEqual(
+                places(check(root)),
+                [("tool.py", 1, "absolute-path", line)])
+
+    def test_an_undecodable_byte_does_not_remove_the_file_from_the_scan(self):
+        """Один байт вне UTF-8 уводил весь файл из-под гейта.
+
+        `UnicodeDecodeError` ловился и файл пропускался целиком: спрятать
+        абсолютный путь от проверки стоило одной правки в один байт. Чтение
+        с заменой делает невосстановимым ровно этот байт, а не файл, —
+        незыблемое №4 запрещает молча терять остальное.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "hooks" / "n.sh").write_bytes(
+                "# caf\xe9 ".encode("latin-1") + b"/Users/artem/secret\n")
+            self.assertEqual(
+                places(check(root)),
+                [("hooks/n.sh", 1, "absolute-path", "# caf\ufffd /Users/artem/secret")])
+
+    def test_compiled_bytecode_is_not_scanned(self):
+        """`__pycache__` глубже первого сегмента — тоже не файлы пакета.
+
+        Байт-код не входит в пакет и не пишется руками, зато после свёртки
+        констант содержит ровно те абсолютные префиксы, которые в исходнике
+        собраны из фрагментов. Пока такой файл не декодировался, он
+        отсеивался сам собой; чтение с заменой сделало его видимым, и
+        `scripts/__pycache__/check_package.*.pyc` покраснел первым же
+        прогоном на собственном репозитории.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            cache = root / "scripts" / "__pycache__"
+            cache.mkdir(parents=True)
+            (cache / "x.cpython-314.pyc").write_bytes(b"\xa7\x00/Users/artem/x.py\n")
+            self.assertEqual(places(check(root)), [])
+
+    def test_single_letter_uri_schemes_are_not_drive_letters(self):
+        """Ложные срабатывания ветки буквы диска, ставшие достижимыми.
+
+        Скан пошёл по всем текстовым файлам, а не по списку расширений, и
+        ветка `[A-Za-z]:[\\\\/]` начала ловить схему URI из одной буквы и
+        тернарник минифицированного JS.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "app.js").write_text(
+                "url s://host\na?b:/re/.test(s)\n", encoding="utf-8")
+            self.assertEqual(places(check(root)), [])
+
+    def test_windows_drive_paths_are_still_caught(self):
+        """Обе формы разделителя остаются находкой."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "notes.md").write_text("C:/x\nC:\\x\n", encoding="utf-8")
+            self.assertEqual(
+                places(check(root)),
+                [("notes.md", 1, "absolute-path", "C:/x"),
+                 ("notes.md", 2, "absolute-path", "C:\\x")])
+
+    def test_a_home_of_another_user_is_absolute_too(self):
+        """`~user/` — та же машинная зависимость, что и `~/`, и она была зелёной."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "notes.md").write_text("Смотри ~artem/x.md\n", encoding="utf-8")
+            self.assertEqual(
+                places(check(root)),
+                [("notes.md", 1, "absolute-path", "Смотри ~artem/x.md")])
 
     def test_skill_without_description_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
