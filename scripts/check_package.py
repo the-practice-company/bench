@@ -25,7 +25,23 @@ HOOK_EVENTS = frozenset({
     "UserPromptSubmit", "SubagentStop", "Notification", "SessionEnd",
 })
 HOOK_TYPES = frozenset({"command"})
-MATCHERS = re.compile(r"^[A-Za-z*|_]+$")
+# Матчер хука — имя инструмента, `*` или альтернатива через `|`. Закрытое
+# множество, а не форма: `^[A-Za-z*|_]+$` принимал любое слово, поэтому
+# опечатка `Bahs` проходила зелёной — ровно та поломка, ради которой
+# проверка и заводилась. Новый инструмент добавляется правкой этого списка;
+# в этом и смысл закрытого множества.
+TOOL_NAMES = frozenset({
+    "Bash", "Edit", "Glob", "Grep", "NotebookEdit", "Read", "Task",
+    "TodoWrite", "WebFetch", "WebSearch", "Write",
+})
+
+
+def matcher_is_known(matcher):
+    matcher = str(matcher)
+    if matcher == "*":
+        return True
+    parts = matcher.split("|")
+    return all(part in TOOL_NAMES for part in parts)
 
 # Абсолютный путь верен ровно на одной машине. Список префиксов собран из
 # фрагментов, а не записан литералом, чтобы в тексте этого файла не было
@@ -91,7 +107,7 @@ def check(root):
                     findings.append(Finding("unknown-hook-event", "hooks/hooks.json", 1, event))
                 for entry in entries or []:
                     matcher = entry.get("matcher", "*")
-                    if not MATCHERS.match(str(matcher)):
+                    if not matcher_is_known(matcher):
                         findings.append(Finding("unknown-matcher", "hooks/hooks.json", 1, str(matcher)))
                     for hook in entry.get("hooks") or []:
                         if hook.get("type") not in HOOK_TYPES:

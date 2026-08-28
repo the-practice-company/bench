@@ -59,6 +59,38 @@ class TestPackageCheck(unittest.TestCase):
                 ]}}), encoding="utf-8")
             self.assertIn("unknown-matcher", check(root).counts())
 
+    def test_matcher_typo_is_caught(self):
+        """Критерий 3: матчер вне закрытого множества обязан валить проверку.
+
+        `Bahs` — опечатка в `Bash`. Проверкой формы она проходила зелёной.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "hooks" / "hooks.json").write_text(
+                json.dumps({"hooks": {"PreToolUse": [
+                    {"matcher": "Bahs", "hooks": []}
+                ]}}), encoding="utf-8")
+            self.assertIn("unknown-matcher", check(root).counts())
+
+    def test_known_matcher_forms_pass(self):
+        for matcher in ("*", "Bash", "Edit|Write"):
+            with self.subTest(matcher=matcher), tempfile.TemporaryDirectory() as tmp:
+                root = _minimal_package(Path(tmp))
+                (root / "hooks" / "hooks.json").write_text(
+                    json.dumps({"hooks": {"PreToolUse": [
+                        {"matcher": matcher, "hooks": []}
+                    ]}}), encoding="utf-8")
+                self.assertNotIn("unknown-matcher", check(root).counts())
+
+    def test_alternation_with_one_bad_member_is_caught(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "hooks" / "hooks.json").write_text(
+                json.dumps({"hooks": {"PreToolUse": [
+                    {"matcher": "Edit|Wrote", "hooks": []}
+                ]}}), encoding="utf-8")
+            self.assertIn("unknown-matcher", check(root).counts())
+
     def test_absolute_path_anywhere_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = _minimal_package(Path(tmp))
