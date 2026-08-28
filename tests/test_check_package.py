@@ -120,6 +120,50 @@ class TestPackageCheck(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIsNone(check_package.ABSOLUTE.search(token), token)
 
+    def test_a_shebang_is_not_an_absolute_path_finding(self):
+        """Строка 1 вида `#!...` — директива ядра, а не путь в прозе.
+
+        Ядро требует абсолютный путь интерпретатора, относительной формы
+        не существует, а `env` из `/usr/bin/` верен на каждой POSIX-машине —
+        то есть ровно обратное тому, ради чего класс заведён.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "tool.py").write_text(
+                "#!/usr/bin/env python3\nprint(1)\n", encoding="utf-8")
+            self.assertEqual(check(root).counts(), {})
+
+    def test_an_absolute_path_below_the_shebang_is_still_caught(self):
+        """Исключение — ровно первая строка, и ни одной больше."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "tool.py").write_text(
+                "#!/usr/bin/env python3\nPATH = \"/usr/local/bin/tool\"\n",
+                encoding="utf-8")
+            self.assertIn("absolute-path", check(root).counts())
+
+    def test_a_shebang_like_line_further_down_is_still_caught(self):
+        """`#!` спасает только на первой строке, иначе это дыра."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "tool.py").write_text(
+                "# заметка\n#!/usr/bin/env python3\n", encoding="utf-8")
+            self.assertIn("absolute-path", check(root).counts())
+
+    def test_a_hardcoded_interpreter_shebang_is_still_caught(self):
+        """Исключение — ровно для `env`, а не для любой первой строки с `#!`.
+
+        Захардкоженный интерпретатор в shebang — та самая машинная
+        зависимость, ради которой класс заведён: на чужой машине, где
+        интерпретатор лежит в другом месте, такой путь не существует.
+        Исключать надо портируемую форму, а не форму вообще.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "tool.py").write_text(
+                "#!/usr/bin/python3\nprint(1)\n", encoding="utf-8")
+            self.assertIn("absolute-path", check(root).counts())
+
     def test_skill_without_description_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = _minimal_package(Path(tmp))

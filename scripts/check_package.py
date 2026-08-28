@@ -62,6 +62,15 @@ ABSOLUTE = re.compile(
     # UNC \\сервер\ресурс
     + r"|(?<![\w.])\\\\[A-Za-z0-9._-]+\\"
 )
+# Портируемый shebang первой строки — единственное именованное исключение
+# из absolute-path. Ядро требует абсолютный путь интерпретатора на первой
+# строке файла, относительной формы не существует, а `env` из стандартного
+# каталога верен на каждой POSIX-машине — ровно обратное тому, ради чего
+# класс заведён. Исключение сужено до этой формы: захардкоженный
+# интерпретатор (`#!` + `/usr` + `/bin/python3` без `env`) остаётся
+# находкой, потому что это и есть машинная зависимость. Фрагменты строки —
+# по той же причине, что и у `_ABSOLUTE_PREFIXES` выше.
+_PORTABLE_SHEBANG = re.compile(r"^#!" + "/" + "usr/bin/env" + r"(?:\s|$)")
 # Вызов скрипта пакета из прозы скилла.
 SCRIPT_CALL = re.compile(r"(?:python3?\s+|sh\s+|bash\s+|\./)\S*scripts/\S+")
 # Разрушающий пример в инструкциях ADOPT.
@@ -154,7 +163,7 @@ def check(root):
         except UnicodeDecodeError:
             continue
         for lineno, line in enumerate(text.split("\n"), start=1):
-            if ABSOLUTE.search(line):
+            if ABSOLUTE.search(line) and not (lineno == 1 and _PORTABLE_SHEBANG.match(line)):
                 findings.append(Finding("absolute-path", rel, lineno, line.strip()[:80]))
             # Восемь скиллов у изученного аналога звали скрипт относительным
             # путём: рабочим каталогом оказался репозиторий пользователя,
