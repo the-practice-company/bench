@@ -9,7 +9,7 @@
 **Tech Stack:** Python 3 stdlib (`unittest`, `pathlib`, `re`, `unicodedata`, `argparse`, `json`), git, POSIX shell. Ноль внешних зависимостей — это незыблемое №5.
 
 **Спека:** `docs/superpowers/specs/2026-08-08-context-repo-plugin-design.md`, секции 1, 2, 13, 14, 16 и «Общее для гейтов».
-**Конституция:** `docs/baton/constitution.md`, критерии выхода волны 1.
+**Критерии выхода волны:** `docs/roadmap.md`, раздел «Волна 1».
 
 ---
 
@@ -37,7 +37,7 @@
 
 ### Task 1: Скелет пакета и `./check`
 
-Ходячий скелет: `verify_cmd` из конституции обязан работать с первого коммита, иначе гейт baton нечем проверить.
+Ходячий скелет: `./check` обязан работать с первого коммита, иначе волну нечем проверить.
 
 **Files:**
 - Create: `.claude-plugin/plugin.json`
@@ -1485,7 +1485,7 @@ Notion-экспорт с percent-encoding, и без исключения пер
 ```python
 def _ignored(root):
     """Префиксы, в которые гейт не заходит: .gitignore плюс archive/."""
-    prefixes = {".git/", "archive/", ".baton/"}
+    prefixes = {".git/", "archive/"}
     ignore = root / ".gitignore"
     if ignore.exists():
         for line in ignore.read_text(encoding="utf-8").split("\n"):
@@ -2448,7 +2448,7 @@ Expected: FAIL — `FileNotFoundError: docs/gate-coverage.md`
 
 | класс | чем доказан |
 |---|---|
-| `unresolved` | битая фикстура, 3 находки, `tests/test_fixtures.py` |
+| `unresolved` | битая фикстура, 4 находки, `tests/test_fixtures.py` |
 | `md-link-to-file` | битая фикстура, 1 находка |
 | `link-to-transient` | битая фикстура, 1 находка |
 | `escapes-root` | битая фикстура, 2 находки: абсолютный путь и `..` выше корня |
@@ -2485,19 +2485,885 @@ git commit -m "wave1: покрытие классов доказано табл�
 
 ---
 
+## Задачи 16–23: дыры, найденные состязательной проверкой
+
+Задачи 1–15 сделали `./check` зелёным. Состязательная проверка сажала мутации
+в копию дерева и смотрела, покраснеет ли набор: критерии 1, 3, 4 и 5
+опровергнуты — там, где посаженное нарушение не роняет тесты, критерий не
+выполнен, а зелёный цвет означает лишь, что проверка в этом месте слепа.
+
+Каждая задача ниже начинается с теста, который **сегодня проходит зелёным на
+сломанном коде** — это и есть доказательство дыры. Порядок задач свободный,
+они не зависят друг от друга; исключение — 21 и 22, обе правят один и тот же
+ожидаемый список, и 22 идёт после 21.
+
+---
+
+### Task 16: Копия модуля зон ловится тестом (критерий 5)
+
+Дыра: `if path.name == "zones.py": continue` пропускает файл с таким именем
+**где угодно**. Побайтовая копия `scripts/zones.py` в `hooks/zones.py` набор не
+роняет — а копирование файла и есть самый вероятный способ завести второе
+определение. Волны 2 и 3 производят ровно `hooks/` и `scaffold/`.
+
+**Files:**
+- Modify: `tests/test_zones.py:29-61`
+
+- [ ] **Step 1: Написать падающий тест**
+
+Заменить класс `TestSingleDefinition` целиком на модульную функцию плюс два
+теста. Пропуск идёт по относительному пути, а не по имени файла:
+
+```python
+_NOT_PACKAGE = {".git", "__pycache__", "tests", "fixtures", "docs"}
+
+
+def _offenders(root):
+    """Файлы пакета, держащие свою копию таблицы зон.
+
+    Пропускается ровно канонический `scripts/zones.py`, по относительному
+    пути. Пропуск по имени файла делал невидимой любую копию модуля —
+    единственный способ завести второе определение, который проверка
+    исключала по построению.
+    """
+    root = Path(root)
+    names = set(zones.ZONES)
+    out = []
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(root)
+        if rel.as_posix() == "scripts/zones.py":
+            continue
+        if any(part in _NOT_PACKAGE for part in rel.parts):
+            continue
+        text = path.read_text(encoding="utf-8")
+        hits = {n for n in names if f'"{n}"' in text or f"'{n}'" in text}
+        if len(hits) >= 6:
+            out.append(f"{rel.as_posix()}: {sorted(hits)}")
+    return out
+
+
+class TestSingleDefinition(unittest.TestCase):
+    """Критерий выхода 5: второе определение восьми зон валит тест.
+
+    Эвристика намеренно грубая — файл, перечисляющий шесть и более имён зон
+    строковыми литералами, почти наверняка держит свою копию таблицы.
+    Спека измерила цену обратного: три разошедшиеся таблицы зон в одном
+    репозитории.
+    """
+
+    def test_no_second_zone_table_in_package(self):
+        self.assertEqual(_offenders(ROOT), [],
+                         "второе определение зон — импортируй scripts.zones")
+
+    def test_a_copy_of_zones_py_elsewhere_is_an_offender(self):
+        """Регрессия на критерий 5: копия модуля обязана быть офендером."""
+        source = (ROOT / "scripts" / "zones.py").read_bytes()
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp)
+            (fake / "scripts").mkdir()
+            (fake / "hooks").mkdir()
+            (fake / "scripts" / "zones.py").write_bytes(source)
+            (fake / "hooks" / "zones.py").write_bytes(source)
+            offenders = _offenders(fake)
+        self.assertEqual(len(offenders), 1, offenders)
+        self.assertIn("hooks/zones.py", offenders[0])
+```
+
+Дописать импорт в шапку файла:
+
+```python
+import tempfile
+```
+
+- [ ] **Step 2: Прогнать и убедиться, что падает**
+
+Run: `python3 -m unittest tests.test_zones -v`
+Expected: `test_a_copy_of_zones_py_elsewhere_is_an_offender` FAIL — на старом
+коде `_offenders` ещё не существует, тест падает с `NameError`. Это ожидаемо:
+шаг 1 несёт и тест, и целевую форму кода, поэтому сначала внести **только**
+два теста, оставив старый метод, убедиться, что новый падает, и лишь затем
+внести `_offenders`.
+
+- [ ] **Step 3: Внести `_offenders` и удалить старый метод**
+
+- [ ] **Step 4: Прогнать — должно пройти**
+
+Run: `python3 -m unittest tests.test_zones -v`
+Expected: оба теста PASS
+
+- [ ] **Step 5: Коммит**
+
+```bash
+git add tests/test_zones.py
+git commit -m "wave1: тест единственного определения зон ловит копию файла"
+```
+
+---
+
+### Task 17: Матчеры и типы хуков — закрытое множество (критерий 3)
+
+Дыра: `MATCHERS = re.compile(r"^[A-Za-z*|_]+$")` проверяет **форму**, а не
+принадлежность списку, поэтому опечатка `Bahs` проходит зелёной. Спека, секция
+21: «матчеры — из закрытого множества». Опечатка в матчере и есть та поломка,
+ради которой проверка заводилась: у изученного аналога одна такая строка жила
+три с половиной месяца.
+
+**Files:**
+- Modify: `scripts/check_package.py:28`, `scripts/check_package.py:94`
+- Test: `tests/test_check_package.py`
+
+- [ ] **Step 1: Написать падающий тест**
+
+Дописать в `TestPackageCheck`:
+
+```python
+    def test_matcher_typo_is_caught(self):
+        """Критерий 3: матчер вне закрытого множества обязан валить проверку.
+
+        `Bahs` — опечатка в `Bash`. Проверкой формы она проходила зелёной.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "hooks" / "hooks.json").write_text(
+                json.dumps({"hooks": {"PreToolUse": [
+                    {"matcher": "Bahs", "hooks": []}
+                ]}}), encoding="utf-8")
+            self.assertIn("unknown-matcher", check(root).counts())
+
+    def test_known_matcher_forms_pass(self):
+        for matcher in ("*", "Bash", "Edit|Write"):
+            with self.subTest(matcher=matcher), tempfile.TemporaryDirectory() as tmp:
+                root = _minimal_package(Path(tmp))
+                (root / "hooks" / "hooks.json").write_text(
+                    json.dumps({"hooks": {"PreToolUse": [
+                        {"matcher": matcher, "hooks": []}
+                    ]}}), encoding="utf-8")
+                self.assertNotIn("unknown-matcher", check(root).counts())
+
+    def test_alternation_with_one_bad_member_is_caught(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "hooks" / "hooks.json").write_text(
+                json.dumps({"hooks": {"PreToolUse": [
+                    {"matcher": "Edit|Wrote", "hooks": []}
+                ]}}), encoding="utf-8")
+            self.assertIn("unknown-matcher", check(root).counts())
+```
+
+- [ ] **Step 2: Прогнать и убедиться, что падает**
+
+Run: `python3 -m unittest tests.test_check_package -v`
+Expected: `test_matcher_typo_is_caught` и
+`test_alternation_with_one_bad_member_is_caught` FAIL — `Bahs` и `Edit|Wrote`
+проходят форму `^[A-Za-z*|_]+$`
+
+- [ ] **Step 3: Реализация**
+
+Заменить строку 28 `scripts/check_package.py`:
+
+```python
+# Матчер хука — имя инструмента, `*` или альтернатива через `|`. Закрытое
+# множество, а не форма: `^[A-Za-z*|_]+$` принимал любое слово, поэтому
+# опечатка `Bahs` проходила зелёной — ровно та поломка, ради которой
+# проверка и заводилась. Новый инструмент добавляется правкой этого списка;
+# в этом и смысл закрытого множества.
+TOOL_NAMES = frozenset({
+    "Bash", "Edit", "Glob", "Grep", "NotebookEdit", "Read", "Task",
+    "TodoWrite", "WebFetch", "WebSearch", "Write",
+})
+
+
+def matcher_is_known(matcher):
+    matcher = str(matcher)
+    if matcher == "*":
+        return True
+    parts = matcher.split("|")
+    return all(part in TOOL_NAMES for part in parts)
+```
+
+Заменить проверку в `check()` (строка 94):
+
+```python
+                    if not matcher_is_known(matcher):
+```
+
+- [ ] **Step 4: Прогнать — должно пройти**
+
+Run: `./check`
+Expected: все тесты PASS, проверка пакета молчит, код возврата 0
+
+- [ ] **Step 5: Коммит**
+
+```bash
+git add scripts/check_package.py tests/test_check_package.py
+git commit -m "wave1: матчеры из закрытого множества, а не по форме регулярки"
+```
+
+---
+
+### Task 18: Абсолютный путь — все формы, не пять префиксов (критерий 3)
+
+Дыра: `_ABSOLUTE_PREFIXES` знает пять префиксов, поэтому `/tmp/`, `/var/`,
+`/usr/local/`, `/Volumes/`, `C:\` и UNC проходят. Критерий говорит «any
+absolute path **anywhere** in the package».
+
+Читается это как «путь, начинающийся с настоящего корня файловой системы», а не
+«любой токен со слэшем»: широкая форма даёт ложные срабатывания на маршрутах
+API и слэш-командах — та самая поломка, из-за которой периметр уже откатывали
+(DEC-0003, теперь в `CLAUDE.md`).
+
+**Files:**
+- Modify: `scripts/check_package.py:34-37`
+- Test: `tests/test_check_package.py`
+
+- [ ] **Step 1: Написать падающий тест**
+
+```python
+    def test_every_absolute_form_is_caught(self):
+        """Критерий 3: пять префиксов оставляли зелёными шесть форм."""
+        forms = [
+            "/Users/artem/x.py", "/home/artem/x.py", "/tmp/scratch/x.py",
+            "/var/log/x.txt", "/usr/local/bin/tool", "/Volumes/disk/x.md",
+            "/private/tmp/x.py", "~/notes/x.md", "C:\\Users\\artem\\x.py",
+            "D:/data/x.py", "\\\\server\\share\\x.py",
+        ]
+        for form in forms:
+            with self.subTest(form=form):
+                self.assertIsNotNone(
+                    check_package.ABSOLUTE.search("Зовёт %s отсюда" % form), form)
+
+    def test_relative_and_route_like_tokens_are_not_absolute(self):
+        """Ложные срабатывания, ради которых периметр уже откатывали."""
+        for token in ("scripts/x.py", "../core/me.md", "/backlinks/:path",
+                      "/baton:auto 1", "http://example.com/x"):
+            with self.subTest(token=token):
+                self.assertIsNone(check_package.ABSOLUTE.search(token), token)
+```
+
+Дописать импорт в шапку `tests/test_check_package.py`:
+
+```python
+from scripts import check_package
+```
+
+- [ ] **Step 2: Прогнать и убедиться, что падает**
+
+Run: `python3 -m unittest tests.test_check_package -v`
+Expected: `test_every_absolute_form_is_caught` FAIL на первой же форме `/tmp/`
+
+- [ ] **Step 3: Реализация**
+
+Заменить строки 34–37 `scripts/check_package.py`:
+
+```python
+_ABSOLUTE_PREFIXES = (
+    "/" + "Users/", "/" + "home/", "/" + "root/", "/" + "opt/", "/" + "etc/",
+    "/" + "tmp/", "/" + "var/", "/" + "usr/", "/" + "srv/", "/" + "mnt/",
+    "/" + "media/", "/" + "private/", "/" + "Volumes/", "/" + "Applications/",
+    "/" + "Library/", "/" + "System/", "~" + "/",
+)
+ABSOLUTE = re.compile(
+    "(?<![\\w.])(?:%s)" % "|".join(re.escape(p) for p in _ABSOLUTE_PREFIXES)
+    # C:\ и C:/ — буква диска. Однобуквенность и отсутствие слова слева
+    # разводят её с `http://`, где перед двоеточием стоит `p`.
+    + r"|(?<![\w.])[A-Za-z]:[\\/]"
+    # UNC \\сервер\ресурс
+    + r"|(?<![\w.])\\\\[A-Za-z0-9._-]+\\"
+)
+```
+
+- [ ] **Step 4: Прогнать — должно пройти**
+
+Run: `./check`
+Expected: все тесты PASS, проверка пакета молчит, код возврата 0
+
+- [ ] **Step 5: Коммит**
+
+```bash
+git add scripts/check_package.py tests/test_check_package.py
+git commit -m "wave1: абсолютный путь — все формы корня, включая Windows и UNC"
+```
+
+---
+
+### Task 19: Периметр проверки пакета — всё, что читается текстом (критерий 3)
+
+Две дыры сразу. Первая: `SKIP_DIRS` исключает **все восемь имён зон**, поэтому
+любой каталог пакета, чьё имя совпало с зоной, уходит из скана целиком. Вторая:
+фильтр по расширению не читает файлы без расширения, `.yaml`, `.toml` и
+`Makefile` — ровно те места, где абсолютный путь и живёт.
+
+Исключать нужно ровно два зональных каталога, и по названной причине: этот
+репозиторий удваивается под контекст-репозиторий собственной разработки, и
+абсолютный путь в чужой цитате внутри `sources/` — не находка проверки пакета.
+
+**Files:**
+- Modify: `scripts/check_package.py:49`, `scripts/check_package.py:59-72`
+- Test: `tests/test_check_package.py`
+
+- [ ] **Step 1: Написать падающий тест**
+
+```python
+    def test_extensionless_and_yaml_files_are_scanned(self):
+        """Критерий 3: фильтр по расширению уводил из-под скана целые форматы."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "Makefile").write_text(
+                "run:\n\tpython3 /Users/artem/x.py\n", encoding="utf-8")
+            self.assertIn("absolute-path", check(root).counts())
+
+    def test_a_package_dir_named_like_a_zone_is_still_scanned(self):
+        """Восемь имён зон в SKIP_DIRS снимали со скана целые поддеревья."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            core = root / "core"
+            core.mkdir()
+            (core / "notes.md").write_text("Смотри /Users/artem/x.md\n", encoding="utf-8")
+            self.assertIn("absolute-path", check(root).counts())
+
+    def test_binary_files_do_not_break_the_scan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n\xff\xfe")
+            self.assertEqual(check(root).counts(), {})
+```
+
+- [ ] **Step 2: Прогнать и убедиться, что падает**
+
+Run: `python3 -m unittest tests.test_check_package -v`
+Expected: `test_extensionless_and_yaml_files_are_scanned` и
+`test_a_package_dir_named_like_a_zone_is_still_scanned` FAIL
+
+- [ ] **Step 3: Реализация**
+
+Заменить строку 49 и функцию `_iter_package_files`:
+
+```python
+# Каталоги, не входящие в пакет (dev-инструменты секции 21). `inbox/` и
+# `sources/` — материалы собственной разработки: этот репозиторий удваивается
+# под контекст-репозиторий своей же разработки, и абсолютный путь в чужой
+# цитате внутри них не находка проверки пакета. Остальные шесть имён зон
+# отсюда убраны: раньше исключались все восемь, и любой каталог пакета, чьё
+# имя совпало с зоной, уходил из скана целиком.
+SKIP_DIRS = {".git", ".claude", "fixtures", "tests", "docs", "__pycache__",
+             "inbox", "sources"}
+
+
+def _iter_package_files(root):
+    """Все файлы пакета, которые читаются как текст.
+
+    Формат определяется тем, декодируется ли файл в UTF-8, а не расширением:
+    фильтр по списку расширений уводил из-под проверки файлы без расширения,
+    `.yaml`, `.toml` и `Makefile`. Бинарные отсеиваются на чтении, в `check()`.
+
+    Проверяется только первый сегмент, как в `zones.zone_of()`: проверка по
+    любому сегменту на любой глубине снимала со скана `skills/inbox/` — скилл,
+    чьё имя совпало с зоной.
+    """
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        if path.relative_to(root).parts[0] in SKIP_DIRS:
+            continue
+        yield path
+```
+
+Импорт `zones` в `check_package.py` после этого остаётся нужен только если его
+использует что-то ещё — проверить `grep -n "zones\." scripts/check_package.py`
+и удалить строку `from scripts import zones`, если других вхождений нет.
+
+- [ ] **Step 4: Прогнать — должно пройти**
+
+Run: `./check`
+Expected: все тесты PASS, проверка пакета молчит, код возврата 0
+
+Если проверка пакета покраснела на собственном репозитории — прочитать
+находки. Это не повод расширять `SKIP_DIRS`: расширение периметра обратно
+уже откатывали однажды (`CLAUDE.md`, «не переоткрывать»).
+
+- [ ] **Step 5: Коммит**
+
+```bash
+git add scripts/check_package.py tests/test_check_package.py
+git commit -m "wave1: периметр проверки пакета — все текстовые файлы, зоны только две"
+```
+
+---
+
+### Task 20: Таблица покрытия ссылается на существующий тест (критерий 4)
+
+Критерий держит только половину: пустая клетка валит набор, а клетка,
+называющая несуществующий тест, проходит — и удаление теста при живой строке
+таблицы проходит тоже. Таблица не умеет отличить настоящий тест от выдуманного
+имени.
+
+Лечится формой: третий столбец несёт машинно-проверяемую ссылку
+`` `tests/файл.py::Класс::тест` `` либо явное `нет проверки: причина`.
+
+**Files:**
+- Modify: `tests/test_gate_coverage.py` (целиком), `docs/gate-coverage.md`
+  (таблица)
+
+- [ ] **Step 1: Написать падающий тест**
+
+Заменить `tests/test_gate_coverage.py` целиком:
+
+```python
+import re
+import unittest
+from pathlib import Path
+
+from scripts.findings import FRONTMATTER_CLASSES, LINK_CLASSES, PACKAGE_CLASSES
+
+ROOT = Path(__file__).resolve().parent.parent
+COVERAGE = ROOT / "docs" / "gate-coverage.md"
+
+CITATION = re.compile(r"`(tests/[A-Za-z0-9_./]+\.py)((?:::[A-Za-z0-9_]+)+)`")
+NO_TEST = "нет проверки:"
+
+
+def _rows(text):
+    for line in text.split("\n"):
+        if line.startswith("| `"):
+            yield line, [c.strip() for c in line.strip("|").split("|")]
+
+
+def _problems(text, root):
+    """Строки таблицы, которые ничего не доказывают.
+
+    Три формы негодности: не три столбца, пустая клетка, ссылка на тест,
+    которого нет. Последняя — та, из-за которой критерий 4 держался
+    наполовину: выдуманное имя теста и удаление настоящего проходили зелёными.
+    """
+    out = []
+    for line, cells in _rows(text):
+        if len(cells) != 3 or not all(cells):
+            out.append("не три непустых столбца: %s" % line)
+            continue
+        citation = cells[2]
+        if citation.startswith(NO_TEST):
+            if not citation[len(NO_TEST):].strip():
+                out.append("пустая причина отсутствия проверки: %s" % line)
+            continue
+        match = CITATION.fullmatch(citation)
+        if match is None:
+            out.append("ссылка не в форме `tests/файл.py::Класс::тест`: %s" % line)
+            continue
+        path = Path(root) / match.group(1)
+        if not path.exists():
+            out.append("нет файла %s: %s" % (match.group(1), line))
+            continue
+        source = path.read_text(encoding="utf-8")
+        for symbol in [s for s in match.group(2).split("::") if s]:
+            if symbol not in source:
+                out.append("в %s нет %s: %s" % (match.group(1), symbol, line))
+    return out
+
+
+class TestEveryClassIsProven(unittest.TestCase):
+    """У каждого класса либо исполняемая проверка, либо записанная причина.
+
+    Пустым оставить нельзя — это и есть механизм под «эффективность,
+    а не маскарад»: нельзя молча сделать вид, что покрыто.
+    """
+
+    def test_coverage_table_lists_every_class(self):
+        table = COVERAGE.read_text(encoding="utf-8")
+        for cls in LINK_CLASSES + FRONTMATTER_CLASSES + PACKAGE_CLASSES:
+            self.assertIn("`%s`" % cls, table, "класс %s не объяснён" % cls)
+
+    def test_the_real_table_is_sound(self):
+        self.assertEqual(_problems(COVERAGE.read_text(encoding="utf-8"), ROOT), [])
+
+
+class TestTheTableCannotLie(unittest.TestCase):
+    """Регрессия на критерий 4: таблица обязана отличать тест от имени."""
+
+    _GOOD = ("| `orphan` | битая фикстура, 1 находка | "
+             "`tests/test_fixtures.py::TestExactFindings::"
+             "test_every_link_finding_sits_on_its_own_specimen` |")
+
+    def test_a_sound_row_has_no_problems(self):
+        self.assertEqual(_problems(self._GOOD, ROOT), [])
+
+    def test_a_fabricated_test_name_is_caught(self):
+        row = self._GOOD.replace("test_every_link_finding_sits_on_its_own_specimen",
+                                 "test_this_never_existed")
+        self.assertEqual(len(_problems(row, ROOT)), 1)
+
+    def test_a_missing_test_file_is_caught(self):
+        row = self._GOOD.replace("test_fixtures.py", "test_deleted.py")
+        self.assertEqual(len(_problems(row, ROOT)), 1)
+
+    def test_prose_instead_of_a_citation_is_caught(self):
+        row = "| `orphan` | битая фикстура, 1 находка | покрыто тестами |"
+        self.assertEqual(len(_problems(row, ROOT)), 1)
+
+    def test_omitted_and_empty_cells_are_caught(self):
+        self.assertEqual(len(_problems("| `orphan` |", ROOT)), 1)
+        self.assertEqual(len(_problems("| `orphan` |  |  |", ROOT)), 1)
+
+    def test_an_empty_reason_for_having_no_test_is_caught(self):
+        row = "| `orphan` | нечем | нет проверки:  |"
+        self.assertEqual(len(_problems(row, ROOT)), 1)
+
+    def test_a_named_reason_for_having_no_test_passes(self):
+        row = "| `orphan` | нечем | нет проверки: класс появится в волне 4 |"
+        self.assertEqual(_problems(row, ROOT), [])
+```
+
+- [ ] **Step 2: Прогнать и убедиться, что падает**
+
+Run: `python3 -m unittest tests.test_gate_coverage -v`
+Expected: `test_the_real_table_is_sound` FAIL — таблица сейчас о двух столбцах
+
+- [ ] **Step 3: Переписать таблицу**
+
+Заменить таблицу в `docs/gate-coverage.md` на три столбца:
+
+```markdown
+| класс | чем доказан | тест |
+|---|---|---|
+| `unresolved` | битая фикстура, 4 находки | `tests/test_fixtures.py::TestExactFindings::test_every_link_finding_sits_on_its_own_specimen` |
+| `md-link-to-file` | битая фикстура, 1 находка | `tests/test_fixtures.py::TestExactFindings::test_every_link_finding_sits_on_its_own_specimen` |
+| `link-to-transient` | битая фикстура, 1 находка | `tests/test_fixtures.py::TestExactFindings::test_every_link_finding_sits_on_its_own_specimen` |
+| `escapes-root` | битая фикстура, 2 находки: абсолютный путь и `..` выше корня | `tests/test_fixtures.py::TestExactFindings::test_every_link_finding_sits_on_its_own_specimen` |
+| `dead-allow` | битая фикстура, 2 находки: строка без причины и мёртвая строка | `tests/test_fixtures.py::TestExactFindings::test_every_link_finding_sits_on_its_own_specimen` |
+| `ambiguous` | битая фикстура, 1 находка при двух `dup.md` | `tests/test_fixtures.py::TestExactFindings::test_every_link_finding_sits_on_its_own_specimen` |
+| `orphan` | битая фикстура, 1 находка в `sources` | `tests/test_fixtures.py::TestExactFindings::test_every_link_finding_sits_on_its_own_specimen` |
+| `missing-required` | битая фикстура, запись без `status` при `groupBy: status` | `tests/test_fixtures.py::TestExactFindings::test_every_frontmatter_finding_sits_on_its_own_specimen` |
+| `value-outside-vocabulary` | битая фикстура, `status: активно` вне словаря | `tests/test_fixtures.py::TestExactFindings::test_every_frontmatter_finding_sits_on_its_own_specimen` |
+| `unparseable` | битая фикстура, блочный скаляр в поле с потребителем | `tests/test_fixtures.py::TestExactFindings::test_every_frontmatter_finding_sits_on_its_own_specimen` |
+| `unknown-hook-event` | временный пакет с `OnFullMoon` | `tests/test_check_package.py::TestPackageCheck::test_unknown_hook_event_fails` |
+| `unknown-hook-type` | тип вне закрытого списка | `tests/test_check_package.py::TestPackageCheck::test_unknown_hook_type_fails` |
+| `unknown-matcher` | матчер вне закрытого множества, включая опечатку `Bahs` | `tests/test_check_package.py::TestPackageCheck::test_matcher_typo_is_caught` |
+| `absolute-path` | одиннадцать форм абсолютного пути, включая Windows и UNC | `tests/test_check_package.py::TestPackageCheck::test_every_absolute_form_is_caught` |
+| `relative-path-in-skill` | вызов `scripts/*` без `${CLAUDE_PLUGIN_ROOT}` | `tests/test_check_package.py::TestPackageCheck::test_relative_script_call_in_a_skill_fails` |
+| `destructive-example` | пример `mv` в инструкциях ADOPT | `tests/test_check_package.py::TestPackageCheck::test_destructive_example_in_adopt_instructions_fails` |
+| `gate-not-read-only` | хеш дерева фикстуры до и после прогона гейта | `tests/test_check_package.py::TestGateNotReadOnlyMechanism::test_mutating_gate_is_caught` |
+| `tests-touched-product` | тот же приём вокруг прогона тестов | `tests/test_check_package.py::TestTestsTouchedProductMechanism::test_test_run_that_writes_to_scripts_is_caught` |
+| `skill-without-description` | SKILL.md без описания | `tests/test_check_package.py::TestPackageCheck::test_skill_without_description_fails` |
+| `skill-without-eval` | скилл без `eval.txt` | `tests/test_check_package.py::TestPackageCheck::test_skill_without_trigger_eval_fails` |
+| `skill-name-mismatch` | имя не совпало с папкой | `tests/test_check_package.py::TestPackageCheck::test_skill_name_must_match_directory` |
+```
+
+- [ ] **Step 4: Прогнать — должно пройти**
+
+Run: `./check`
+Expected: все тесты PASS, проверка пакета молчит, код возврата 0
+
+- [ ] **Step 5: Коммит**
+
+```bash
+git add docs/gate-coverage.md tests/test_gate_coverage.py
+git commit -m "wave1: таблица покрытия ссылается на существующий тест, а не на имя"
+```
+
+---
+
+### Task 21: Точный список сравнивает деталь находки (критерий 1)
+
+Дыра: `places()` выбрасывает `detail`, поэтому находки с одинаковыми (путь,
+строка, класс) взаимозаменяемы. Показательный случай — `dead-allow`: строка
+аллоулиста без причины подпадает и под правило «нет причины», и под правило
+«ничего не исключает». Удалить первое правило — набор не покраснеет, потому что
+второе даст находку в том же месте того же класса. Различает их только текст.
+
+**Files:**
+- Modify: `tests/test_fixtures.py:60-63`, `tests/test_fixtures.py:81-117`
+
+- [ ] **Step 1: Написать падающий тест**
+
+Заменить `places()` и оба списка. Значения деталей — настоящие, снятые с гейта:
+
+```python
+def places(report):
+    """Находки как (путь, строка, класс, деталь) в порядке отчёта.
+
+    Деталь входит в ключ намеренно: без неё находки с одинаковыми путём,
+    строкой и классом взаимозаменяемы, и подмена одного правила другим
+    набор не роняет.
+    """
+    return [(f.path, f.line, f.cls, f.detail)
+            for f in sorted(report.findings, key=Finding.key)]
+```
+
+```python
+    def test_every_link_finding_sits_on_its_own_specimen(self):
+        """Счётчик не различает «нашёл то» и «нашёл столько же не того»."""
+        self.assertEqual(
+            places(check_links.scan(BROKEN)),
+            [
+                (".claude/rules/areas.md", 5, "unresolved", "`areas/hiring/items/`"),
+                (".claude/rules/areas.md", 5, "unresolved", "`scripts/rename.py`"),
+                (".link-allow", 2, "dead-allow", "строка без причины: будущая-заметка"),
+                (".link-allow", 3, "dead-allow",
+                 "правило ничего не исключает, удалите: уже-не-нужное"),
+                ("CLAUDE.md", 3, "unresolved", "`scripts/move.py`"),
+                ("CLAUDE.md", 4, "escapes-root", "`/Users/artem/notes.md`"),
+                ("areas/hiring/bare.md", 4, "ambiguous",
+                 "[[dup]] → areas/hiring/dup.md, core/dup.md"),
+                ("areas/hiring/escapes.md", 4, "escapes-root",
+                 "[[../../../soseddniy-repo/file]]"),
+                ("areas/hiring/md-link.md", 4, "md-link-to-file",
+                 "[профиль](../../core/me.md)"),
+                ("areas/hiring/note.md", 4, "unresolved", "[[несуществующая заметка]]"),
+                ("areas/hiring/transient.md", 4, "link-to-transient", "[[tmp/plan]]"),
+                ("sources/transcripts/items/2026-07-14-call.md", 1, "orphan",
+                 "на файл никто не сослался"),
+            ],
+        )
+```
+
+```python
+    def test_every_frontmatter_finding_sits_on_its_own_specimen(self):
+        self.assertEqual(
+            places(check_frontmatter.scan(BROKEN)),
+            [
+                ("decisions/items/bad-status.md", 1, "missing-required",
+                 "стартовый набор: поле created"),
+                ("decisions/items/bad-status.md", 1, "value-outside-vocabulary",
+                 "status='активно' вне словаря ['open', 'decided', 'revisited']"),
+                ("decisions/items/broken-yaml.md", 4, "unparseable",
+                 "блочный скаляр не поддерживается (строка 4)"),
+                ("decisions/items/no-status.md", 1, "missing-required",
+                 "поле status читает вид"),
+                ("decisions/items/no-status.md", 1, "missing-required",
+                 "стартовый набор: поле created"),
+            ],
+        )
+```
+
+- [ ] **Step 2: Проверить, что дыра закрылась**
+
+Тест обязан покраснеть на посаженной мутации, а не только пройти на целом
+коде. Проверка — во временной копии, рабочее дерево не трогать:
+
+```bash
+python3 - <<'PY'
+import re, shutil, subprocess, sys, tempfile
+from pathlib import Path
+root = Path(".").resolve()
+with tempfile.TemporaryDirectory() as tmp:
+    copy = Path(tmp) / "repo"
+    shutil.copytree(root, copy, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+    gate = copy / "scripts" / "check_links.py"
+    text = gate.read_text(encoding="utf-8")
+    mutated = text.replace("строка без причины: ", "правило ничего не исключает, удалите: ")
+    assert mutated != text, "мутация не применилась — проверь строку в check_links.py"
+    gate.write_text(mutated, encoding="utf-8")
+    result = subprocess.run([sys.executable, "-m", "unittest",
+                             "tests.test_fixtures", "-q"],
+                            cwd=copy, capture_output=True, text=True)
+    print("код возврата:", result.returncode)
+    sys.exit(0 if result.returncode != 0 else 1)
+PY
+```
+
+Expected: код возврата 1 у `unittest` (то есть набор покраснел), скрипт выходит
+с 0. До правки `places()` набор оставался зелёным — это и была дыра.
+
+- [ ] **Step 3: Прогнать на целом коде**
+
+Run: `./check`
+Expected: все тесты PASS, код возврата 0
+
+- [ ] **Step 4: Коммит**
+
+```bash
+git add tests/test_fixtures.py
+git commit -m "wave1: точный список сравнивает деталь, а не только место и класс"
+```
+
+---
+
+### Task 22: Образец, отличающий резолв по пути от резолва по basename (критерий 1)
+
+Дыра: подмена `ambiguous` на совпадение basename — прямо запрещённая спекой,
+строка 1613, «ссылка реально резолвится в два и более кандидата, не сам факт
+совпадения имён» — набор не роняет. Разводит эти два поведения образец, которого
+в фикстуре нет: ссылка **с путём**, чей basename существует в другом месте.
+Правило резолва спеки: есть `/` — только полный путь от корня, без отката
+на basename.
+
+**Files:**
+- Create: `fixtures/broken/areas/hiring/pathlink.md`
+- Modify: `tests/test_fixtures.py` (счётчик и список из Task 21, шапка-таблица)
+
+- [ ] **Step 1: Положить образец**
+
+```bash
+cat > fixtures/broken/areas/hiring/pathlink.md <<'MD'
+# Ссылка полным путём
+
+Резолв по пути, без отката на basename: `projects/dup.md` не существует,
+хотя `dup.md` есть в двух других местах.
+
+Смотри [[projects/dup]].
+MD
+```
+
+- [ ] **Step 2: Дописать падающий тест**
+
+В `test_link_gate_finds_exactly_this` поднять `unresolved` с 4 до 5. В
+`test_every_link_finding_sits_on_its_own_specimen` добавить строку — она
+встаёт между `areas/hiring/note.md` и `areas/hiring/transient.md` по
+сортировке ключа:
+
+```python
+                ("areas/hiring/pathlink.md", 6, "unresolved", "[[projects/dup]]"),
+```
+
+Дописать в таблицу образцов в докстринге файла:
+
+```
+| `unresolved` 5 | ...прежние четыре; `[[projects/dup]]` в `areas/hiring/pathlink.md` — путь не существует, откат на basename запрещён |
+```
+
+- [ ] **Step 3: Прогнать и сверить номер строки**
+
+Run: `python3 -m unittest tests.test_fixtures -v`
+Expected: FAIL с diff, показывающим настоящий номер строки находки. Если он
+не 6 — поправить ожидание в тесте под фактическую строку файла, а не двигать
+образец.
+
+- [ ] **Step 4: Проверить, что дыра закрылась**
+
+```bash
+python3 - <<'PY'
+import shutil, subprocess, sys, tempfile
+from pathlib import Path
+root = Path(".").resolve()
+with tempfile.TemporaryDirectory() as tmp:
+    copy = Path(tmp) / "repo"
+    shutil.copytree(root, copy, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+    result = subprocess.run([sys.executable, "-c",
+        "import sys; sys.path.insert(0,'.');"
+        "from scripts import check_links;"
+        "print(check_links.scan('fixtures/broken').counts())"],
+        cwd=copy, capture_output=True, text=True)
+    print(result.stdout, result.stderr)
+PY
+```
+
+Expected: `unresolved` равен 5. Резолв по basename дал бы 4 и лишний
+`ambiguous` — то есть другой счёт, и тест бы покраснел.
+
+- [ ] **Step 5: Прогнать целиком**
+
+Run: `./check`
+Expected: все тесты PASS, код возврата 0
+
+- [ ] **Step 6: Коммит**
+
+```bash
+git add fixtures/broken/areas/hiring/pathlink.md tests/test_fixtures.py
+git commit -m "wave1: образец разводит резолв по пути и откат на basename"
+```
+
+---
+
+### Task 23: `--today` перестаёт быть молчаливой заглушкой (критерий 2)
+
+Критерий 2 выполнен — отчёты побайтово детерминированы, — но с оговоркой:
+`--today` разбирается и передаётся в `scan()`, где нигде не читается. Сегодня
+это безвредно только потому, что в волне 1 нет правил, зависящих от даты.
+Параметр, который принимают и молча игнорируют, — ровно то, что запрещает
+незыблемое №4.
+
+Механизм из спеки не снимается (это была бы эскалация автору). Вместо этого
+он становится наблюдаемым, а настоящая гарантия детерминизма — часов в
+`scripts/` нет — выражается исполняемой проверкой.
+
+**Files:**
+- Modify: `scripts/check_links.py:214`, `scripts/check_frontmatter.py:41`
+- Test: `tests/test_fixtures.py`
+
+- [ ] **Step 1: Написать падающий тест**
+
+Дописать в `TestDeterminism`:
+
+```python
+    def test_no_module_in_scripts_reads_the_clock(self):
+        """Настоящая гарантия детерминизма: часов в гейтах нет вовсе.
+
+        `--today` существует ради правил, зависящих от даты (волна 5). Пока
+        таких правил нет, единственное, что делает отчёт воспроизводимым, —
+        отсутствие обращений к часам.
+        """
+        offenders = []
+        for path in sorted((ROOT / "scripts").glob("*.py")):
+            text = path.read_text(encoding="utf-8")
+            for marker in ("import datetime", "import time", "datetime.now",
+                           "date.today", "time.time"):
+                if marker in text:
+                    offenders.append("%s: %s" % (path.name, marker))
+        self.assertEqual(offenders, [])
+
+    def test_today_is_carried_on_the_report(self):
+        """Принятый параметр обязан быть наблюдаем, а не проглочен молча."""
+        self.assertEqual(check_links.scan(BROKEN, today="2026-01-01").today,
+                         "2026-01-01")
+        self.assertIsNone(check_links.scan(BROKEN).today)
+        self.assertEqual(check_frontmatter.scan(BROKEN, today="2026-01-01").today,
+                         "2026-01-01")
+```
+
+- [ ] **Step 2: Прогнать и убедиться, что падает**
+
+Run: `python3 -m unittest tests.test_fixtures -v`
+Expected: `test_today_is_carried_on_the_report` FAIL — у `Report` нет
+атрибута `today`
+
+- [ ] **Step 3: Реализация**
+
+В `scripts/findings.py` — `Report` принимает дату и держит её:
+
+```python
+class Report:
+    def __init__(self, findings, today=None):
+        self.findings = list(findings)
+        # Дата прогона, если её передали. Правил, зависящих от даты, в волне 1
+        # нет; параметр несётся явно, чтобы принятое значение было наблюдаемо,
+        # а не проглочено молча (незыблемое №4).
+        self.today = today
+```
+
+В `scripts/check_links.py`, конец `scan()` — заменить возврат отчёта на
+`return Report(findings, today=today)`. То же в `scripts/check_frontmatter.py`.
+
+- [ ] **Step 4: Прогнать — должно пройти**
+
+Run: `./check`
+Expected: все тесты PASS, проверка пакета молчит, код возврата 0
+
+- [ ] **Step 5: Коммит**
+
+```bash
+git add scripts/findings.py scripts/check_links.py scripts/check_frontmatter.py tests/test_fixtures.py
+git commit -m "wave1: --today наблюдаем, отсутствие часов в гейтах доказано тестом"
+```
+
+---
+
 ## Закрытие волны
 
-Критерии выхода из конституции проверяются так:
+Критерии выхода (`docs/roadmap.md`, «Волна 1») проверяются так:
 
-| критерий | чем |
-|---|---|
-| точный список находок по классу и числу | `tests/test_fixtures.py::TestExactFindings` |
-| побайтовая одинаковость независимо от места чекаута | `TestDeterminism::test_report_is_identical_from_another_checkout_location` |
-| дата явным параметром | флаг `--today` у обоих гейтов |
-| проверка пакета валит на закрытых списках, абсолютных путях, скиллах без описания и eval | `tests/test_check_package.py` |
-| у каждого гейта проверка или записанная причина | `tests/test_gate_coverage.py` |
-| зоны определены ровно один раз | `tests/test_zones.py::TestSingleDefinition` |
+| критерий | чем | закрыт задачей |
+|---|---|---|
+| точный список находок по классу, числу и **детали** | `tests/test_fixtures.py::TestExactFindings` | 21, 22 |
+| побайтовая одинаковость независимо от места чекаута | `TestDeterminism::test_report_is_identical_from_another_checkout_location` | — |
+| дата явным параметром, часов в гейтах нет | `TestDeterminism::test_no_module_in_scripts_reads_the_clock` | 23 |
+| проверка пакета валит на закрытых списках, абсолютных путях, скиллах без описания и eval | `tests/test_check_package.py` | 17, 18, 19 |
+| у каждого гейта проверка или записанная причина, и причина проверяема | `tests/test_gate_coverage.py` | 20 |
+| зоны определены ровно один раз, включая копию файла | `tests/test_zones.py::TestSingleDefinition` | 16 |
 
-После зелёного `./check` — обновить `docs/baton/state.md` через `baton-write`: волна 1 в `done`, `closed_at_sha` из `git rev-parse HEAD`, волны 2 и 3 в `todo` и разблокированы.
+Волна закрывается не зелёным `./check`, а зелёным `./check` **плюс** проверкой,
+что посаженное нарушение его роняет. Шаги «проверить, что дыра закрылась» в
+задачах 21 и 22 — образец такой проверки; повторить её для остальных задач
+перед закрытием. Дальше — `superpowers:requesting-code-review`, затем
+`superpowers:finishing-a-development-branch`, затем волны 2 и 3 (они
+параллельны) по `docs/roadmap.md`.
 
-**Что волна 1 отдаёт волнам 2 и 3** (контракт из конституции): `scripts/zones.py` — восемь зон, префиксы, права записи, `DENY_PATTERNS`; `scripts/findings.py` — имена классов, `EXIT_OK`, `EXIT_VIOLATION`, `EXIT_TOOL_FAILED`; `scripts/paths.py` — признак пути и `escapes_root`; CLI обоих гейтов: `python3 scripts/check_links.py <корень> [--today ГГГГ-ММ-ДД]`, код 2 при нарушении.
+**Что волна 1 отдаёт волнам 2 и 3:** `scripts/zones.py` — восемь зон, префиксы, права записи, `DENY_PATTERNS`; `scripts/findings.py` — имена классов, `EXIT_OK`, `EXIT_VIOLATION`, `EXIT_TOOL_FAILED`; `scripts/paths.py` — признак пути и `escapes_root`; CLI обоих гейтов: `python3 scripts/check_links.py <корень> [--today ГГГГ-ММ-ДД]`, код 2 при нарушении.
