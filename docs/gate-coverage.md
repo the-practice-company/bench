@@ -4,26 +4,26 @@
 либо обязательное поле с объяснением, почему её нет. Пустым оставить нельзя.
 Таблицу держит `tests/test_gate_coverage.py`.
 
-| класс | чем доказан |
-|---|---|
-| `unresolved` | битая фикстура, 4 находки, `tests/test_fixtures.py` |
-| `md-link-to-file` | битая фикстура, 1 находка |
-| `link-to-transient` | битая фикстура, 1 находка |
-| `escapes-root` | битая фикстура, 2 находки: абсолютный путь и `..` выше корня |
-| `dead-allow` | битая фикстура, 2 находки: строка без причины и мёртвая строка |
-| `ambiguous` | битая фикстура, 1 находка при двух `dup.md` |
-| `orphan` | битая фикстура, 1 находка в `sources` |
-| `missing-required` | битая фикстура, запись без `status` при `groupBy: status` |
-| `value-outside-vocabulary` | битая фикстура, `status: активно` вне словаря |
-| `unparseable` | битая фикстура, блочный скаляр в поле с потребителем |
-| `unknown-hook-event` | `tests/test_check_package.py`, временный пакет с `OnFullMoon` |
-| `unknown-hook-type` | `tests/test_check_package.py`, тип вне закрытого списка |
-| `unknown-matcher` | `tests/test_check_package.py`, матчер вне закрытого множества |
-| `absolute-path` | `tests/test_check_package.py`, `/Users/` в прозе скилла |
-| `relative-path-in-skill` | `tests/test_check_package.py`, вызов `scripts/*` без `${CLAUDE_PLUGIN_ROOT}` |
-| `destructive-example` | `tests/test_check_package.py`, пример `mv` в инструкциях ADOPT |
-| `gate-not-read-only` | `tests/test_check_package.py::TestGateNotReadOnlyMechanism`, гейт-подделка пишет в копию фикстуры |
-| `tests-touched-product` | `tests/test_check_package.py::TestTestsTouchedProductMechanism`, прогон тестов пишет в `scripts/marker.py` |
-| `skill-without-description` | `tests/test_check_package.py`, SKILL.md без описания |
-| `skill-without-eval` | `tests/test_check_package.py`, скилл без `eval.txt` |
-| `skill-name-mismatch` | `tests/test_check_package.py`, имя не совпало с папкой |
+| класс | чем доказан | тест |
+|---|---|---|
+| `unresolved` | битая фикстура, 4 находки | `tests/test_fixtures.py::TestExactFindings::test_every_link_finding_sits_on_its_own_specimen` |
+| `md-link-to-file` | битая фикстура, 1 находка | `tests/test_fixtures.py::TestExactFindings::test_every_link_finding_sits_on_its_own_specimen` |
+| `link-to-transient` | битая фикстура, 1 находка | `tests/test_fixtures.py::TestExactFindings::test_every_link_finding_sits_on_its_own_specimen` |
+| `escapes-root` | битая фикстура, 2 находки: абсолютный путь и `..` выше корня | `tests/test_fixtures.py::TestExactFindings::test_every_link_finding_sits_on_its_own_specimen` |
+| `dead-allow` | битая фикстура, 2 находки: строка без причины и мёртвая строка | `tests/test_fixtures.py::TestExactFindings::test_every_link_finding_sits_on_its_own_specimen` |
+| `ambiguous` | битая фикстура, 1 находка при двух `dup.md` | `tests/test_fixtures.py::TestExactFindings::test_every_link_finding_sits_on_its_own_specimen` |
+| `orphan` | битая фикстура, 1 находка в `sources` | `tests/test_fixtures.py::TestExactFindings::test_every_link_finding_sits_on_its_own_specimen` |
+| `missing-required` | битая фикстура, запись без `status` при `groupBy: status` | `tests/test_fixtures.py::TestExactFindings::test_every_frontmatter_finding_sits_on_its_own_specimen` |
+| `value-outside-vocabulary` | битая фикстура, `status: активно` вне словаря | `tests/test_fixtures.py::TestExactFindings::test_every_frontmatter_finding_sits_on_its_own_specimen` |
+| `unparseable` | битая фикстура, блочный скаляр в поле с потребителем | `tests/test_fixtures.py::TestExactFindings::test_every_frontmatter_finding_sits_on_its_own_specimen` |
+| `unknown-hook-event` | временный пакет с `OnFullMoon` | `tests/test_check_package.py::TestPackageCheck::test_unknown_hook_event_fails` |
+| `unknown-hook-type` | тип вне закрытого списка | `tests/test_check_package.py::TestPackageCheck::test_unknown_hook_type_fails` |
+| `unknown-matcher` | матчер вне закрытого множества, включая опечатку `Bahs` | `tests/test_check_package.py::TestPackageCheck::test_matcher_typo_is_caught` |
+| `absolute-path` | одиннадцать форм абсолютного пути, включая Windows и UNC | `tests/test_check_package.py::TestPackageCheck::test_every_absolute_form_is_caught` |
+| `relative-path-in-skill` | вызов `scripts/*` без `${CLAUDE_PLUGIN_ROOT}` | `tests/test_check_package.py::TestPackageCheck::test_relative_script_call_in_a_skill_fails` |
+| `destructive-example` | пример `mv` в инструкциях ADOPT | `tests/test_check_package.py::TestPackageCheck::test_destructive_example_in_adopt_instructions_fails` |
+| `gate-not-read-only` | хеш дерева фикстуры до и после прогона гейта | `tests/test_check_package.py::TestGateNotReadOnlyMechanism::test_mutating_gate_is_caught` |
+| `tests-touched-product` | тот же приём вокруг прогона тестов | `tests/test_check_package.py::TestTestsTouchedProductMechanism::test_test_run_that_writes_to_scripts_is_caught` |
+| `skill-without-description` | SKILL.md без описания | `tests/test_check_package.py::TestPackageCheck::test_skill_without_description_fails` |
+| `skill-without-eval` | скилл без `eval.txt` | `tests/test_check_package.py::TestPackageCheck::test_skill_without_trigger_eval_fails` |
+| `skill-name-mismatch` | имя не совпало с папкой | `tests/test_check_package.py::TestPackageCheck::test_skill_name_must_match_directory` |
