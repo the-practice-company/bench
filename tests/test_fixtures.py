@@ -58,8 +58,13 @@ GREEN = ROOT / "fixtures" / "green"
 
 
 def places(report):
-    """Находки как (путь, строка, класс) в порядке отчёта — без текста детали."""
-    return [(f.path, f.line, f.cls)
+    """Находки как (путь, строка, класс, деталь) в порядке отчёта.
+
+    Деталь входит в ключ намеренно: без неё находки с одинаковыми путём,
+    строкой и классом взаимозаменяемы, и подмена одного правила другим
+    набор не роняет.
+    """
+    return [(f.path, f.line, f.cls, f.detail)
             for f in sorted(report.findings, key=Finding.key)]
 
 
@@ -83,18 +88,23 @@ class TestExactFindings(unittest.TestCase):
         self.assertEqual(
             places(check_links.scan(BROKEN)),
             [
-                (".claude/rules/areas.md", 5, "unresolved"),      # areas/hiring/items/
-                (".claude/rules/areas.md", 5, "unresolved"),      # scripts/rename.py
-                (".link-allow", 2, "dead-allow"),                 # без причины
-                (".link-allow", 3, "dead-allow"),                 # ничего не исключает
-                ("CLAUDE.md", 3, "unresolved"),                   # scripts/move.py
-                ("CLAUDE.md", 4, "escapes-root"),                 # абсолютный путь
-                ("areas/hiring/bare.md", 4, "ambiguous"),         # [[dup]]
-                ("areas/hiring/escapes.md", 4, "escapes-root"),   # выше корня
-                ("areas/hiring/md-link.md", 4, "md-link-to-file"),
-                ("areas/hiring/note.md", 4, "unresolved"),
-                ("areas/hiring/transient.md", 4, "link-to-transient"),
-                ("sources/transcripts/items/2026-07-14-call.md", 1, "orphan"),
+                (".claude/rules/areas.md", 5, "unresolved", "`areas/hiring/items/`"),
+                (".claude/rules/areas.md", 5, "unresolved", "`scripts/rename.py`"),
+                (".link-allow", 2, "dead-allow", "строка без причины: будущая-заметка"),
+                (".link-allow", 3, "dead-allow",
+                 "правило ничего не исключает, удалите: уже-не-нужное"),
+                ("CLAUDE.md", 3, "unresolved", "`scripts/move.py`"),
+                ("CLAUDE.md", 4, "escapes-root", "`/Users/artem/notes.md`"),
+                ("areas/hiring/bare.md", 4, "ambiguous",
+                 "[[dup]] → areas/hiring/dup.md, core/dup.md"),
+                ("areas/hiring/escapes.md", 4, "escapes-root",
+                 "[[../../../soseddniy-repo/file]]"),
+                ("areas/hiring/md-link.md", 4, "md-link-to-file",
+                 "[профиль](../../core/me.md)"),
+                ("areas/hiring/note.md", 4, "unresolved", "[[несуществующая заметка]]"),
+                ("areas/hiring/transient.md", 4, "link-to-transient", "[[tmp/plan]]"),
+                ("sources/transcripts/items/2026-07-14-call.md", 1, "orphan",
+                 "на файл никто не сослался"),
             ],
         )
 
@@ -108,11 +118,16 @@ class TestExactFindings(unittest.TestCase):
         self.assertEqual(
             places(check_frontmatter.scan(BROKEN)),
             [
-                ("decisions/items/bad-status.md", 1, "missing-required"),   # created
-                ("decisions/items/bad-status.md", 1, "value-outside-vocabulary"),
-                ("decisions/items/broken-yaml.md", 4, "unparseable"),
-                ("decisions/items/no-status.md", 1, "missing-required"),    # status
-                ("decisions/items/no-status.md", 1, "missing-required"),    # created
+                ("decisions/items/bad-status.md", 1, "missing-required",
+                 "стартовый набор: поле created"),
+                ("decisions/items/bad-status.md", 1, "value-outside-vocabulary",
+                 "status='активно' вне словаря ['open', 'decided', 'revisited']"),
+                ("decisions/items/broken-yaml.md", 4, "unparseable",
+                 "блочный скаляр не поддерживается (строка 4)"),
+                ("decisions/items/no-status.md", 1, "missing-required",
+                 "поле status читает вид"),
+                ("decisions/items/no-status.md", 1, "missing-required",
+                 "стартовый набор: поле created"),
             ],
         )
 
