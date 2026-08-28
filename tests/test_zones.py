@@ -39,11 +39,11 @@ class TestSingleDefinition(unittest.TestCase):
     `scaffold/`+`skills/` (волна 3) — такие же потребители модуля зон, как
     и `scripts/`. Из скана исключены каталоги, не входящие в пакет
     (dev-инструменты и фикстуры из секции 21 спеки: `tests/`, `fixtures/`,
-    `docs/`, `.baton/`) — иначе этот же файл и `zones.py` ловили бы сами
-    себя как офендеров.
+    `docs/`) — иначе этот же файл и `zones.py` ловили бы сами себя как
+    офендеров.
     """
 
-    _NOT_PACKAGE = {".git", "__pycache__", "tests", "fixtures", "docs", ".baton"}
+    _NOT_PACKAGE = {".git", "__pycache__", "tests", "fixtures", "docs"}
 
     def test_no_second_zone_table_in_package(self):
         names = set(zones.ZONES)

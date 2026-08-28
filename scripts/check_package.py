@@ -46,7 +46,7 @@ DESTRUCTIVE = re.compile(r"(?<![\w-])(?:mv|rm)\s+[^\s`]")
 # разработки («inbox/», «sources/» с материалами исследования), и их
 # содержимое — данные зоны, а не код пакета. Абсолютный путь в чужой цитате
 # внутри `sources/agent-research/*.md` не находка проверки пакета.
-SKIP_DIRS = {".git", "fixtures", "tests", "docs", ".baton", "__pycache__"} | set(zones.ZONES)
+SKIP_DIRS = {".git", "fixtures", "tests", "docs", "__pycache__"} | set(zones.ZONES)
 
 # Прогон тестов, вложенный в собственную проверку (см. _check_tests_touched_product),
 # сам пересобирает весь набор тестов, включая тест, что зовёт этот скрипт

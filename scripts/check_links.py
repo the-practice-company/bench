@@ -174,7 +174,7 @@ def _transient_violation(source_rel, target):
 
 def _ignored(root):
     """Префиксы, в которые гейт не заходит: .gitignore плюс archive/."""
-    prefixes = {".git/", "archive/", ".baton/"}
+    prefixes = {".git/", "archive/"}
     ignore = root / ".gitignore"
     if ignore.exists():
         for line in ignore.read_text(encoding="utf-8").split("\n"):
