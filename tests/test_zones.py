@@ -1,3 +1,4 @@
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -26,6 +27,33 @@ class TestZones(unittest.TestCase):
         self.assertIn("knowledge/*/**", zones.DENY_PATTERNS)
 
 
+_NOT_PACKAGE = {".git", "__pycache__", "tests", "fixtures", "docs"}
+
+
+def _offenders(root):
+    """Файлы пакета, держащие свою копию таблицы зон.
+
+    Пропускается ровно канонический `scripts/zones.py`, по относительному
+    пути. Пропуск по имени файла делал невидимой любую копию модуля —
+    единственный способ завести второе определение, который проверка
+    исключала по построению.
+    """
+    root = Path(root)
+    names = set(zones.ZONES)
+    out = []
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(root)
+        if rel.as_posix() == "scripts/zones.py":
+            continue
+        if any(part in _NOT_PACKAGE for part in rel.parts):
+            continue
+        text = path.read_text(encoding="utf-8")
+        hits = {n for n in names if f'"{n}"' in text or f"'{n}'" in text}
+        if len(hits) >= 6:
+            out.append(f"{rel.as_posix()}: {sorted(hits)}")
+    return out
+
+
 class TestSingleDefinition(unittest.TestCase):
     """Критерий выхода волны: второе определение восьми зон валит тест.
 
@@ -43,19 +71,19 @@ class TestSingleDefinition(unittest.TestCase):
     офендеров.
     """
 
-    _NOT_PACKAGE = {".git", "__pycache__", "tests", "fixtures", "docs"}
-
     def test_no_second_zone_table_in_package(self):
-        names = set(zones.ZONES)
-        offenders = []
-        for path in sorted(ROOT.rglob("*.py")):
-            if path.name == "zones.py":
-                continue
-            rel_parts = path.relative_to(ROOT).parts
-            if any(part in self._NOT_PACKAGE for part in rel_parts):
-                continue
-            text = path.read_text(encoding="utf-8")
-            hits = {n for n in names if f'"{n}"' in text or f"'{n}'" in text}
-            if len(hits) >= 6:
-                offenders.append(f"{path.relative_to(ROOT)}: {sorted(hits)}")
-        self.assertEqual(offenders, [], "второе определение зон — импортируй scripts.zones")
+        self.assertEqual(_offenders(ROOT), [],
+                         "второе определение зон — импортируй scripts.zones")
+
+    def test_a_copy_of_zones_py_elsewhere_is_an_offender(self):
+        """Регрессия на критерий 5: копия модуля обязана быть офендером."""
+        source = (ROOT / "scripts" / "zones.py").read_bytes()
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp)
+            (fake / "scripts").mkdir()
+            (fake / "hooks").mkdir()
+            (fake / "scripts" / "zones.py").write_bytes(source)
+            (fake / "hooks" / "zones.py").write_bytes(source)
+            offenders = _offenders(fake)
+        self.assertEqual(len(offenders), 1, offenders)
+        self.assertIn("hooks/zones.py", offenders[0])
