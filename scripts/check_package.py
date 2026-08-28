@@ -16,7 +16,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scripts import zones
 from scripts.findings import Finding, Report
 from scripts.frontmatter import FrontmatterError, parse as parse_frontmatter
 
@@ -76,13 +75,14 @@ SCRIPT_CALL = re.compile(r"(?:python3?\s+|sh\s+|bash\s+|\./)\S*scripts/\S+")
 # Разрушающий пример в инструкциях ADOPT.
 DESTRUCTIVE = re.compile(r"(?<![\w-])(?:mv|rm)\s+[^\s`]")
 
-# Инструменты разработки плагина, в пакет не идут (секция 21). Плюс восемь
-# зон рецепта (`zones.ZONES`, единственное определение — не копия): этот
-# репозиторий сам удваивается под контекст-репозиторий своей собственной
-# разработки («inbox/», «sources/» с материалами исследования), и их
-# содержимое — данные зоны, а не код пакета. Абсолютный путь в чужой цитате
-# внутри `sources/agent-research/*.md` не находка проверки пакета.
-SKIP_DIRS = {".git", "fixtures", "tests", "docs", "__pycache__"} | set(zones.ZONES)
+# Каталоги, не входящие в пакет (dev-инструменты секции 21). `inbox/` и
+# `sources/` — материалы собственной разработки: этот репозиторий удваивается
+# под контекст-репозиторий своей же разработки, и абсолютный путь в чужой
+# цитате внутри них не находка проверки пакета. Остальные шесть имён зон
+# отсюда убраны: раньше исключались все восемь, и любой каталог пакета, чьё
+# имя совпало с зоной, уходил из скана целиком.
+SKIP_DIRS = {".git", ".claude", "fixtures", "tests", "docs", "__pycache__",
+             "inbox", "sources"}
 
 # Прогон тестов, вложенный в собственную проверку (см. _check_tests_touched_product),
 # сам пересобирает весь набор тестов, включая тест, что зовёт этот скрипт
@@ -93,19 +93,22 @@ _NESTED_RUN_GUARD = "TWINKLE_CHECK_PACKAGE_NESTED_RUN"
 
 
 def _iter_package_files(root):
+    """Все файлы пакета, которые читаются как текст.
+
+    Формат определяется тем, декодируется ли файл в UTF-8, а не расширением:
+    фильтр по списку расширений уводил из-под проверки файлы без расширения,
+    `.yaml`, `.toml` и `Makefile`. Бинарные отсеиваются на чтении, в `check()`.
+
+    Проверяется только первый сегмент, как в `zones.zone_of()`: проверка по
+    любому сегменту на любой глубине снимала со скана `skills/inbox/` — скилл,
+    чьё имя совпало с зоной.
+    """
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
-        # Только первый сегмент, как zones.zone_of(): зоны этого репозитория
-        # (inbox/, sources/ — материалы собственной разработки) живут в корне
-        # и нигде больше. Проверка по любому сегменту на любой глубине снимала
-        # с прохода целые поддеревья пакета — skills/inbox/ (скилл, чьё имя
-        # совпало с зоной) и весь scaffold/ (буквально восемь папок-зон) —
-        # ровно то, что должно быть просканировано.
         if path.relative_to(root).parts[0] in SKIP_DIRS:
             continue
-        if path.suffix in (".md", ".py", ".sh", ".json", ".base", ".txt") or path.name == "check":
-            yield path
+        yield path
 
 
 def check(root):

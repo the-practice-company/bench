@@ -229,6 +229,29 @@ class TestPackageCheck(unittest.TestCase):
             self.assertIn("unparseable", counts)
             self.assertIn("skill-name-mismatch", counts)
 
+    def test_extensionless_and_yaml_files_are_scanned(self):
+        """Критерий 3: фильтр по расширению уводил из-под скана целые форматы."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "Makefile").write_text(
+                "run:\n\tpython3 /Users/artem/x.py\n", encoding="utf-8")
+            self.assertIn("absolute-path", check(root).counts())
+
+    def test_a_package_dir_named_like_a_zone_is_still_scanned(self):
+        """Восемь имён зон в SKIP_DIRS снимали со скана целые поддеревья."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            core = root / "core"
+            core.mkdir()
+            (core / "notes.md").write_text("Смотри /Users/artem/x.md\n", encoding="utf-8")
+            self.assertIn("absolute-path", check(root).counts())
+
+    def test_binary_files_do_not_break_the_scan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n\xff\xfe")
+            self.assertEqual(check(root).counts(), {})
+
     def test_absolute_path_inside_a_copy_of_check_package_is_reported(self):
         """Дефект 4: check_package.py не должен исключать себя из периметра.
 
