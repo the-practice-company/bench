@@ -123,6 +123,17 @@ def status(root):
     return dirty, unmerged
 
 
+def git_root(root):
+    """Корень git, от которого `--porcelain` считает свои пути.
+
+    Спрашивается отдельной функцией, потому что спрашивают дважды: сводка
+    отказывается от чекпоинта на разъехавшихся корнях, `Stop` на них сводит
+    пути к одной форме. Два места, задающие один вопрос двумя способами,
+    однажды получат на него два разных ответа.
+    """
+    return _git(root, "rev-parse", "--show-toplevel").strip()
+
+
 def last_checkpoint(root):
     """Дата последнего коммита и число файлов в нём. `(None, None)` — истории нет.
 
@@ -243,7 +254,7 @@ def collect(root):
         state.problems.append("состояние дерева не прочитано: %s" % error)
     if state.dirty is not None:
         try:
-            state.git_root = _git(root, "rev-parse", "--show-toplevel").strip()
+            state.git_root = git_root(root)
         except GitSilent as error:
             state.problems.append("корень git не прочитан: %s" % error)
         try:
