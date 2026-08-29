@@ -26,6 +26,14 @@ from scripts import boundary
 # Тот же приём, что у волны 2.
 BASE_FILE = "adopt-base"
 
+# Журнал файлов, изменённых правкой ссылок. Без него переписанный файл
+# выглядит уходом с плана: он был в коммите «как было», изменился, а
+# источником ни одной строки не является — то есть `unagreed-change` по
+# построению. Журнал здесь механизм, а не исключение в проверке: исключение
+# пришлось бы вписать в `check-plan` словами, и оно молча накрыло бы любую
+# другую правку тех же файлов.
+TOUCHED_FILE = "adopt-touched"
+
 
 def git(root, *args):
     return subprocess.run(["git", *args], cwd=str(root),
@@ -58,6 +66,36 @@ def read_base(root):
 
 def write_base(root, sha):
     _meta(root, BASE_FILE).write_text(sha + "\n", encoding="utf-8")
+
+
+def read_touched(root):
+    """Пары `(источник строки плана, изменённый файл)`, по одной на строку."""
+    path = _meta(root, TOUCHED_FILE)
+    if not path.exists():
+        return []
+    out = []
+    for line in path.read_text(encoding="utf-8").split("\n"):
+        if not line:
+            continue
+        source, _, rel = line.partition("\t")
+        out.append((source, rel))
+    return out
+
+
+def record_touched(root, source, files):
+    """Дописать записи журнала. Накопительно и без дублей.
+
+    Накопительно, потому что этапов много: файл, переписанный ради одной
+    строки плана, обязан остаться названным, когда исполняется следующая.
+    Без дублей, потому что цепочка повторно входима — оборвавшийся ход
+    доводится вторым запуском, и второй запуск не должен выглядеть вторым
+    изменением того же файла.
+    """
+    entries = set(read_touched(root))
+    entries.update((source, rel) for rel in files)
+    _meta(root, TOUCHED_FILE).write_text(
+        "".join("%s\t%s\n" % pair for pair in sorted(entries)),
+        encoding="utf-8")
 
 
 def inside(root, target):
