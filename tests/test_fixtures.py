@@ -242,8 +242,25 @@ _CLOCK_ATTRS = frozenset({
     "times", "utime",
 })
 
+# Имя вызова, а не поле: снимается только оно.
+_STAT_CALLS = frozenset({"stat", "lstat"})
 
-def _clock_reads(tree):
+# Обоснованные `stat` пакета, по одной строке с причиной. Запрет на
+# `stat`/`lstat` шире нужного намеренно (см. `_CLOCK_ATTRS`), и модуль,
+# которому понадобился `st_size`, «обязан это обосновать, а не пройти молча»
+# — вот место, где он это делает. Снимается ровно имя вызова: `st_mtime`
+# и родня остаются запрещены везде, включая перечисленные файлы, поэтому
+# исключение открывает размер и не открывает часы.
+#
+# `scan-tree` считает вес поддерева. Прочесть размер иначе нечем:
+# `len(read_bytes())` втягивает в память те самые гигабайты, ради которых
+# инвентарь и считается каталогами, а не файлами.
+_STAT_ALLOWED = {
+    "scripts/adopt/inventory.py": "вес поддерева: st_size, без отметок времени",
+}
+
+
+def _clock_reads(tree, stat_allowed=False):
     """Обращения к часам в разобранном модуле: (строка, написание).
 
     Читается дерево разбора, а не текст. Подстрочный поиск не различает код и
@@ -251,6 +268,9 @@ def _clock_reads(tree):
     стоят в комментариях, — и не видит переименования: `import time as t`,
     `from datetime import datetime as dt`. Оба различия для этой проверки
     решающие.
+
+    `stat_allowed` снимает `stat`/`lstat` и больше ничего: файл из
+    `_STAT_ALLOWED` по-прежнему краснеет на `st_mtime`.
     """
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -266,6 +286,8 @@ def _clock_reads(tree):
                     yield node.lineno, "from %s import %s" % (module, alias.name)
         elif isinstance(node, ast.Attribute):
             if node.attr in _CLOCK_ATTRS:
+                if stat_allowed and node.attr in _STAT_CALLS:
+                    continue
                 yield node.lineno, ".%s" % node.attr
 
 
@@ -326,11 +348,11 @@ class TestDeterminism(unittest.TestCase):
           делает ребёнок;
         - **дата из среды**: `os.environ` в гейте есть по делу
           (`_NESTED_RUN_GUARD`), и разбор не судит, что лежит в переменной;
-        - **часы в модуле вне `scripts/`**. Проверка обходит каталог, а не
-          граф импортов. Сегодня `scripts/` импортирует только из `scripts/`,
-          и замыкание совпадает с каталогом; в день, когда гейт потянет
-          что-нибудь из `hooks/`, часы `hooks/summary.py` приедут внутрь
-          незамеченными.
+        - **часы в модуле вне `scripts/`**. Проверка обходит каталог целиком,
+          вглубь, а не граф импортов. Сегодня `scripts/` импортирует только
+          из `scripts/`, и замыкание совпадает с каталогом; в день, когда
+          гейт потянет что-нибудь из `hooks/`, часы `hooks/summary.py`
+          приедут внутрь незамеченными.
 
         **Про `hooks/` проверка намеренно не расширена.** Критерий 2 говорит
         про отчёт гейта, а сводка хука отчётом гейта не является: она про
@@ -344,12 +366,37 @@ class TestDeterminism(unittest.TestCase):
         имён: они зовут `git`, а тот докладывает настоящие отметки времени, —
         и запрет на `import datetime` этого не трогает.
         """
+        walked = [p.relative_to(ROOT).as_posix()
+                  for p in sorted((ROOT / "scripts").rglob("*.py"))]
         offenders = []
-        for path in sorted((ROOT / "scripts").glob("*.py")):
+        for rel in walked:
+            path = ROOT / rel
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-            offenders.extend("%s:%d: %s" % (path.name, line, spelling)
-                             for line, spelling in _clock_reads(tree))
+            offenders.extend(
+                "%s:%d: %s" % (rel, line, spelling)
+                for line, spelling in _clock_reads(tree, rel in _STAT_ALLOWED))
         self.assertEqual(offenders, [])
+        # Обход рекурсивный, и это утверждается, а не подразумевается: пока
+        # он был `glob("*.py")`, весь пакет `scripts/adopt/` лежал вне
+        # критерия 2 — часы в нём не увидел бы никто. Имя в отчёте тоже
+        # относительное: двух `inventory.py` на разных этажах `path.name`
+        # не различает.
+        self.assertIn("scripts/adopt/inventory.py", walked)
+
+    def test_every_stat_allowance_is_live_and_opens_only_the_call(self):
+        """Уцелевшее исключение тихо ослабляет проверку — довод `dead-allow`
+        гейта ссылок, дословно. Плюс вторая половина: снятое имя вызова не
+        снимает отметок времени, иначе исключение открывало бы часы."""
+        for rel, reason in _STAT_ALLOWED.items():
+            path = ROOT / rel
+            self.assertTrue(path.exists(), rel)
+            self.assertTrue(reason.strip(), rel)
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            self.assertIn(".stat", [s for _, s in _clock_reads(tree)], rel)
+        planted = ast.parse("import pathlib\n"
+                            "x = pathlib.Path('.').stat().st_mtime\n")
+        self.assertEqual([s for _, s in _clock_reads(planted, stat_allowed=True)],
+                         [".st_mtime"])
 
     def test_today_is_carried_on_the_report(self):
         """Принятый параметр обязан быть наблюдаем, а не проглочен молча."""
