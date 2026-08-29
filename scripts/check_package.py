@@ -612,7 +612,24 @@ def check(root):
 
     broken_fixture = root / "fixtures" / "broken"
     if broken_fixture.exists():
-        for gate in ("check_links.py", "check_frontmatter.py"):
+        # Волна 4 добавила четыре read-only команды. Здесь стоит одна:
+        # `check_read_only` зовёт гейт с единственным аргументом-корнем, и
+        # такую форму из четырёх имеет только `scan-tree`. Остальным трём
+        # нужен второй аргумент — план либо путь, — а плана в битой фикстуре
+        # нет и завести его здесь нельзя: файл, написанный ради проверки,
+        # сам сдвинет хеш дерева, который проверка и сверяет. Позвать их с
+        # несуществующим планом значило бы удостоверить read-only на ветке
+        # раннего отказа — маскарад, а не проверка.
+        #
+        # Обещание при этом не сужается молча: каждая из трёх доказывает
+        # read-only тем же приёмом в своём наборе —
+        # `tests/test_read_plan.py::TestReadOnly`,
+        # `tests/test_refs.py::TestReadOnly` и
+        # `tests/test_check_plan.py::TestCommandLine`, последний манифестом
+        # дерева вместо хеша. Чего у трёх нет — это проверки на каждом
+        # `./check`; сказано вслух в docs/gate-coverage.md.
+        for gate in ("check_links.py", "check_frontmatter.py",
+                     "adopt/inventory.py"):
             if (root / "scripts" / gate).exists():
                 findings.extend(check_read_only(root, gate, broken_fixture))
 

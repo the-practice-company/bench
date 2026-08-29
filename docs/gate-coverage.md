@@ -61,3 +61,43 @@
 | `skill-without-eval` | вторая причина: `eval.txt` есть, но пуст — включая файл из одних пробелов и табуляций | `tests/test_check_package.py::TestPackageCheck::test_an_empty_trigger_eval_is_not_a_trigger_eval` |
 | `skill-without-eval` | третья причина: `eval.txt` из одних комментариев — текст в файле есть, фразы срабатывания нет; там же одинокая BOM, которая не пробельный знак и проверку проходила | `tests/test_check_package.py::TestPackageCheck::test_an_eval_of_only_comments_is_not_a_trigger_eval` |
 | `skill-name-mismatch` | имя не совпало с папкой | `tests/test_check_package.py::TestPackageCheck::test_skill_name_must_match_directory` |
+
+## Классы волны 4 (ADOPT)
+
+Семь классов, и ни одного на битой фикстуре: битая фикстура — контекстный
+репозиторий, а эти классы производят команды усыновления на **чужом** дереве.
+Поэтому доказывает их `fixtures/foreign/`, развёрнутая во временный каталог
+(`tests/foreign.py`), а колонка «чем доказан» числа находок на битой фикстуре
+не заявляет — заявила бы, и `_miscounts` обязан был бы покраснеть.
+
+Пять из семи — ошибки, два — отчёты. Отчёт здесь не смягчение: `foreign-repo`
+и `created-unrecoverable` сообщают о свойствах чужого дерева, которых ADOPT не
+создавал и чинить не вправе. Ошибкой их сделать значило бы объявить чужое
+дерево виноватым и остановить процедуру на том, что в ней не чинится.
+
+**Чего в этой таблице нет — строки про read-only четырёх команд волны.**
+Спека волны обещает, что `scan-tree`, `find-refs`, `read-plan` и `check-plan`
+доказывают read-only хешем дерева, «как гейты». Механизм `check_read_only` в
+проверке пакета зовёт гейт **одним** аргументом-корнем, и такую форму из
+четырёх имеет только `scan-tree`: он и добавлен в кортеж третьим именем.
+Остальным трём нужен второй аргумент — план либо путь, — а план, написанный
+ради проверки, сам сдвинет тот хеш, который проверка сверяет. Позвать их с
+несуществующим планом значило бы удостоверить read-only на ветке раннего
+отказа. Обещание держится, но не на каждом `./check`: каждая из трёх меряет
+то же самое в своём наборе — `tests/test_read_plan.py::TestReadOnly`,
+`tests/test_refs.py::TestReadOnly`,
+`tests/test_check_plan.py::TestCommandLine::test_the_check_names_the_finding_and_changes_nothing`
+(последний манифестом дерева, а не хешем). Сказано вслух, а не сужено молча.
+
+| класс | чем доказан | тест |
+|---|---|---|
+| `plan-unparseable` | строка без тела: разбор её теряет и называет находкой с путём, строкой и деталью — то же правило, что у аллоулиста §13, и по той же причине | `tests/test_adopt_plan.py::TestRefusals::test_a_line_without_a_body_fails_the_parse` |
+| `plan-unparseable` | вторая причина: строка с нулевой позиции, не разобранная вовсе. Молчаливый пропуск означал бы, что правка автора рукой тихо выносит строку из исполнения — то есть отменяет собственное согласие, не заметив | `tests/test_adopt_plan.py::TestRefusals::test_an_unrecognised_line_is_a_finding_not_a_skip` |
+| `uncovered-path` | чужая фикстура без строки на `journal`: назван самый мелкий непокрытый путь и ровно один, а не все файлы под ним. Это и есть механизм критерия 5 — молчание наблюдаемо потому, что план обязан быть тотальным | `tests/test_adopt_plan.py::TestCoverage::test_an_unmentioned_directory_is_reported_once_at_its_top` |
+| `uncovered-path` | обратная сторона: из дерева вычитается ровно одно имя — сам файл плана, а не каталог вокруг него. Сосед плана обязан быть назван, иначе под видом «вычесть план» из полноты выпадает целая папка | `tests/test_adopt_plan.py::TestCoverage::test_the_plan_file_itself_is_not_demanded_but_its_neighbour_is` |
+| `overlapping-line` | источник одной строки — предок источника другой; находка встаёт на обеих, и в обоих порядках следования. Смысл плана не имеет права зависеть от порядка строк | `tests/test_adopt_plan.py::TestOverlap::test_a_source_that_is_an_ancestor_of_another_is_a_finding` |
+| `unagreed-change` | чужой файл переписан мимо плана: строка `identity` согласована крестиком, но целью `stay`, которую не исполняет ничто. Вторая половина инварианта волны — ловит уход с плана, кем бы он ни был сделан | `tests/test_check_plan.py::TestCheck::test_a_change_outside_any_agreed_line_is_a_finding` |
+| `line-state-conflict` | столкновение (источник и цель существуют оба) и потеря (не существует ни того, ни другого) по таблице состояний §«Частичное согласие»: состояние строки считается из дерева, и врать оно не умеет | `tests/test_adopt_plan.py::TestState::test_collision_and_loss_are_findings` |
+| `foreign-repo` | отчёт: папка с `.git` внутри названа `init-tree` и не тронута — ни `git add -A` gitlink'ом, ни переездом | `tests/test_adopt_tree.py::TestInit::test_the_nested_repository_is_reported_not_touched` |
+| `foreign-repo` | второй производитель: подметание `revert`. Неисключённый чужой репозиторий приезжает из `ls-files --others` каталогом; удалить его как файл — уронить откат посередине, удалить рекурсивно — снести чужое безвозвратно. Поэтому он называется и остаётся | `tests/test_revert.py::TestSweep::test_a_repository_that_appeared_after_the_base_commit_is_not_deleted` |
+| `created-unrecoverable` | отчёт поимённо, а не одним числом: имя грепается, число — нет. Записи без восстановимой даты создания перечисляются, а в поле уезжает токен `unknown` — незыблемое №4 даёт две ветки, и здесь взяты обе | `tests/test_dates.py::TestReport::test_every_unrecoverable_record_is_named` |

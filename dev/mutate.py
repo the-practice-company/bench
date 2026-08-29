@@ -741,9 +741,20 @@ MUTATIONS = (
         expect="tests.test_install_scaffold.TestFirstCommit"
                ".test_the_commit_carries_the_scaffold_blob_for_blob",
         steps=(
+            # Образец — три строки цикла копирования, а не одна строка
+            # записи. Одной хватало ровно до волны 4: `merge` задачи 11
+            # завёл вторую такую же запись — создание целиком, когда чужого
+            # файла нет, — и мутация отчиталась «не легла», то есть о чужой
+            # правке, а не об установщике. Цикл `for source, target, rel in
+            # plan` в файле один, и байты портятся там, где они копируются
+            # каркасом.
             substitution(
                 "scripts/install_scaffold.py",
+                "    for source, target, rel in plan:\n"
+                "        target.parent.mkdir(parents=True, exist_ok=True)\n"
                 "        target.write_bytes(source.read_bytes())\n",
+                "    for source, target, rel in plan:\n"
+                "        target.parent.mkdir(parents=True, exist_ok=True)\n"
                 '        target.write_bytes(source.read_bytes() + b"\\n")\n',
             ),
         ),
@@ -873,6 +884,161 @@ MUTATIONS = (
                 "_in_perimeter(rel,",
                 "continue",
                 "",
+            ),
+        ),
+    ),
+
+    # Волна 4. Критериев выхода пять — пять мутаций, по одной на каждый.
+    # Плюс одна под меткой `в4 Д1`: она правит `created`, ни одному критерию
+    # выхода не принадлежит и потому подписана не критерием. Метка не в форме
+    # `вN КM` намеренно — тот же приём, что у `в3 гейт`: строку в
+    # `docs/criteria-coverage.md` `tests/test_mutation_claims.py` требует под
+    # каждую мутацию с меткой критерия, а такой у неё нет. Названа она там
+    # прозой.
+    Mutation(
+        # Буквальная команда секции 18 вместо выкладки из `HEAD`. Она
+        # восстанавливает из **индекса**, а каждая мутация цепочки индекс уже
+        # изменила: после `git mv notes areas/work/notes` путь `notes` в
+        # индексе отсутствует и команда падает на pathspec, а `archive`,
+        # снятый `git rm`, не возвращается вовсе.
+        #
+        # `_sweep` остаётся на месте, и это часть посадки: неудалённой целью
+        # мутация не пользуется. Дерево расходится с манифестом на **том**,
+        # чего буквальная команда не умеет, — на пропавшем доноре и на
+        # невернувшемся архиве.
+        #
+        # `TestFalsifiers.test_the_literal_command_from_the_spec_does_not_restore`
+        # от мутации не краснеет и краснеть не обязан: он зовёт git напрямую,
+        # мимо `revert`. Фальсификатор утверждает, что команда не работает;
+        # мутация утверждает, что набор это заметит, если её вернуть в код.
+        criterion="в4 К1",
+        name="revert по букве секции 18: выкладка из индекса",
+        module="tests.test_revert",
+        expect="tests.test_revert.TestByteForByte"
+               ".test_the_manifest_returns_to_what_it_was",
+        steps=(
+            substitution(
+                "scripts/adopt/revert.py",
+                '    tree.git(root, "reset", "-q", "HEAD", "--", path)\n'
+                '    if tree.git_zlines(root, "ls-tree", "-r", "--name-only", "-z",\n'
+                '                       "HEAD", "--", path):\n'
+                '        tree.git(root, "checkout", "HEAD", "--", path)\n',
+                '    tree.git(root, "checkout", "--", path)\n',
+            ),
+        ),
+    ),
+    Mutation(
+        # Правка, знающая только голую форму: путевые wikilink'и она
+        # пропускает. Это и есть третий фальсификатор критерия 2 —
+        # **зеркальный** тому, что назван в спеке волны. Спека называет
+        # правку, знающую только путевую форму, «при переезде, создающем
+        # коллизию basename»; коллизия R не двигает, потому что неоднозначная
+        # ссылка считается одним вхождением по решению той же спеки.
+        # Двигает R слепота к форме — любой из двух, и обе половины
+        # `test_the_chain_preserves_R` меряет за один прогон: переезд
+        # каталога роняет R здесь на первом шаге.
+        criterion="в4 К2",
+        name="rewrite-refs слеп к путевой форме wikilink'а",
+        module="tests.test_rewrite_refs",
+        expect="tests.test_rewrite_refs.TestChain.test_the_chain_preserves_R",
+        steps=(
+            substitution(
+                "scripts/adopt/rewrite_refs.py",
+                "        candidate = next((c for c in hit.candidates "
+                "if _under(c, source)), None)\n"
+                "        if candidate is None:\n"
+                "            continue\n",
+                "        candidate = next((c for c in hit.candidates "
+                "if _under(c, source)), None)\n"
+                '        if candidate is None or "/" in hit.target:\n'
+                "            continue\n",
+            ),
+        ),
+    ),
+    Mutation(
+        # Снимается **проверка согласия**, а не обязательность `--plan`.
+        # План остаётся аргументом и остаётся прочитанным; исчезает ровно то,
+        # о чём говорит критерий 3 — «before the author has agreed». Мутация
+        # на обязательности аргумента объявленный тест не уронила бы: он
+        # передаёт план и получает отказ по строке без крестика.
+        criterion="в4 К3",
+        name="move исполняет строку без крестика",
+        module="tests.test_move",
+        expect="tests.test_move.TestMove"
+               ".test_an_unagreed_line_is_refused_with_a_named_reason",
+        steps=(
+            substitution(
+                "scripts/adopt/move.py",
+                "        if not line.agreed:\n"
+                '            return None, ("строка не согласована: `%s` -> `%s`"\n'
+                "                          % (line.source, line.target))\n",
+                "",
+            ),
+        ),
+    ),
+    Mutation(
+        # Ветка отказа перестаёт достигаться, и `init-tree` заводит git там,
+        # где автор сказал «нет». Критерий 4 требует двух вещей сразу — план
+        # написан и **ни один файл не изменён**; здесь ломается вторая, и
+        # ломается видимо: `.git` появляется в дереве, которого ADOPT обещал
+        # не трогать.
+        criterion="в4 К4",
+        name="init-tree заводит git вопреки --no-git",
+        module="tests.test_declined",
+        expect="tests.test_declined.TestDeclined"
+               ".test_nothing_but_the_plan_appears_and_nothing_changes",
+        steps=(
+            substitution(
+                "scripts/adopt/init_tree.py",
+                "    if no_git:\n",
+                "    if False:\n",
+            ),
+        ),
+    ),
+    Mutation(
+        # Обход остаётся, находка не заводится: план становится «полным»
+        # при любом составе дерева. Это и есть механизм критерия 5 — молчание
+        # наблюдаемо ровно потому, что план обязан быть тотальным, — и без
+        # этой строки он держался бы на обещании.
+        criterion="в4 К5",
+        name="непокрытый путь перестаёт называться находкой",
+        module="tests.test_adopt_plan",
+        expect="tests.test_adopt_plan.TestCoverage"
+               ".test_an_unmentioned_directory_is_reported_once_at_its_top",
+        steps=(
+            substitution(
+                "scripts/adopt/plan.py",
+                '            out.append(Finding("uncovered-path", plan_rel, 1,\n'
+                '                               "путь не покрыт ни одной строкой: %s" % child))\n',
+                "            continue\n",
+            ),
+        ),
+    ),
+    Mutation(
+        # Ловушка, измеренная спекой: 235 файлов необратимо несут дату
+        # прогона миграции. Подставленная дата от настоящей неотличима, и
+        # именно поэтому мутация сажает **чтение часов**, а не подмену токена
+        # `UNKNOWN`. Подмена константы оставила бы тест зелёным: он сверяет
+        # ответ с `dates.UNKNOWN`, то есть с той же самой константой.
+        #
+        # Метка — не критерий: `created` не назван ни одним из пяти. Прозой
+        # он назван в разделе волны 4 документа покрытия.
+        criterion="в4 Д1",
+        name="created подставляет дату прогона вместо unknown",
+        module="tests.test_dates",
+        expect="tests.test_dates.TestCreated"
+               ".test_without_history_the_token_is_unknown_not_today",
+        steps=(
+            substitution(
+                "scripts/adopt/dates.py",
+                "import sys\nfrom pathlib import Path\n",
+                "import datetime\nimport sys\nfrom pathlib import Path\n",
+            ),
+            substitution(
+                "scripts/adopt/dates.py",
+                "        return UNKNOWN                  "
+                "# ни git, ни коммитов — истории нет\n",
+                "        return datetime.date.today().isoformat()\n",
             ),
         ),
     ),

@@ -3,7 +3,8 @@ import unittest
 from pathlib import Path
 
 from scripts import check_frontmatter, check_links
-from scripts.findings import FRONTMATTER_CLASSES, LINK_CLASSES, PACKAGE_CLASSES
+from scripts.findings import (ADOPT_CLASSES, FRONTMATTER_CLASSES,
+                              LINK_CLASSES, PACKAGE_CLASSES)
 
 ROOT = Path(__file__).resolve().parent.parent
 COVERAGE = ROOT / "docs" / "gate-coverage.md"
@@ -140,8 +141,17 @@ class TestEveryClassIsProven(unittest.TestCase):
     """
 
     def test_coverage_table_lists_every_class(self):
+        """`ADOPT_CLASSES` здесь наравне с остальными тремя списками.
+
+        Волна 4 завела семь классов, и требование «строка в таблице покрытия
+        с цитатой на живой тест» она записала прозой в свою спеку. Прозой оно
+        и осталось бы: строку класса ADOPT можно было не написать, и набор
+        оставался зелёным — ровно та дыра, которую волна 1 закрыла для трёх
+        первых списков мутацией «из таблицы покрытия вынут целый класс».
+        """
         table = COVERAGE.read_text(encoding="utf-8")
-        for cls in LINK_CLASSES + FRONTMATTER_CLASSES + PACKAGE_CLASSES:
+        for cls in (LINK_CLASSES + FRONTMATTER_CLASSES + PACKAGE_CLASSES
+                    + ADOPT_CLASSES):
             self.assertIn("`%s`" % cls, table, "класс %s не объяснён" % cls)
 
     def test_the_real_table_is_sound(self):
