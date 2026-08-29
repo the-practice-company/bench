@@ -193,7 +193,48 @@ def _scanned_for_tokens(rel, name):
     return name in SCANNED_FOR_TOKENS or rel.startswith(RULES_PREFIX)
 
 
+def _classify_token(token, root, allowed):
+    """Судьба токена-пути: класс находки или None. Единственное определение.
+
+    Сюда ходят оба места, где гейт судит токен, — backtick-цикл и
+    `.claude/settings*.json`. Второй копии этой лестницы в пакете быть
+    не должно: три разошедшиеся копии одной таблицы уже стоили этому
+    репозиторию критерия выхода (`tests/test_zones.py::TestSingleDefinition`),
+    а здесь разойтись особенно легко — обе копии выглядят одинаково
+    безобидно и обе решают, выпустить ли ссылку за корень.
+
+    Порядок ступеней и есть правило (секция 13):
+
+    1. Выход за корень судится первым и не зависит от того, шаблон перед
+       нами или конкретный путь. Глоб по чужому домашнему каталогу —
+       находка `escapes-root` ровно так же, как конкретный файл в нём:
+       шаблон снимает вопрос «есть ли такой файл», но не даёт права выйти
+       из репозитория. Образец лежит в битой фикстуре, а не здесь: строка
+       с таким токеном в самом пакете — находка `absolute-path`
+       (проверка пакета поймала её на первом же прогоне).
+    2. Шаблон дальше не проверяется. `**/knowledge/**` называет множество,
+       и спрашивать о существовании множества — ошибка категории. Без этой
+       ступени каркас, предписанный секциями 4 и 9, не проходил гейт,
+       предписанный секцией 13, — блокер, на который упёрлась волна 3.
+    3. Конкретный путь проверяется как прежде. Ослабления нет:
+       `areas/hiring/items/` метасимволов не содержит и остаётся находкой.
+    """
+    if pathlib_rules.escapes_root(token, base=""):
+        return "escapes-root"
+    if pathlib_rules.is_pattern(token):
+        return None
+    if not (root / token).exists() and not allowed(token):
+        return "unresolved"
+    return None
+
+
 def _settings_paths(root, ignored, allowed):
+    """Токены `.claude/settings*.json`, с разворачиванием правил разрешений.
+
+    В отчёт идёт токен как он записан в файле, а судится развёрнутый:
+    иначе `Edit(X)` и `Write(X)` на одной строке дают две неразличимые
+    находки, и автор не понимает, какое из двух правил чинить.
+    """
     out = []
     for path in sorted(root.glob(".claude/settings*.json")):
         rel = path.relative_to(root).as_posix()
@@ -201,13 +242,13 @@ def _settings_paths(root, ignored, allowed):
             continue
         text = path.read_text(encoding="utf-8")
         for lineno, line in enumerate(text.split("\n"), start=1):
-            for token in re.findall(r'"([^"]+)"', line):
+            for raw in re.findall(r'"([^"]+)"', line):
+                token = pathlib_rules.unwrap_tool(raw)
                 if not pathlib_rules.is_path_token(token):
                     continue
-                if pathlib_rules.escapes_root(token, base=""):
-                    out.append(Finding("escapes-root", rel, lineno, token))
-                elif not (root / token).exists() and not allowed(token):
-                    out.append(Finding("unresolved", rel, lineno, token))
+                cls = _classify_token(token, root, allowed)
+                if cls:
+                    out.append(Finding(cls, rel, lineno, raw))
     return out
 
 
@@ -270,6 +311,9 @@ def scan(root, today=None):
     # внутри ``` — документация, а не живой токен (секция 13, «Перед разбором
     # вырезаются блоки кода и inline-код»); inline backtick-код здесь не
     # вырезается — это и есть источник токенов этого прохода.
+    # Судьбу отобранного токена решает _classify_token — то же самое место,
+    # что и для settings*.json: правило про глоб и границу корня одно на оба
+    # цикла, второй копии быть не должно.
     for path in sorted(root.rglob("*.md")):
         rel = path.relative_to(root).as_posix()
         if not _in_perimeter(rel, ignored):
@@ -282,11 +326,9 @@ def scan(root, today=None):
                 token = token.strip("`").strip()
                 if not pathlib_rules.is_path_token(token):
                     continue
-                if pathlib_rules.escapes_root(token, base=""):
-                    findings.append(Finding("escapes-root", rel, lineno, "`%s`" % token))
-                    continue
-                if not (root / token).exists() and not allowed(token):
-                    findings.append(Finding("unresolved", rel, lineno, "`%s`" % token))
+                cls = _classify_token(token, root, allowed)
+                if cls:
+                    findings.append(Finding(cls, rel, lineno, "`%s`" % token))
 
     findings.extend(_settings_paths(root, ignored, allowed))
 

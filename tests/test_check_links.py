@@ -56,7 +56,7 @@ class TestForbiddenShapes(unittest.TestCase):
 
     def test_escaping_root_is_an_error(self):
         report = scan(BROKEN)
-        self.assertEqual(report.counts().get("escapes-root"), 2)
+        self.assertEqual(report.counts().get("escapes-root"), 3)
 
 
 class TestPerimeter(unittest.TestCase):
@@ -225,6 +225,84 @@ class TestBacktickTokensInsideFences(unittest.TestCase):
                 "Снаружи примера: `docs/example-nonexistent.md`\n",
                 encoding="utf-8",
             )
+            self.assertEqual(scan(root).counts(), {"unresolved": 1})
+
+
+class TestGlobIsNotAPath(unittest.TestCase):
+    """Блокер волны 3: каркас, предписанный спекой, не проходил гейт.
+
+    `**/knowledge/**` в `claudeMdExcludes`, `Edit(./knowledge/*/**)` в
+    `permissions.deny` (секция 4), `paths: **/items/**` и `**/*.base`
+    в правилах зон (секция 9) — всё это гейт считал несуществующими
+    путями и поднимал `unresolved` на каркасе, который сам же и предписан.
+    Глоб называет множество: вопрос «есть ли такой файл» к нему неприменим.
+
+    Снимается ровно этот вопрос. Граница корня остаётся: шаблон наружу —
+    та же ошибка, что конкретный путь наружу.
+    """
+
+    def _root(self, tmp, rel, text):
+        from pathlib import Path as P
+        root = P(tmp)
+        target = root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+        return root
+
+    def test_glob_in_a_rule_file_is_not_unresolved(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._root(tmp, ".claude/rules/collection.md",
+                              "---\n"
+                              "description: Правило коллекций\n"
+                              "paths: [\"**/items/**\"]\n"
+                              "---\n"
+                              "Записи коллекции лежат в `**/items/**`, "
+                              "виды описаны в `**/*.base`.\n")
+            self.assertEqual(scan(root).counts(), {})
+
+    def test_settings_globs_and_permission_rules_are_not_unresolved(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._root(
+                tmp, ".claude/settings.json",
+                '{\n'
+                '  "claudeMdExcludes": ["**/knowledge/**"],\n'
+                '  "permissions": {\n'
+                '    "deny": ["Edit(./knowledge/*/**)", "Write(./knowledge/*/**)"]\n'
+                '  }\n'
+                '}\n')
+            self.assertEqual(scan(root).counts(), {})
+
+    def test_a_glob_pointing_outside_the_root_is_still_an_error(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._root(tmp, "CLAUDE.md",
+                              "Наружу шаблоном: `~/vault/**/*.md`.\n")
+            self.assertEqual(scan(root).counts(), {"escapes-root": 1})
+
+    def test_the_root_check_survives_the_tool_wrapper_too(self):
+        """Разворачивание не должно превращаться в лазейку наружу."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._root(
+                tmp, ".claude/settings.json",
+                '{\n'
+                '  "permissions": {\n'
+                '    "deny": ["Edit(~/vault/**/*.md)"]\n'
+                '  }\n'
+                '}\n')
+            report = scan(root)
+            self.assertEqual(report.counts(), {"escapes-root": 1})
+            self.assertEqual(report.render(),
+                             ".claude/settings.json:3 escapes-root Edit(~/vault/**/*.md)")
+
+    def test_a_concrete_missing_path_is_still_unresolved(self):
+        """Контроль: ослабления нет, метасимволов в токене нет — проверка прежняя."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._root(tmp, ".claude/rules/areas.md",
+                              "Записи кладутся в `areas/hiring/items/`.\n")
             self.assertEqual(scan(root).counts(), {"unresolved": 1})
 
 

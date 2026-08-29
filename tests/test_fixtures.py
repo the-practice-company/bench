@@ -11,7 +11,7 @@
 | `unresolved` 5 | `[[несуществующая заметка]]` в `areas/hiring/note.md`; `scripts/move.py` в `CLAUDE.md` («его нет»); `areas/hiring/items/` и `scripts/rename.py` в `.claude/rules/areas.md`; `[[projects/dup]]` в `areas/hiring/pathlink.md` — путь не существует, откат на basename запрещён |
 | `md-link-to-file` 1 | `[профиль](../../core/me.md)` |
 | `link-to-transient` 1 | `[[tmp/plan]]` из `areas` |
-| `escapes-root` 2 | абсолютный путь в `CLAUDE.md` и `[[../../../soseddniy-repo/file]]` |
+| `escapes-root` 3 | абсолютный путь в `CLAUDE.md`, `[[../../../soseddniy-repo/file]]` и глоб `~/vault/**/*.md` в `CLAUDE.md` |
 | `ambiguous` 1 | `[[dup]]` при двух `dup.md` |
 | `dead-allow` 2 | строка без причины и строка, ничего не исключающая |
 | `orphan` 1 | транскрипт, на который никто не сослался |
@@ -28,6 +28,17 @@ areas.md` — файл, заведённый в фикстуру с подпис
 только в `CLAUDE.md`, `README.md`, `SKILL.md` и `.claude/rules/*.md`. Поэтому
 образец лежит в `CLAUDE.md` фикстуры, а не в `areas/hiring/escapes.md`, как
 писал Task 7: периметр сканирования переезжать за образцом не может (DEC-0003).
+
+Третий образец `escapes-root` — глоб `~/vault/**/*.md`, и он тут не для счёта.
+Строка спеки «глоб — шаблон, а не путь» приглашает отсеять глоб входным
+фильтром и не проверять вовсе; тогда шаблон получает право выйти за корень,
+которого нет у конкретного пути. Образец фальсифицирует ровно это прочтение:
+у глоба не спрашивают, существует ли такой файл, но границу корня он
+пересекает так же незаконно. Зеркальная половина правила — в зелёной фикстуре:
+`.claude/settings.json` с `**/knowledge/**` и `Edit(./knowledge/*/**)`,
+предписанными секцией 4, обязан давать ноль находок. До этого правила каркас,
+который спека предписывает, не проходил гейт, который спека предписывает,
+и волна 3 упиралась в это как в блокер.
 
 Гейт frontmatter — образец за образцом:
 
@@ -76,7 +87,7 @@ class TestExactFindings(unittest.TestCase):
                 "unresolved": 5,
                 "md-link-to-file": 1,
                 "link-to-transient": 1,
-                "escapes-root": 2,
+                "escapes-root": 3,
                 "ambiguous": 1,
                 "dead-allow": 2,
                 "orphan": 1,
@@ -95,6 +106,7 @@ class TestExactFindings(unittest.TestCase):
                  "правило ничего не исключает, удалите: уже-не-нужное"),
                 ("CLAUDE.md", 3, "unresolved", "`scripts/move.py`"),
                 ("CLAUDE.md", 4, "escapes-root", "`/Users/artem/notes.md`"),
+                ("CLAUDE.md", 8, "escapes-root", "`~/vault/**/*.md`"),
                 ("areas/hiring/bare.md", 4, "ambiguous",
                  "[[dup]] → areas/hiring/dup.md, core/dup.md"),
                 ("areas/hiring/escapes.md", 4, "escapes-root",

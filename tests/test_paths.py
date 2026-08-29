@@ -1,6 +1,12 @@
 import unittest
 
-from scripts.paths import escapes_root, is_path_token, normalise
+from scripts.paths import (
+    escapes_root,
+    is_path_token,
+    is_pattern,
+    normalise,
+    unwrap_tool,
+)
 
 
 class TestPathToken(unittest.TestCase):
@@ -64,6 +70,62 @@ class TestPathToken(unittest.TestCase):
         """
         for token in ('grep -rn "x" areas/', "sed 's/a/b/'"):
             self.assertFalse(is_path_token(token), token)
+
+
+class TestPattern(unittest.TestCase):
+    """Первая строка таблицы: глоб — шаблон, а не путь.
+
+    Все шесть образцов ниже предписаны самой спекой: `**/knowledge/**`
+    и `./knowledge/*/**` — секция 4, `**/items/**` и `**/*.base` —
+    секция 9. Пока гейт спрашивал у них «существует ли такой файл»,
+    каркас, предписанный спекой, не проходил гейт, предписанный ею же.
+    """
+
+    def test_glob_metacharacters_make_it_a_pattern(self):
+        for token in ("**/knowledge/**", "./knowledge/*/**", "**/items/**",
+                      "**/*.base", "**/README.md", "черновик-?.md"):
+            self.assertTrue(is_pattern(token), token)
+
+    def test_character_class_makes_it_a_pattern(self):
+        self.assertTrue(is_pattern("areas/hiring/[abc].md"))
+
+    def test_unclosed_bracket_is_not_a_character_class(self):
+        """Класс — `[...]`, а не одинокая скобка: `[черновик.md` остаётся именем."""
+        self.assertFalse(is_pattern("areas/hiring/[черновик.md"))
+
+    def test_concrete_paths_are_not_patterns(self):
+        for token in ("scripts/move.py", "areas/hiring/items/", "hooks.json",
+                      "views.base", "grep"):
+            self.assertFalse(is_pattern(token), token)
+
+    def test_a_pattern_is_still_a_token_the_gate_judges(self):
+        """Шаблон не отсеивается входным фильтром — иначе он выходил бы за корень.
+
+        Строку «глоб — не путь» нельзя реализовать внутри `is_path_token`:
+        отсеянный там токен не проверяется вообще, и глоб получал бы право
+        уйти наружу репозитория. Снимается ровно вопрос о существовании,
+        и снимает его отдельный предикат.
+        """
+        self.assertTrue(is_path_token("**/knowledge/**"))
+        self.assertTrue(escapes_root("~/vault/**/*.md"))
+        self.assertTrue(escapes_root("../../*/knowledge/**"))
+
+
+class TestToolWrapper(unittest.TestCase):
+    """Второе разворачивание: `Инструмент(...)` в `.claude/settings*.json`."""
+
+    def test_permission_rule_yields_its_argument(self):
+        self.assertEqual(unwrap_tool("Edit(./knowledge/*/**)"), "./knowledge/*/**")
+        self.assertEqual(unwrap_tool("Write(./knowledge/*/**)"), "./knowledge/*/**")
+
+    def test_plain_token_is_returned_unchanged(self):
+        for token in ("scripts/move.py", "**/knowledge/**", "grep",
+                      ".claude/scripts/hook.sh"):
+            self.assertEqual(unwrap_tool(token), token)
+
+    def test_a_filename_with_brackets_is_not_a_wrapper(self):
+        """Разворачивается только форма целиком: имя, скобка, аргумент, скобка."""
+        self.assertEqual(unwrap_tool("scripts/move(1).py"), "scripts/move(1).py")
 
 
 class TestRootBoundary(unittest.TestCase):

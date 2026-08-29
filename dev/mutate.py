@@ -19,7 +19,7 @@
 Рабочее дерево не трогается: мутация живёт в одноразовой копии под
 `tempfile.TemporaryDirectory()` и умирает вместе с ней.
 
-В `./check` инструмент не включается: четырнадцать копий дерева и четырнадцать
+В `./check` инструмент не включается: шестнадцать копий дерева и шестнадцать
 прогонов тестового модуля в них — десятки секунд, а `./check` обязан оставаться
 достаточно дешёвым, чтобы его гоняли постоянно. Запускается руками:
 
@@ -150,6 +150,37 @@ MUTATIONS = (
                 "            candidates = index.get(target, [])\n"
                 '            if not candidates and "/" in target:\n'
                 '                candidates = index.get(target.rsplit("/", 1)[-1], [])\n',
+            ),
+        ),
+    ),
+    Mutation(
+        criterion=1,
+        name="глоб снова считается конкретным путём",
+        module="tests.test_fixtures",
+        steps=(
+            substitution(
+                "scripts/paths.py",
+                '    return "*" in token or "?" in token '
+                "or bool(_GLOB_CLASS.search(token))\n",
+                "    return False\n",
+            ),
+        ),
+    ),
+    Mutation(
+        criterion=1,
+        name="шаблон уходит из-под проверки корня",
+        module="tests.test_fixtures",
+        steps=(
+            substitution(
+                "scripts/check_links.py",
+                '    if pathlib_rules.escapes_root(token, base=""):\n'
+                '        return "escapes-root"\n'
+                "    if pathlib_rules.is_pattern(token):\n"
+                "        return None\n",
+                "    if pathlib_rules.is_pattern(token):\n"
+                "        return None\n"
+                '    if pathlib_rules.escapes_root(token, base=""):\n'
+                '        return "escapes-root"\n',
             ),
         ),
     ),
