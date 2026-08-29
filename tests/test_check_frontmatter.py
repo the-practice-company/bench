@@ -439,6 +439,71 @@ class TestPerimeter(unittest.TestCase):
             root = tree(tmp, self._outside("vendor", {".gitignore": "vendor/\n"}))
             self.assertEqual(places(scan(root)), [])
 
+    def test_an_ignored_subtree_under_a_live_collection_is_outside(self):
+        """Рубежей два, и ни один не был закрыт тестом: они маскировали друг друга.
+
+        `scan` спрашивает периметр дважды: у `views.base` и у каждой записи.
+        Фикстуры `_outside` кладут за периметр коллекцию целиком, поэтому
+        вид отсекается первым рубежом, записи — вторым, и снятие любого
+        из двух по отдельности оставляло все 466 тестов зелёными
+        (проба 2026-08-29).
+
+        Здесь коллекция жива, вид читается, а часть его записей лежит
+        в поддереве, которого для git не существует. Судить их — тот же
+        вал находок на чужом материале, ради которого исключение и заведено,
+        только этажом ниже.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = tree(tmp, {
+                ".gitignore": "decisions/items/drafts/\n",
+                "decisions/README.md": DECLARATION,
+                "decisions/views.base": view("decisions/items"),
+                "decisions/items/x.md": BARE_RECORD,
+                "decisions/items/drafts/d.md": BARE_RECORD,
+            })
+            self.assertEqual(places(scan(root)), [
+                ("decisions/items/x.md", 1, "missing-required",
+                 "стартовый набор: поле created"),
+                ("decisions/items/x.md", 1, "missing-required",
+                 "стартовый набор: поле status у архетипа pipeline"),
+            ])
+
+    def test_a_declaration_outside_the_perimeter_is_not_read_at_all(self):
+        """Обратная сторона: рубеж у `views.base` держит то, чего второй не видит.
+
+        Проверка в цикле записей судит только записи, и потому снятие
+        рубежа у вида она маскирует: архивные записи всё равно отсекаются
+        ниже. Собой находку дают вид и объявление — кривой README архивной
+        коллекции. Проба 2026-08-29: снятый `_in_perimeter(rel_base, ...)`
+        тоже оставлял набор зелёным, обе проверки закрывали друг друга.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = tree(tmp, {
+                "decisions/README.md": DECLARATION,
+                "decisions/views.base": view("decisions/items"),
+                "decisions/items/x.md": WHOLE_RECORD,
+                "archive/decisions/README.md":
+                    "---\narchetype: pipeline\nvalues:\n  status: [open]\n"
+                    "policy: |\n  многострочное\n---\n",
+                "archive/decisions/views.base": view("archive/decisions/items"),
+            })
+            self.assertEqual(places(scan(root)), [])
+
+    def test_a_live_view_pointing_into_the_archive_judges_nothing(self):
+        """Второй способ дотянуться записью за периметр — сам вид.
+
+        `archive/` снимается префиксом от корня, поэтому вид, оставшийся
+        внутри репозитория и указывающий `file.inFolder("archive/...")`,
+        первую проверку проходит: нежив не он, а то, на что он смотрит.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = tree(tmp, {
+                "decisions/README.md": DECLARATION,
+                "decisions/views.base": view("archive/decisions/items"),
+                "archive/decisions/items/old.md": BARE_RECORD,
+            })
+            self.assertEqual(places(scan(root)), [])
+
     def test_a_negation_returns_the_subtree_to_the_perimeter(self):
         """Отрицание `.gitignore` сильнее префикса — как в гейте ссылок.
 
