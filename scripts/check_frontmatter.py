@@ -155,8 +155,26 @@ def scan(root, today=None):
         # README отсекается вместе со своим видом, а не отдельно: коллекция
         # внутри периметра, оставшаяся без объявления, — это снова пустой
         # словарь молча.
-        archetype, vocabulary = _declaration(root, collection / "README.md",
-                                             findings)
+        readme = collection / "README.md"
+        archetype, vocabulary = _declaration(root, readme, findings)
+
+        # Секция 14 дословно: «frontmatter не делает его записью — он лежит
+        # уровнем выше записей и в виды не попадает». Не попадает, пока вид
+        # фильтрует `items/`; у коллекции папок (`projects`) фильтр берёт
+        # зону целиком, и `rglob` сметает README самой коллекции. Гейт
+        # требовал у него `type`, `created` и `status` — в каждом инстансе,
+        # на файле, который положил сам рецепт.
+        #
+        # Послабление привязано к своему виду, а не к соседству с любым
+        # `views.base`: `projects/<имя>/README.md` — запись (секция 4,
+        # единственное такое место), и заведи проект свою коллекцию —
+        # широкое прочтение сняло бы его карточку с проверки вовсе.
+        #
+        # Сравнение в том же относительном виде, в каком идут и периметр,
+        # и отчёт: путь записи строится от `root / folder`, объявления —
+        # от `base_path.parent`, но обе стороны — чистые склейки от одного
+        # `root`, так что расходиться им негде.
+        declaration_rel = readme.relative_to(root).as_posix()
 
         for folder in base.folders:
             records_dir = root / folder
@@ -164,6 +182,8 @@ def scan(root, today=None):
                 continue
             for record in sorted(records_dir.rglob("*.md")):
                 rel = record.relative_to(root).as_posix()
+                if rel == declaration_rel:
+                    continue
                 if not _in_perimeter(rel, ignored):
                     continue
                 # Замещающий знак в **значении** поля — то же ложное

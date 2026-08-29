@@ -34,6 +34,14 @@ DECLARATION = ("---\narchetype: pipeline\nvalues:\n  status:\n"
 WHOLE_RECORD = "---\ntype: decision\ncreated: 2026-07-01\nstatus: open\n---\nтело\n"
 BARE_RECORD = "---\ntype: decision\n---\nни created, ни status\n"
 
+# Коллекция папок: вид фильтрует зону целиком, записи — README проектов
+# уровнем ниже. Единственная раскладка рецепта, где README и объявление,
+# и запись лежат под одним фильтром (секция 4, исключение про `projects`).
+PROJECTS_DECLARATION = ("---\narchetype: pipeline\nvalues:\n"
+                        "  status: [active, paused, done]\n---\n# Проекты\n")
+PROJECT_RECORD = ("---\ntype: project\ncreated: 2026-08-29\nstatus: active\n"
+                  "description: одна строка\n---\n# alpha\n")
+
 
 def tree(tmp, files):
     """Дерево из «относительный путь → содержимое». bytes пишутся как есть."""
@@ -140,6 +148,82 @@ class TestDeclarationIsNotSwallowed(unittest.TestCase):
             self.assertEqual(places(scan(root)), [
                 ("decisions/items/x.md", 5, "unparseable",
                  "повторный ключ: status (строка 5)"),
+            ])
+
+
+class TestCollectionOwnReadme(unittest.TestCase):
+    """README рядом с `views.base` — объявление коллекции, а не её запись.
+
+    Секция 14 дословно: «frontmatter не делает его записью — он лежит уровнем
+    выше записей и в виды не попадает». Не попадает, пока вид фильтрует
+    `items/`; у коллекции папок фильтр берёт зону целиком, и перечисление
+    `rglob` сметает README самой коллекции. Гейт требовал у него `type`,
+    `created` и `status` — в каждом инстансе, на файле, который положил
+    сам рецепт.
+
+    Послабление ровно на один путь: README, лежащий рядом с тем самым
+    `views.base`, чьё перечисление сейчас идёт. `projects/<имя>/README.md`
+    остаётся записью — секция 4, единственное место, где README является
+    записью: проект одна вещь, и разносить его карточку и его материалы
+    по двум местам значит ломать его пополам.
+    """
+
+    FILES = {
+        "projects/views.base": view("projects"),
+        "projects/README.md": PROJECTS_DECLARATION,
+        "projects/alpha/README.md": PROJECT_RECORD,
+    }
+
+    def _tree(self, tmp, extra=None):
+        files = dict(self.FILES)
+        files.update(extra or {})
+        return tree(tmp, files)
+
+    def test_the_collections_own_readme_is_not_a_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(places(scan(self._tree(tmp))), [])
+
+    def test_a_project_readme_is_still_a_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._tree(tmp, {
+                "projects/alpha/README.md":
+                    PROJECT_RECORD.replace("created: 2026-08-29\n", ""),
+            })
+            self.assertEqual(places(scan(root)), [
+                ("projects/alpha/README.md", 1, "missing-required",
+                 "стартовый набор: поле created"),
+            ])
+
+    def test_the_declaration_still_feeds_the_vocabulary(self):
+        """Исключение снимает файл с перечисления, но не с чтения словаря."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._tree(tmp, {
+                "projects/alpha/README.md":
+                    PROJECT_RECORD.replace("status: active", "status: живой"),
+            })
+            self.assertEqual(places(scan(root)), [
+                ("projects/alpha/README.md", 1, "value-outside-vocabulary",
+                 "status='живой' вне словаря ['active', 'paused', 'done']"),
+            ])
+
+    def test_a_nested_collection_does_not_excuse_the_project_record(self):
+        """Послабление привязано к своему виду, а не к соседству с любым.
+
+        Разводит два прочтения правила. «README рядом с каким-нибудь
+        `views.base` — не запись» выглядит тем же самым, пока у проекта
+        нет своей коллекции: заведи он её — и его карточка перестала бы
+        проверяться вовсе, то есть исключение секции 4 отменялось бы
+        появлением подпапки.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._tree(tmp, {
+                "projects/alpha/views.base": view("projects/alpha/items"),
+                "projects/alpha/README.md":
+                    PROJECT_RECORD.replace("created: 2026-08-29\n", ""),
+            })
+            self.assertEqual(places(scan(root)), [
+                ("projects/alpha/README.md", 1, "missing-required",
+                 "стартовый набор: поле created"),
             ])
 
 
