@@ -73,7 +73,10 @@ class TestVerdictSaysWhatItIs(unittest.TestCase):
     def _reasons(self):
         return [bashscan.judge("mv areas/a.md areas/b.md").reason,
                 bashscan.judge("git mv areas/a.md areas/b.md").reason,
-                bashscan.judge("echo привет > areas/a.md").reason]
+                bashscan.judge("echo привет > areas/a.md").reason,
+                bashscan.judge("echo привет > knowledge/repo/a.md").reason,
+                bashscan.judge("rm areas/a.md").reason,
+                bashscan.judge("rm sources/интервью.md").reason]
 
     def test_every_refusal_calls_itself_a_backstop(self):
         for reason in self._reasons():
@@ -173,6 +176,111 @@ class TestDirectWriteIntoContent(unittest.TestCase):
         self.assertFalse(bashscan.judge("echo 'x > areas/a.md'").blocked)
 
 
+class TestRedirectBeforeTheCommand(unittest.TestCase):
+    """Перенаправление, стоящее перед командой, — не команда. Иначе головой
+    сегмента оказывается оператор, и перемещение за ним проходит."""
+
+    def test_leading_redirect_does_not_hide_the_command(self):
+        for line in ("> tmp/log mv areas/a.md areas/b.md",
+                     ">tmp/log mv areas/a.md areas/b.md",
+                     "2>/dev/null mv areas/a.md areas/b.md",
+                     "2>&1 mv areas/a.md areas/b.md"):
+            self.assertTrue(bashscan.judge(line).blocked, line)
+
+    def test_a_redirect_after_the_command_still_reads_the_command(self):
+        self.assertTrue(bashscan.judge("mv areas/a.md areas/b.md > tmp/log").blocked)
+
+    def test_an_ordinary_redirect_is_not_a_command(self):
+        for line in ("echo привет > tmp/b", "python3 -m unittest 2>&1"):
+            self.assertFalse(bashscan.judge(line).blocked, line)
+
+
+class TestFindExec(unittest.TestCase):
+    """`find … -exec mv` — настоящее пакетное перемещение: одной командой
+    рушатся все входящие ссылки разом, а не одна. Зона берётся из аргументов
+    самого find: цель у команды из `-exec` — то, что нашёл find, а не токен
+    `{}`, который классифицировать нечем."""
+
+    def test_move_through_exec_is_blocked(self):
+        for line in ("find areas -name '*.md' -exec mv {} tmp/ \\;",
+                     "find areas -name '*.md' -exec mv -t tmp/ {} +",
+                     "find projects -type f -execdir mv {} tmp/ \\;"):
+            self.assertTrue(bashscan.judge(line).blocked, line)
+
+    def test_delete_through_exec_takes_the_zone_from_find_itself(self):
+        self.assertTrue(bashscan.judge("find areas -type f -exec rm {} \\;").blocked)
+
+    def test_exec_over_a_transient_zone_is_not_blocked(self):
+        """`tmp` — стол: чистка там её назначение, а не поломка."""
+        self.assertFalse(bashscan.judge("find tmp -type f -exec rm {} \\;").blocked)
+
+    def test_an_innocent_exec_is_not_blocked(self):
+        self.assertFalse(bashscan.judge("find areas -exec grep -l mv {} \\;").blocked)
+
+
+class TestDeleteInsideTheContentTree(unittest.TestCase):
+    """Удаление ломает входящие ссылки ровно так же, как перемещение: они
+    остаются на пути, которого больше нет. Реакция по зонам разная, потому
+    что удаление в них значит разное."""
+
+    def test_delete_in_a_long_lived_zone_is_blocked(self):
+        for line in ("rm areas/a.md", "rm -rf projects/старый",
+                     "git rm core/me.md", "unlink knowledge/repo/a.md",
+                     "cp areas/a.md /tmp/a.md && rm areas/a.md"):
+            self.assertTrue(bashscan.judge(line).blocked, line)
+
+    def test_delete_in_raw_sources_is_blocked_as_the_humans_operation(self):
+        """Неизменяемость сырья держит доказуемость производного знания:
+        удалённый задним числом источник делает недоказуемым каждый вывод,
+        который на него ссылается. Хук блокирует агента, не человека."""
+        verdict = bashscan.judge("rm sources/интервью.md")
+        self.assertTrue(verdict.blocked)
+        self.assertIn("человек", verdict.reason)
+
+    def test_appending_to_raw_sources_is_blocked_too(self):
+        """Правка сырья ломает доказуемость так же, как удаление, и ветка
+        записи хука её уже блокирует. Разная реакция на одну поломку в двух
+        ветках одного хука — расхождение, а не решение."""
+        self.assertTrue(bashscan.judge("echo x >> sources/интервью.md").blocked)
+
+    def test_delete_in_a_transient_zone_is_allowed(self):
+        """Стол и приёмник чистят по назначению. Блок здесь был бы ложным."""
+        for line in ("rm tmp/черновик.md", "rm -rf tmp/", "rm inbox/дамп.txt"):
+            self.assertFalse(bashscan.judge(line).blocked, line)
+
+    def test_delete_of_an_unclassifiable_path_is_allowed(self):
+        """Путь, чью зону прочитать нечем, — не повод блокировать."""
+        for line in ("rm build.log", "rm *.md", "rm -rf /tmp/сборка",
+                     "rm", "rm -rf ../соседний-репозиторий"):
+            self.assertFalse(bashscan.judge(line).blocked, line)
+
+    def test_removing_an_empty_directory_is_not_a_broken_link(self):
+        """`rmdir` сносит только пустой каталог, а на пустой каталог
+        ссылаться нечему. Механизма без поломки не заводим."""
+        self.assertFalse(bashscan.judge("rmdir areas/пустой").blocked)
+
+    def test_the_long_lived_refusal_names_confirmation_not_a_script(self):
+        """Спека даёт на удаление в долгоживущей зоне подтверждение автора,
+        а не скрипт. Назвать несуществующий скрипт — тот же дефект, что
+        назвать скрипт, делающий не то."""
+        reason = bashscan.judge("rm areas/a.md").reason
+        self.assertIn("find-refs", reason)
+        self.assertIn("автор", reason)
+
+
+class TestWritingIntoAReadOnlyZone(unittest.TestCase):
+    """`knowledge` — чужие git-сабмодули: туда не пишут вообще. Совет
+    «возьми Write» был бы советом сделать запрещённое."""
+
+    def test_the_refusal_does_not_offer_the_editing_tool(self):
+        reason = bashscan.judge("echo x > knowledge/repo/a.md").reason
+        self.assertIn("сабмодул", reason)
+        self.assertNotIn("Write", reason)
+
+    def test_a_writable_zone_still_gets_the_editing_tool(self):
+        self.assertIn("Write", bashscan.judge("echo x > areas/a.md").reason)
+
+
 class TestHereDocBodyIsData(unittest.TestCase):
     """Тело here-doc — данные, а не команды. Строка `mv old.md new.md` внутри
     документа о том, как делать нельзя, — текст, и блокировать её значит
@@ -203,16 +311,17 @@ class TestUncatchableIsHonest(unittest.TestCase):
     def test_named_forms_really_do_pass(self):
         for line in ('eval "$cmd"', 'bash -c "mv areas/a.md areas/b.md"',
                      "python3 scripts/rename.py areas/a.md",
-                     "cp areas/a.md /tmp/a.md",
-                     "tee areas/a.md < x", "rm areas/a.md",
+                     "cp areas/a.md areas/b.md",
+                     "tee areas/a.md < x",
                      "sed -i '' s/x/y/ areas/a.md",
                      "sudo -u root mv areas/a.md areas/b.md",
                      "'mv' areas/a.md areas/b.md",
                      "M=mv; $M areas/a.md areas/b.md",
                      "busybox mv areas/a.md areas/b.md",
                      "rsync --remove-source-files areas/a.md tmp/",
-                     "sh <<EOF\nmv areas/a.md areas/b.md\nEOF",
-                     "find areas -name '*.md' -exec mv {} tmp/ \\;"):
+                     "cd areas && rm a.md",
+                     "echo x > /Users/кто-то/репозиторий/areas/a.md",
+                     "sh <<EOF\nmv areas/a.md areas/b.md\nEOF"):
             self.assertFalse(bashscan.judge(line).blocked, line)
 
     def test_the_list_names_every_form_the_test_above_lets_through(self):
@@ -220,10 +329,18 @@ class TestUncatchableIsHonest(unittest.TestCase):
         проходит, обязана быть названа; проверка держит их вместе по ключевым
         словам, чтобы вычеркнутая строка списка не осталась незамеченной."""
         text = " ".join(bashscan.UNCATCHABLE)
-        for word in ("python", "eval", "bash -c", "rm", "cp", "tee", "sed -i",
-                     "find -exec", "имя команды в кавычках", "значение опции",
-                     "here-doc", "переменной", "мультикоманд", "rsync"):
+        for word in ("python", "eval", "bash -c", "cp", "tee", "sed -i",
+                     "имя команды в кавычках", "значение опции", "here-doc",
+                     "переменной", "мультикоманд", "rsync", "текущий каталог",
+                     "абсолютному пути", "функцию оболочки"):
             self.assertIn(word, text)
+
+    def test_the_list_no_longer_names_what_the_scanner_now_catches(self):
+        """Обратная сторона: строка «не ловим» про пойманное вводит
+        в заблуждение ровно так же, как молчаливая заглушка."""
+        text = " ".join(bashscan.UNCATCHABLE)
+        for word in ("find -exec", "последующим rm"):
+            self.assertNotIn(word, text)
 
 
 if __name__ == "__main__":

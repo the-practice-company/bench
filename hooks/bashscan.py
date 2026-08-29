@@ -28,13 +28,34 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts import zones
 
-# Закрытое множество форм перемещения. Матчеры ниже читают отсюда и своих
-# копий не держат: правка этой строки меняет поведение.
+# Закрытые множества форм. Матчеры ниже читают отсюда и своих копий
+# не держат: правка этих строк меняет поведение.
 BLOCKED = ("mv", "git mv")
+# Удаление ломает входящие ссылки ровно так же, как перемещение: они остаются
+# на пути, которого больше нет. Блокируется не всегда, а по зоне — см.
+# `_delete_verdict`. `rmdir` сюда не входит: он сносит только пустой каталог,
+# а на пустой каталог ссылаться нечему, то есть ломать нечего.
+DELETES = ("rm", "git rm", "unlink")
 
-_MOVE_COMMANDS = frozenset(form for form in BLOCKED if " " not in form)
-_GIT_SUBCOMMANDS = frozenset(form.split(" ", 1)[1] for form in BLOCKED
-                             if form.startswith("git "))
+
+def _forms(catalogue):
+    """Простые имена и подкоманды git из списка форм."""
+    return (frozenset(form for form in catalogue if " " not in form),
+            frozenset(form.split(" ", 1)[1] for form in catalogue
+                      if form.startswith("git ")))
+
+
+_MOVE_COMMANDS, _GIT_MOVE = _forms(BLOCKED)
+_DELETE_COMMANDS, _GIT_DELETE = _forms(DELETES)
+
+# Сырьё: неизменяемость держит доказуемость всего производного знания,
+# поэтому правка и удаление здесь — поломка, а не нарушение конвенции.
+_IMMUTABLE_RAW = frozenset({"sources"})
+
+# Зоны, где правка и удаление мимо инструментов ломают чужие ссылки или
+# доказуемость. Транзитные не сторожатся: чистка стола — его назначение,
+# и блок там был бы ложным.
+_GUARDED = frozenset(zones.LONG_LIVED | _IMMUTABLE_RAW)
 
 # Явный список неперехватываемого — часть поставки, а не оговорка. Каждая
 # строка проверена тестом `TestUncatchableIsHonest`: запись «не ловим»,
@@ -42,8 +63,9 @@ _GIT_SUBCOMMANDS = frozenset(form.split(" ", 1)[1] for form in BLOCKED
 # заглушка.
 UNCATCHABLE = (
     "удаление и перемещение через python-скрипт, запущенный из Bash",
-    "перемещение во временный каталог вне репозитория не командой mv: "
-    "cp с последующим rm, редактор, файловый менеджер",
+    "перемещение наружу репозитория редактором или файловым менеджером",
+    "удаление по пути, чью зону нечем прочитать: переход в зону, а следом "
+    "удаление по имени файла — текущий каталог сканеру не виден",
     "eval со строкой, собранной во время исполнения",
     "перемещение внутри строки, отданной в bash -c или sh -c, и внутри тела "
     "here-doc, отданного оболочке: и то и другое гасится как данные",
@@ -52,15 +74,15 @@ UNCATCHABLE = (
     "имя команды, приехавшее из переменной: раскрытие происходит в оболочке, "
     "сканеру видно только имя переменной",
     "значение опции обёртки, прочитанное как имя команды: sudo -u имя mv",
-    "перемещение подкомандой мультикоманд-бинарника: busybox mv",
+    "перемещение подкомандой мультикоманд-бинарника: busybox mv. Таблица "
+    "бинарник-подкоманда — машинерия ради случая, который на этой платформе "
+    "ни разу не наблюдался",
     "перемещение чужой командой с тем же действием: rsync "
     "--remove-source-files",
-    "удаление: rm ломает входящие ссылки ровно так же, как перемещение, "
-    "но спека закрывает перемещение и запись, а не удаление",
     "запись в дерево контента командой, а не перенаправлением: cp, tee, sed -i",
     "запись по абсолютному пути: сканер судит по первому сегменту пути "
     "и корня репозитория не знает",
-    "перемещение через find -exec и через функцию оболочки, чьё имя не mv",
+    "перемещение через функцию оболочки, чьё имя не mv",
 )
 
 # Порядок замены значим: `&&` и `||` обязаны уйти раньше `&` и `|`, иначе
@@ -89,6 +111,16 @@ _GIT_VALUE_OPTIONS = frozenset(("-C", "-c", "--git-dir", "--work-tree",
 # Перенаправление вывода: с номером дескриптора (`2>`), удвоенное (`>>`)
 # и с отменой noclobber (`>|`).
 _REDIRECT = re.compile(r"\d*>>?\|?\s*([^\s>|;&()]+)")
+
+# Перенаправление, стоящее перед командой, — не команда. Голый оператор
+# съедает и следующий токен: это его цель, а не имя команды.
+_FD_DUP = re.compile(r"(?<=>)&")
+_REDIRECT_BARE = re.compile(r"^\d*(?:>>?|<)\|?$")
+_REDIRECT_GLUED = re.compile(r"^\d*(?:>>?|<)\|?\S+$")
+
+# `find … -exec mv {} …` — настоящее пакетное перемещение: одной командой
+# рушатся все входящие ссылки разом, а не одна.
+_EXEC_FLAGS = frozenset(("-exec", "-execdir", "-ok", "-okdir"))
 
 # Начало here-doc ищется в два приёма. Сначала сам `<<` — но в строке, из
 # которой уже вынуто содержимое кавычек, иначе сдвиг внутри текста (`echo
@@ -119,6 +151,32 @@ _WRITE_REASON = (
     "не будет, и конец хода сочтёт поломку чужой. Правильный путь — "
     "инструмент Write или Edit, после них гейты отрабатывают сами. "
     + _BACKSTOP)
+
+# Спека даёт на удаление в долгоживущей зоне подтверждение автора, а не
+# скрипт. Назвать здесь несуществующий скрипт было бы тем же дефектом, что
+# назвать существующий, делающий не то, что обещано в тексте.
+_DELETE_REASON = (
+    "удаление ломает все входящие ссылки на файл ровно так же, как "
+    "перемещение: они остаются на пути, которого больше нет. На удаление "
+    "того, что уже живёт в долгоживущей зоне, нужно подтверждение автора; "
+    "find-refs до того показывает, кто ссылается, и во что это обойдётся. "
+    + _BACKSTOP)
+
+# Сырьё: правка и удаление — одна поломка, поэтому и текст один.
+_RAW_REASON = (
+    "сырьё неизменяемо по построению: поправленный или удалённый задним "
+    "числом источник делает недоказуемым каждый вывод, который на него "
+    "ссылается. Это поломка, а не нарушение конвенции. Правка и удаление "
+    "здесь остаются операцией человека — хук блокирует агента, не автора. "
+    + _BACKSTOP)
+
+# Чужие сабмодули: совет «возьми инструмент записи» был бы советом сделать
+# запрещённое, поэтому текст не называет ни его, ни подтверждение автора.
+_READONLY_REASON = (
+    "путь %s лежит в чужом git-сабмодуле: его содержимое ведётся в своём "
+    "репозитории, а пути внутри сабмодулей закрыты статически в настройках. "
+    "Ни писать, ни удалять здесь нечего — если файл нужен свой, ему место "
+    "в другой зоне. " + _BACKSTOP)
 
 
 class Verdict:
@@ -192,8 +250,13 @@ def _strip_heredocs(text):
 
 
 def _clean(text):
-    """Команда без того, что командой не является: тел here-doc и кавычек."""
-    return _strip_quoted(_strip_heredocs(text))
+    """Команда без того, что командой не является: тел here-doc и кавычек.
+
+    Заодно гасится `&` в дублировании дескриптора: в `2>&1` это не фоновый
+    запуск, и разделителем его считать нельзя — иначе следующая за ним
+    команда начинает новый сегмент с обломка `1`.
+    """
+    return _FD_DUP.sub(" ", _strip_quoted(_strip_heredocs(text)))
 
 
 def _segments(line):
@@ -227,8 +290,17 @@ def _basename(token):
 def _head(tokens):
     """Имя команды сегмента и её аргументы, сквозь обёртки и присваивания."""
     after_wrapper = False
+    skip_next = False
     for index, token in enumerate(tokens):
+        if skip_next:
+            skip_next = False
+            continue
         if _ASSIGNMENT.match(token):
+            continue
+        if _REDIRECT_BARE.match(token):
+            skip_next = True
+            continue
+        if _REDIRECT_GLUED.match(token):
             continue
         if _basename(token) in _TRANSPARENT:
             after_wrapper = True
@@ -279,15 +351,75 @@ def touches_zone(line, zone_names):
 
 
 def _written_into_content(line):
-    """Цель перенаправления, попадающая в долгоживущую зону, или None.
+    """Цель перенаправления, попадающая в сторожимую зону, или None.
 
-    Долгоживущие — те, на которые ссылаются: незамеченная правка там роняет
-    чужие ссылки. Транзитные не сторожатся: их содержимое исчезает
-    по построению, ссылок на него нет.
+    Сторожатся долгоживущие зоны — те, на которые ссылаются, — и сырьё,
+    чью неизменяемость держит доказуемость производного знания. Транзитные
+    не сторожатся: их содержимое исчезает по построению, ссылок на него нет.
     """
     for target in _REDIRECT.findall(_clean(line)):
-        if touches_zone(target, zones.LONG_LIVED):
+        if touches_zone(target, _GUARDED):
             return target
+    return None
+
+
+def _exec_commands(tokens):
+    """Команды, запускаемые через `-exec` у find: имя стоит сразу за флагом.
+
+    Зона берётся из аргументов самого find: цель такой команды — то, что он
+    нашёл, а не токен `{}`, который классифицировать нечем.
+    """
+    out = []
+    for index, token in enumerate(tokens):
+        if token in _EXEC_FLAGS and index + 1 < len(tokens):
+            out.append((tokens[index + 1], tokens[index + 2:], tokens))
+    return out
+
+
+def _candidates(tokens):
+    """Команды сегмента: своя голова и всё, что запущено через `-exec`.
+
+    Третий элемент — токены, среди которых ищется зона: у головы это её
+    собственные аргументы, у команды из `-exec` — весь вызов find.
+    """
+    name, rest = _head(tokens)
+    out = [] if name is None else [(name, rest, rest)]
+    out.extend(_exec_commands(tokens))
+    return out
+
+
+def _delete_verdict(pool):
+    """Приговор удалению: по зоне пути, а не по самой команде.
+
+    Путь, чью зону прочитать нечем, блоком не наказывается: блокировать
+    на непрочитанном пути — тот же ложный блок, только необъяснимый.
+    """
+    for token in pool:
+        if token.startswith("-"):
+            continue
+        zone = _first_segment(token)
+        if zone in zones.READ_ONLY:
+            return Verdict(True, _READONLY_REASON % token)
+        if zone in _IMMUTABLE_RAW:
+            return Verdict(True, _RAW_REASON)
+        if zone in zones.LONG_LIVED:
+            return Verdict(True, _DELETE_REASON)
+    return None
+
+
+def _verdict_for(name, rest, pool):
+    """Приговор одной команде или None, если она не из закрытых множеств."""
+    simple = _basename(name)
+    if simple in _MOVE_COMMANDS:
+        return Verdict(True, _MOVE_REASON)
+    if simple in _DELETE_COMMANDS:
+        return _delete_verdict(pool)
+    if simple == "git":
+        subcommand = _git_subcommand(rest)
+        if subcommand in _GIT_MOVE:
+            return Verdict(True, _MOVE_REASON)
+        if subcommand in _GIT_DELETE:
+            return _delete_verdict(pool)
     return None
 
 
@@ -299,14 +431,16 @@ def judge(line):
             # Справка ничего не двигает, а ложный блок на безобидной команде
             # учит обходить гейт целиком.
             continue
-        name, rest = _head(tokens)
-        if name is None:
-            continue
-        if _basename(name) in _MOVE_COMMANDS:
-            return Verdict(True, _MOVE_REASON)
-        if _basename(name) == "git" and _git_subcommand(rest) in _GIT_SUBCOMMANDS:
-            return Verdict(True, _MOVE_REASON)
+        for name, rest, pool in _candidates(tokens):
+            verdict = _verdict_for(name, rest, pool)
+            if verdict is not None:
+                return verdict
     target = _written_into_content(line)
     if target is not None:
+        zone = _first_segment(target)
+        if zone in zones.READ_ONLY:
+            return Verdict(True, _READONLY_REASON % target)
+        if zone in _IMMUTABLE_RAW:
+            return Verdict(True, _RAW_REASON)
         return Verdict(True, _WRITE_REASON % target)
     return Verdict(False)
