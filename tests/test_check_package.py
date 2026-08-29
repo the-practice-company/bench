@@ -23,13 +23,21 @@ def places(report):
             for f in sorted(report.findings, key=Finding.key)]
 
 
+# Хук, который в самом деле что-то запускает. Запись с пустым списком хуков
+# объявлена и инертна — ровно то, о чём теперь говорит проверка, — поэтому
+# минимальный пакет держит настоящую команду, а не пустой список.
+_COMMAND_HOOK = {"type": "command",
+                 "command": "${CLAUDE_PLUGIN_ROOT}/hooks/hook.sh SessionStart"}
+
+
 def _minimal_package(root):
     (root / ".claude-plugin").mkdir(parents=True)
     (root / ".claude-plugin" / "plugin.json").write_text(
         json.dumps({"name": "x", "version": "0.1.0"}), encoding="utf-8")
     (root / "hooks").mkdir()
     (root / "hooks" / "hooks.json").write_text(
-        json.dumps({"hooks": {"SessionStart": [{"matcher": "*", "hooks": []}]}}),
+        json.dumps({"hooks": {"SessionStart": [
+            {"matcher": "*", "hooks": [_COMMAND_HOOK]}]}}),
         encoding="utf-8")
     skill = root / "skills" / "drain-inbox"
     skill.mkdir(parents=True)
@@ -117,7 +125,7 @@ class TestPackageCheck(unittest.TestCase):
             root = _minimal_package(Path(tmp))
             (root / "hooks" / "hooks.json").write_text(
                 json.dumps({"hooks": {"SessionStart": [
-                    {"matcher": "", "hooks": []}
+                    {"matcher": "", "hooks": [_COMMAND_HOOK]}
                 ]}}), encoding="utf-8")
             self.assertEqual(places(check(root)), [])
 
@@ -131,7 +139,7 @@ class TestPackageCheck(unittest.TestCase):
             root = _minimal_package(Path(tmp))
             (root / "hooks" / "hooks.json").write_text(
                 json.dumps({"hooks": {"PreToolUse": [
-                    {"matcher": "Edit|", "hooks": []}
+                    {"matcher": "Edit|", "hooks": [_COMMAND_HOOK]}
                 ]}}), encoding="utf-8")
             self.assertEqual(
                 places(check(root)),
@@ -710,6 +718,33 @@ class TestPackageCheck(unittest.TestCase):
                 json.dumps({"hooks": {}}), encoding="utf-8")
             self.assertEqual(places(check(root)), [])
 
+    def test_a_declared_hook_with_nothing_to_run_is_a_finding(self):
+        """Хук объявлен, форма законна, запускать нечего — тот же промах формы.
+
+        Ровно то же, что и файл без верхнего ключа `hooks`, только уровнем
+        ниже: JSON разбирается, проверка молчит, а ни одна команда не
+        выполняется. Три формы одной поломки — запись без ключа `hooks`,
+        пустой список хуков и `type: command` без самой команды.
+        """
+        cases = [
+            ('{"hooks": {"PreToolUse": [{}]}}',
+             "hooks.PreToolUse[0]: нет ключа hooks: запускать нечего"),
+            ('{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": []}]}}',
+             "hooks.PreToolUse[0].hooks: пустой список: запускать нечего"),
+            ('{"hooks": {"PreToolUse": [{"hooks": [{"type": "command"}]}]}}',
+             "hooks.PreToolUse[0].hooks[0]: тип command без непустой команды"),
+            ('{"hooks": {"PreToolUse": [{"hooks": [{"type": "command",'
+             ' "command": "   "}]}]}}',
+             "hooks.PreToolUse[0].hooks[0]: тип command без непустой команды"),
+        ]
+        for text, detail in cases:
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as tmp:
+                root = _minimal_package(Path(tmp))
+                (root / "hooks" / "hooks.json").write_text(text, encoding="utf-8")
+                self.assertEqual(
+                    places(check(root)),
+                    [("hooks/hooks.json", 1, "unparseable", detail)])
+
     def test_a_skill_directory_named_adopt_is_still_adopt(self):
         """`startswith("skills/adopt-")` требовал дефиса.
 
@@ -752,6 +787,46 @@ class TestPackageCheck(unittest.TestCase):
                     places(check(root)),
                     [(rel, 5, "destructive-example", line)])
 
+    def test_the_sibling_spelling_of_every_listed_form_is_caught_too(self):
+        """Перечисление было короче того, что перечисляет.
+
+        `git restore` — сегодняшнее написание `git checkout --`, и класс
+        ловил устаревшую форму, пропуская ту, которую рекомендует
+        документация. `rm` в конце звена конвейера не имел аргумента, а
+        разбор требовал непробел следом. Удаление одного файла (`os.remove`,
+        `unlink`) не было названо вовсе, как и целое семейство «переписать
+        на месте»: `sed -i`, `tee`, `cp`, `dd`, `install`, `shred`, `chmod`,
+        `git worktree remove`.
+
+        `dd if=/dev/zero` даёт вдобавок `absolute-path`: `/dev/` — корень из
+        списка, и это верно, а не побочный шум.
+        """
+        forms = [
+            ("git restore .", ["destructive-example"]),
+            ("find . -name '*.md' | xargs rm", ["destructive-example"]),
+            ('os.remove("notes.md")', ["destructive-example"]),
+            ('os.unlink("notes.md")', ["destructive-example"]),
+            ("target.unlink()", ["destructive-example"]),
+            (">| notes.md", ["destructive-example"]),
+            ("sed -i '' 's/a/b/' notes.md", ["destructive-example"]),
+            ("tee notes.md < in.md", ["destructive-example"]),
+            ("cp new.md notes.md", ["destructive-example"]),
+            ("dd if=/dev/zero of=notes.md",
+             ["absolute-path", "destructive-example"]),
+            ("install -d areas/new", ["destructive-example"]),
+            ("git worktree remove ../wt", ["destructive-example"]),
+            ("shred notes.md", ["destructive-example"]),
+            ("chmod -R 000 areas", ["destructive-example"]),
+        ]
+        for form, classes in forms:
+            with self.subTest(form=form), tempfile.TemporaryDirectory() as tmp:
+                root = _minimal_package(Path(tmp))
+                line = "Сделай: %s" % form
+                rel = _adopt_skill(root, line)
+                self.assertEqual(
+                    places(check(root)),
+                    [(rel, 5, cls, line) for cls in classes])
+
     def test_prose_in_adopt_instructions_is_not_destructive(self):
         """Цена расширения: цитата markdown и стрелка остаются прозой.
 
@@ -762,7 +837,17 @@ class TestPackageCheck(unittest.TestCase):
                      "> см. docs/roadmap.md, там таблица",
                      "Переход a -> b ничего не удаляет",
                      "Разметка <br>текста",
-                     "Каталог areas/ остаётся на месте"):
+                     "Каталог areas/ остаётся на месте",
+                     # Цена расширения на хвост конвейера, если считать
+                     # признаком конец строки: прямая речь запрета краснеет
+                     # раньше примера, и класс ловит предупреждение.
+                     "Никогда не пиши в инструкции `rm`",
+                     "Опасны и `mv`, и `rmdir`",
+                     # Цена расширения на `install`, если считать признаком
+                     # любой ключ: это установка зависимости, а не запись в
+                     # чужое дерево.
+                     "Поставь редактор: `brew install --cask obsidian`",
+                     "Зависимости: `pip install -r requirements.txt`"):
             with self.subTest(line=line), tempfile.TemporaryDirectory() as tmp:
                 root = _minimal_package(Path(tmp))
                 _adopt_skill(root, line)
@@ -784,6 +869,38 @@ class TestPackageCheck(unittest.TestCase):
                     [("skills/drain-inbox", 1, "skill-without-eval",
                       "пустой eval.txt: срабатывание не проверяется")])
 
+    def test_an_eval_of_only_comments_is_not_a_trigger_eval(self):
+        """«Непусто после strip» — не то же самое, что «есть фраза срабатывания».
+
+        Файл из одних комментариев не содержит ни одной фразы, на которую
+        скилл обязан сработать, а проверку проходил: `strip()` видит в нём
+        текст. Одинокая BOM — тот же промах с другой стороны: `\\ufeff` не
+        пробельный символ, и файл из одного невидимого знака считался эвалом.
+        """
+        cases = [
+            ("# только комментарий\n# и ещё один\n",
+             "в eval.txt только комментарии: срабатывание не проверяется"),
+            ("\ufeff", "пустой eval.txt: срабатывание не проверяется"),
+            ("\ufeff# только комментарий\n",
+             "в eval.txt только комментарии: срабатывание не проверяется"),
+        ]
+        for content, detail in cases:
+            with self.subTest(content=repr(content)), tempfile.TemporaryDirectory() as tmp:
+                root = _minimal_package(Path(tmp))
+                (root / "skills" / "drain-inbox" / "eval.txt").write_text(
+                    content, encoding="utf-8")
+                self.assertEqual(
+                    places(check(root)),
+                    [("skills/drain-inbox", 1, "skill-without-eval", detail)])
+
+    def test_a_bom_before_the_first_trigger_phrase_is_still_a_trigger_eval(self):
+        """Цена снятия BOM — ноль живых эвалов: редактор ставит её и молчит."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "skills" / "drain-inbox" / "eval.txt").write_text(
+                "\ufeff# что должно сработать\nразбери инбокс\n", encoding="utf-8")
+            self.assertEqual(places(check(root)), [])
+
     def test_a_quoted_whitespace_description_is_empty(self):
         """Кавычки сохраняют пробелы, и `not fields.get(...)` их пропускал.
 
@@ -798,6 +915,44 @@ class TestPackageCheck(unittest.TestCase):
                 places(check(root)),
                 [("skills/drain-inbox", 1, "skill-without-description",
                   "пустое описание")])
+
+    def test_the_yaml_spellings_of_nothing_are_an_empty_description(self):
+        """`null` и `~` — то, чем YAML записывает отсутствие значения.
+
+        Парсер frontmatter скаляры не толкует, и до проверки доезжает
+        строка из четырёх знаков: `_nonblank` объявлял её описанием. Форма
+        не экзотическая — именно её пишет большинство инструментов,
+        сериализующих пустое поле. Пустой flow-список — та же запись
+        отсутствия, и он тоже проходил зелёным.
+
+        Проверка не зависит от того, толкует ли парсер скаляры: начнёт
+        возвращать `None` — ответ не изменится.
+        """
+        for text in ("null", "Null", "NULL", "~", "[]"):
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as tmp:
+                root = _minimal_package(Path(tmp))
+                (root / "skills" / "drain-inbox" / "SKILL.md").write_text(
+                    "---\nname: drain-inbox\ndescription: %s\n---\n" % text,
+                    encoding="utf-8")
+                self.assertEqual(
+                    places(check(root)),
+                    [("skills/drain-inbox", 1, "skill-without-description",
+                      "пустое описание")])
+
+    def test_a_useless_description_is_not_this_check_s_business(self):
+        """`0` и `false` — описание есть, толку от него нет.
+
+        Класс называется «скилл без описания», и судить качество написанного
+        он не берётся: иначе граница между формой и содержимым, которую
+        держит незыблемое №1, проходит там, где её проведёт регулярка.
+        """
+        for text in ("0", "false"):
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as tmp:
+                root = _minimal_package(Path(tmp))
+                (root / "skills" / "drain-inbox" / "SKILL.md").write_text(
+                    "---\nname: drain-inbox\ndescription: %s\n---\n" % text,
+                    encoding="utf-8")
+                self.assertEqual(places(check(root)), [])
 
     def test_every_relative_call_form_in_a_skill_is_caught(self):
         """Регулярка требовала запускающего слова и знала один каталог.
@@ -822,6 +977,42 @@ class TestPackageCheck(unittest.TestCase):
                     places(check(root)),
                     [("skills/drain-inbox/SKILL.md", 5, "relative-path-in-skill",
                       form)])
+
+    def test_the_dot_slash_spellings_are_caught_and_plugin_root_still_is_not(self):
+        """Обе стороны одного размена, в одном тесте.
+
+        Расширяя класс на прозу без запускающего слова, в запрет слева
+        внесли косую — чтобы законная форма `${CLAUDE_PLUGIN_ROOT}/scripts/…`
+        не краснела. Косая слева стоит и в `./scripts/…`, и в
+        `../scripts/…` — то есть в двух самых частых написаниях, с которых
+        класс и начинался: исходная поломка перестала ловиться. Законную
+        форму гасит отдельное условие по `${CLAUDE_PLUGIN_ROOT}` в строке,
+        а не запрет слева, — поэтому обе стороны пиннятся вместе, и
+        следующее сужение не сможет разменять одну на другую молча.
+        """
+        for form in ("Запусти `./scripts/check_links.py .`",
+                     "Запусти `../scripts/check_links.py .`",
+                     "Запусти `bash ./hooks/hook.sh`"):
+            with self.subTest(form=form), tempfile.TemporaryDirectory() as tmp:
+                root = _minimal_package(Path(tmp))
+                (root / "skills" / "drain-inbox" / "SKILL.md").write_text(
+                    "---\nname: drain-inbox\ndescription: x\n---\n%s\n" % form,
+                    encoding="utf-8")
+                self.assertEqual(
+                    places(check(root)),
+                    [("skills/drain-inbox/SKILL.md", 5, "relative-path-in-skill",
+                      form)])
+        for form in ('Запусти `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/drain.py"`',
+                     'Запусти `sh "${CLAUDE_PLUGIN_ROOT}/hooks/hook.sh"`',
+                     # Дефис в запрете слева: чужой каталог, чьё имя кончается
+                     # именем нашего, — не ссылка в пакет.
+                     "Твой каталог `my-scripts/build.py` не наш"):
+            with self.subTest(form=form), tempfile.TemporaryDirectory() as tmp:
+                root = _minimal_package(Path(tmp))
+                (root / "skills" / "drain-inbox" / "SKILL.md").write_text(
+                    "---\nname: drain-inbox\ndescription: x\n---\n%s\n" % form,
+                    encoding="utf-8")
+                self.assertEqual(places(check(root)), [])
 
     def test_a_relative_command_in_hooks_json_is_caught(self):
         """Та же дыра в hooks.json: команда хука тоже путь, и тоже чужой."""
