@@ -23,9 +23,13 @@ class TestFindRoot(unittest.TestCase):
                                                         encoding="utf-8")
             self.assertEqual(boundary.find_root(root / "areas" / "hiring"), root)
 
-    def test_search_stops_at_git_root(self):
-        """Не выше git-корня: git обязателен, значит корень рецепта не может
-        лежать выше него."""
+    def test_a_marker_outside_any_git_repo_is_not_a_root(self):
+        """Git обязателен (секция 8): без него не будет ни истории, ни
+        чекпоинтов, ни списка файлов хода.
+
+        `.git` здесь лежит **ниже** маркера, то есть в другом репозитории,
+        и корнем маркер не делает.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             outer = Path(tmp)
             (outer / ".twinkle-repo-builder").write_text("{}", encoding="utf-8")
@@ -33,6 +37,48 @@ class TestFindRoot(unittest.TestCase):
             (inner / "areas").mkdir(parents=True)
             (inner / ".git").mkdir()
             self.assertIsNone(boundary.find_root(inner / "areas"))
+
+    def test_a_context_repo_inside_a_code_repo_is_a_root(self):
+        """Контекстный репозиторий законно живёт подкаталогом кодового, и
+        тогда `.git` лежит выше маркера. Требовать `.git` рядом с маркером
+        значило бы не найти корня в этой конфигурации — а на разъехавшиеся
+        корни у `SessionStart` заведена своя ветка, и она бы умерла."""
+        with tempfile.TemporaryDirectory() as tmp:
+            outer = Path(tmp).resolve()
+            (outer / ".git").mkdir()
+            context = outer / "context"
+            (context / "areas").mkdir(parents=True)
+            (context / ".twinkle-repo-builder").write_text("{}",
+                                                           encoding="utf-8")
+            self.assertEqual(boundary.find_root(context / "areas"), context)
+
+    def test_a_nested_git_repo_does_not_end_the_search(self):
+        """`knowledge/` держит чужие сабмодули **по построению**.
+
+        Остановка на первом встреченном `.git` означала, что любой ход,
+        чей `cwd` оказался внутри сабмодуля, не находил корня вовсе — и
+        незыблемое №6 не проверялось ни для одной цели, а не только для
+        целей внутри `knowledge`.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve() / "repo"
+            vendor = root / "knowledge" / "vendor"
+            vendor.mkdir(parents=True)
+            (root / ".git").mkdir()
+            (root / ".twinkle-repo-builder").write_text("{}", encoding="utf-8")
+            (vendor / ".git").mkdir()
+            self.assertEqual(boundary.find_root(vendor), root)
+
+    def test_a_git_file_counts_as_a_git_root(self):
+        """У сабмодуля и у рабочего дерева git `.git` — файл-указатель, а не
+        каталог. Контекстный репозиторий бывает и тем и другим, и требовать
+        от него каталога значит не найти корня там, где он есть."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve() / "repo"
+            (root / "areas").mkdir(parents=True)
+            (root / ".git").write_text("gitdir: ../real/.git\n", encoding="utf-8")
+            (root / ".twinkle-repo-builder").write_text("{}", encoding="utf-8")
+            self.assertEqual(boundary.find_root(root / "areas"), root)
 
     def test_no_marker_is_none(self):
         with tempfile.TemporaryDirectory() as tmp:

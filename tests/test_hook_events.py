@@ -283,6 +283,166 @@ class TestPreToolUseDegradation(unittest.TestCase):
         self.assertIn("граница", result.stderr)
 
 
+class TestPreToolUseBash(unittest.TestCase):
+    """Ветка Bash: `hooks.json` возит на неё матчер `Bash` отдельным событием.
+
+    Пока в диспетчере не было такой записи, весь сканер команд был мёртвым
+    кодом: событие приезжало, не находило обработчика и получало «не
+    обслуживается» с кодом 0 — то есть голый `mv` проходил, а строка отказа
+    рассказывала про диспетчер, а не про перемещение.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = make_repo(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def _payload(self, command, **extra):
+        payload = {"hook_event_name": "PreToolUse", "cwd": str(self.root),
+                   "tool_name": "Bash", "tool_input": {"command": command}}
+        payload.update(extra)
+        return payload
+
+    def test_a_bare_mv_is_blocked_and_names_the_right_path(self):
+        result = call("PreToolUseBash", self._payload("mv core/me.md core/other.md"),
+                      self.root)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("перемещение", result.stderr)
+        self.assertIn("find-refs", result.stderr)
+
+    def test_a_write_into_the_tree_by_redirect_is_blocked(self):
+        """Сканер судит не только о `mv`: перенаправление в дерево контента
+        идёт мимо гейтов и мимо списка файлов хода."""
+        result = call("PreToolUseBash", self._payload("echo x > core/me.md"),
+                      self.root)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("мимо гейтов", result.stderr)
+
+    def test_a_harmless_command_passes_silently(self):
+        result = call("PreToolUseBash", self._payload("ls core"), self.root)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stderr.strip(), "")
+
+    def test_a_missing_command_field_is_visible_and_not_a_block(self):
+        """Поля нет — судить не о чем. Блок по неразобранному вводу был бы
+        блоком по собственной слепоте (незыблемое №4)."""
+        payload = {"hook_event_name": "PreToolUse", "cwd": str(self.root),
+                   "tool_name": "Bash", "tool_input": {"неизвестно": 1}}
+        result = call("PreToolUseBash", payload, self.root)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("команда не разобрана", result.stderr)
+
+    def test_a_command_that_is_not_a_string_is_visible_and_not_a_block(self):
+        result = call("PreToolUseBash", self._payload(["mv", "a", "b"]), self.root)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("команда не разобрана", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+
+class TestZoneCase(unittest.TestCase):
+    """Зона выводится из первого сегмента пути, и регистр этот вывод ломал.
+
+    `realpath` на macOS регистр не приводит: `SOURCES/x.md` пишет тот же
+    inode, что `sources/x.md`, но зоной не считался — обработчик уходил
+    в молчаливую ветку «вне зон». Тем же движением портился список файлов
+    хода: git индексирует `sources/x.md`, а записано было `SOURCES/x.md`,
+    и `Stop` считал бы правку агента чужой.
+
+    На файловой системе, различающей регистр, тот же путь — действительно
+    другой файл, и утверждение здесь другое: тест проверяет обе развилки,
+    а не пропускает себя.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = make_repo(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def _blind_to_case(self):
+        return (self.root / "SOURCES").exists()
+
+    def test_an_immutable_zone_reached_in_another_case_is_still_blocked(self):
+        (self.root / "sources" / "x.md").write_text("как получено\n",
+                                                    encoding="utf-8")
+        payload = {"hook_event_name": "PreToolUse", "cwd": str(self.root),
+                   "tool_name": "Write",
+                   "tool_input": {"file_path": str(self.root / "SOURCES" / "x.md")}}
+        result = call("PreToolUse", payload, self.root)
+        if self._blind_to_case():
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("неизменяема", result.stderr)
+        else:
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(result.stderr.strip(), "")
+
+    def test_a_long_lived_zone_in_another_case_still_warns(self):
+        (self.root / "core" / "me.md").write_text("уже есть\n", encoding="utf-8")
+        payload = {"hook_event_name": "PreToolUse", "cwd": str(self.root),
+                   "tool_name": "Write",
+                   "tool_input": {"file_path": str(self.root / "CORE" / "me.md")}}
+        result = call("PreToolUse", payload, self.root)
+        self.assertEqual(result.returncode, 0)
+        if self._blind_to_case():
+            self.assertIn("core", result.stderr)
+        else:
+            self.assertEqual(result.stderr.strip(), "")
+
+    def test_the_recorded_path_is_spelled_the_way_git_indexes_it(self):
+        from hooks import turnfiles
+        (self.root / "areas" / "a.md").write_text("текст\n", encoding="utf-8")
+        payload = {"hook_event_name": "PostToolUse", "cwd": str(self.root),
+                   "session_id": "s1", "tool_name": "Write",
+                   "tool_input": {"file_path": str(self.root / "AREAS" / "a.md")}}
+        call("PostToolUse", payload, self.root)
+        expected = "areas/a.md" if self._blind_to_case() else "AREAS/a.md"
+        self.assertEqual(turnfiles.listing(self.root, "s1"), [expected])
+
+
+class TestNestedRepoBoundary(unittest.TestCase):
+    """`knowledge/` держит чужие репозитории по построению, и ход, чей `cwd`
+    оказался внутри одного из них, не имеет права терять границу."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = make_repo(self._tmp.name)
+        self.vendor = self.root / "knowledge" / "vendor"
+        self.vendor.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=str(self.vendor), check=True)
+        self.addCleanup(self._tmp.cleanup)
+
+    def test_a_write_outside_the_root_is_blocked_from_inside_a_submodule(self):
+        outside = Path(self._tmp.name) / "elsewhere.md"
+        payload = {"hook_event_name": "PreToolUse", "cwd": str(self.vendor),
+                   "tool_name": "Write", "tool_input": {"file_path": str(outside)}}
+        result = call("PreToolUse", payload, self.vendor)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("граница", result.stderr)
+
+
+class TestResidualRisks(unittest.TestCase):
+    """Названный остаточный риск — то, чем бэкстоп отличается от притворной
+    песочницы. Регистр взят у `bashscan.UNCATCHABLE`, и проверяется он так же:
+    запись обязана быть на месте, иначе следующий читатель сочтёт дыру
+    недосмотром."""
+
+    def test_a_hard_link_out_of_sources_is_named(self):
+        """`realpath` разворачивает символические ссылки и не видит жёстких:
+        два имени ведут в один inode, и правка `core/alias.md` пишет inode
+        источника, получая обычное предупреждение `core`. Механизма против
+        этого нет намеренно — искать второе имя inode значит обходить дерево
+        на каждой записи."""
+        from hooks import hook
+        self.assertIn("жёсткая ссылка", hook.on_pre_tool_use.__doc__)
+
+    def test_the_cost_of_filtering_findings_is_named(self):
+        """Фильтр по записанному файлу выбрасывает ровно тот файл, который
+        находку вызвал: новый `areas/dup.md` делает неоднозначным `[[dup]]`
+        в `core/me.md`, и об этом не будет сказано. Решение оставлено, цена
+        записана."""
+        from hooks import hook
+        self.assertIn("вызвавший", hook.on_post_tool_use.__doc__)
+
+
 class TestTurnFiles(unittest.TestCase):
     """Список файлов хода не имеет права делать дерево грязным: незакоммиченное
     по решению секции 8 означает «здесь работал человек», и `SessionStart`
@@ -343,13 +503,53 @@ class TestTurnFiles(unittest.TestCase):
         self.assertEqual(turnfiles.listing(self.root, "../../s1"), ["areas/a.md"])
 
     def test_recording_without_git_reports_instead_of_returning_silently(self):
-        """`.git/` может не быть: маркер рецепта ищется раньше него. Молча
-        не записать — заглушка (незыблемое №4): `Stop` тогда сочтёт чужим всё,
-        что агент только что написал, и не скажет почему."""
+        """`.git/` может не быть. Молча не записать — заглушка (незыблемое
+        №4): `Stop` тогда сочтёт чужим всё, что агент только что написал,
+        и не скажет почему."""
         from hooks import turnfiles
         import shutil
         shutil.rmtree(self.root / ".git")
         self.assertFalse(turnfiles.record(self.root, "s1", "areas/a.md"))
+
+    def test_a_git_file_pointer_is_followed(self):
+        """У сабмодуля и у рабочего дерева git `.git` — файл со строкой
+        `gitdir:`, а не каталог.
+
+        Проверка «родитель цели существует» на таком файле истинна, и запись
+        падала `NotADirectoryError` — то есть весь `PostToolUse` умирал вместе
+        с отчётом гейтов по только что записанному файлу.
+        """
+        from hooks import turnfiles
+        import shutil
+        real = Path(self._tmp.name) / "real"
+        shutil.move(str(self.root / ".git"), str(real))
+        (self.root / ".git").write_text("gitdir: ../real\n", encoding="utf-8")
+        self.assertTrue(turnfiles.record(self.root, "s1", "areas/a.md"))
+        self.assertEqual(turnfiles.listing(self.root, "s1"), ["areas/a.md"])
+        written = [p.name for p in real.iterdir()
+                   if p.name.startswith("twinkle-turn")]
+        self.assertEqual(len(written), 1, written)
+
+    def test_an_absolute_git_pointer_is_followed(self):
+        """Рабочее дерево git пишет указатель абсолютным путём, сабмодуль —
+        относительным. Обе формы обязаны читаться."""
+        from hooks import turnfiles
+        import shutil
+        real = Path(self._tmp.name) / "real"
+        shutil.move(str(self.root / ".git"), str(real))
+        (self.root / ".git").write_text("gitdir: %s\n" % real, encoding="utf-8")
+        self.assertTrue(turnfiles.record(self.root, "s1", "areas/a.md"))
+
+    def test_a_broken_git_pointer_degrades_instead_of_crashing(self):
+        """Указатель, который никуда не ведёт, — это уже описанное ослабление,
+        а не обвал: `False`, названная строка и отчёт гейтов на месте."""
+        from hooks import turnfiles
+        import shutil
+        shutil.rmtree(self.root / ".git")
+        (self.root / ".git").write_text("gitdir: ../нет-такого\n",
+                                        encoding="utf-8")
+        self.assertFalse(turnfiles.record(self.root, "s1", "areas/a.md"))
+        self.assertEqual(turnfiles.listing(self.root, "s1"), [])
 
 
 class TestPostToolUse(unittest.TestCase):
@@ -514,15 +714,31 @@ class TestPostToolUse(unittest.TestCase):
         self.assertIn("areas/broken.md:1 missing-required", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
 
-    def test_a_repo_without_git_says_the_turn_list_was_not_written(self):
-        """Маркер рецепта ищется раньше `.git`, так что корень может найтись
-        там, где писать список хода некуда. `Stop` тогда сочтёт чужим всё,
-        что агент написал, — и это обязано быть сказано вслух."""
+    def test_a_broken_git_pointer_says_the_turn_list_was_not_written(self):
+        """Корень найден, а писать список хода некуда: `.git` есть, но это
+        файл-указатель в никуда. `Stop` тогда сочтёт чужим всё, что агент
+        написал, — и это обязано быть сказано вслух.
+
+        Отсюда же держится и вторая половина контракта: `PostToolUse` при
+        этом досчитывает гейты. Раньше на этой фикстуре обработчик падал
+        `NotADirectoryError`, и отчёт по только что записанному файлу
+        исчезал целиком.
+
+        Указатель в никуда выбран не для красоты: в отдельно стоящем
+        репозитории без `.git` корня больше не находят вовсе
+        (tests/test_boundary.py::test_a_marker_outside_any_git_repo_is_not_a_root),
+        и до этой строки дело не доходит.
+        """
         import shutil
+        target = self._broken()
         shutil.rmtree(self.root / ".git")
-        result = call("PostToolUse", self._payload(self._broken()), self.root)
+        (self.root / ".git").write_text("gitdir: ../нет-такого\n",
+                                        encoding="utf-8")
+        result = call("PostToolUse", self._payload(target), self.root)
         self.assertEqual(result.returncode, 0)
         self.assertIn("список файлов хода", result.stderr)
+        self.assertIn("areas/broken.md:1 unresolved", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
 
 
 def git(root, *args, **kwargs):
@@ -671,13 +887,16 @@ class TestSessionStart(unittest.TestCase):
         call("SessionStart", self._payload(), self.root)
         self.assertEqual(status_of(self.root).strip(), "")
 
-    def test_missing_git_never_reads_as_a_clean_tree(self):
-        """Маркер рецепта ищется раньше `.git`, поэтому корень может найтись
-        там, где git не ответит. Пустой ответ от неспросившего git
-        неотличим от чистого дерева — и сводка соврала бы «незакоммиченного:
-        нет» ровно там, где не знает ничего (незыблемое №4)."""
+    def test_silent_git_never_reads_as_a_clean_tree(self):
+        """Корень найден, а git не отвечает: `.git` есть, но это указатель
+        в никуда — форма, в которой приезжают сабмодуль и рабочее дерево.
+        Пустой ответ от неспросившего git неотличим от чистого дерева, и
+        сводка соврала бы «незакоммиченного: нет» ровно там, где не знает
+        ничего (незыблемое №4)."""
         import shutil
         shutil.rmtree(self.root / ".git")
+        (self.root / ".git").write_text("gitdir: ../нет-такого\n",
+                                        encoding="utf-8")
         result = call("SessionStart", self._payload(), self.root)
         self.assertEqual(result.returncode, 0)
         self.assertNotIn("незакоммиченного: нет", result.stdout)

@@ -26,25 +26,64 @@ from pathlib import Path
 _SAFE = re.compile(r"[^A-Za-z0-9_.-]")
 
 
-def _path(root, session_id):
-    return Path(root) / ".git" / ("twinkle-turn-%s" % _SAFE.sub("_", str(session_id)))
+def _git_dir(root):
+    """Настоящий каталог `.git` этого корня, или None.
+
+    У сабмодуля и у рабочего дерева git `.git` — не каталог, а файл со
+    строкой `gitdir: путь`. Проверка «родитель цели существует» на таком
+    файле истинна, и запись падала `NotADirectoryError`: умирал весь
+    `PostToolUse`, а вместе с ним пропадал отчёт гейтов по только что
+    записанному файлу. Причиной в stderr значился код возврата hook.py.
+
+    Указатель бывает и относительным (так пишет сабмодуль), и абсолютным
+    (так пишет `git worktree`); относительный считается от корня. Указатель,
+    который никуда не ведёт, — не обвал, а описанное ниже ослабление.
+    """
+    marker = Path(root) / ".git"
+    if marker.is_dir():
+        return marker
+    if not marker.is_file():
+        return None
+    try:
+        text = marker.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        if not line.startswith("gitdir:"):
+            continue
+        pointed = Path(line.split(":", 1)[1].strip())
+        if not pointed.is_absolute():
+            pointed = Path(root) / pointed
+        return pointed if pointed.is_dir() else None
+    return None
+
+
+def _path(git_dir, session_id):
+    return Path(git_dir) / ("twinkle-turn-%s" % _SAFE.sub("_", str(session_id)))
 
 
 def record(root, session_id, rel_path):
     """Дописать путь в список хода. Возвращает, удалось ли.
 
-    Ответ возвращается, а не проглатывается: маркер рецепта ищется раньше
-    `.git`, поэтому корень может найтись там, где писать список некуда.
-    Промолчать в этом месте — завести молчаливую заглушку (незыблемое №4):
-    `Stop` счёл бы чужим всё, что агент только что написал, и не сказал бы,
-    почему. Строку об этом печатает обработчик — печатать из библиотеки
-    нельзя, её зовут и там, где stderr занят отчётом.
+    Ответ возвращается, а не проглатывается: `.git` может оказаться
+    указателем в никуда, и тогда писать список некуда. Промолчать в этом
+    месте — завести молчаливую заглушку (незыблемое №4): `Stop` счёл бы
+    чужим всё, что агент только что написал, и не сказал бы, почему. Строку
+    об этом печатает обработчик — печатать из библиотеки нельзя, её зовут и
+    там, где stderr занят отчётом.
+
+    Отказ файловой системы уходит в тот же ответ, а не наружу исключением:
+    отчёт по записанному файлу не имеет права исчезать из-за того, что не
+    удалось завести служебный файл.
     """
-    target = _path(root, session_id)
-    if not target.parent.exists():
+    git_dir = _git_dir(root)
+    if git_dir is None:
         return False
-    with target.open("a", encoding="utf-8") as handle:
-        handle.write(rel_path + "\n")
+    try:
+        with _path(git_dir, session_id).open("a", encoding="utf-8") as handle:
+            handle.write(rel_path + "\n")
+    except OSError:
+        return False
     return True
 
 
@@ -57,9 +96,13 @@ def listing(root, session_id):
     `git add` чекпоинта, и сообщения `Stop`.
 
     Файла нет — пустой список, а не ошибка: это и есть названное выше
-    ослабление, и вести оно обязано к сообщению, а не к обвалу.
+    ослабление, и вести оно обязано к сообщению, а не к обвалу. Каталога
+    `.git` тоже может не быть — тот же ответ по той же причине.
     """
-    target = _path(root, session_id)
+    git_dir = _git_dir(root)
+    if git_dir is None:
+        return []
+    target = _path(git_dir, session_id)
     if not target.exists():
         return []
     out = []

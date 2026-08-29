@@ -5,8 +5,9 @@
 три разошедшиеся таблицы зон и две копии парсера JSON, одна из которых не
 исполняется никогда, потому что установлен `jq`.
 
-Коды: 2 — нарушение, 0 — всё остальное, включая «не смог», у которого всегда
-есть видимая строка причины (секция 15 спеки).
+Наружу — коды рукопожатия, а не 0 и 2: их переводит шим (см. ниже). Секция 15
+спеки требует, чтобы 2 означал нарушение и только его, а «не смог» всегда имел
+видимую строку причины.
 """
 
 import json
@@ -16,18 +17,57 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from hooks import boundary, summary, turnfiles
+from hooks import bashscan, boundary, summary, turnfiles
 from scripts import check_frontmatter, check_links, zones
 from scripts.findings import EXIT_OK, EXIT_VIOLATION
 
+# Коды рукопожатия с шимом. Их единственная работа — доказать, что hook.py
+# действительно отработал: наружу они не выходят, шим переводит первый в 0,
+# второй в 2, а всё остальное — в «не смог» с видимой строкой.
+#
+# Пока шим пропускал 0 и 2 как есть, доказательства не было ни у одного из
+# двух исходов. `python3` в дикой природе бывает обёрткой venv или pyenv, и
+# её собственная двойка приезжала в Claude Code блокировкой записи без единой
+# строки причины — ровно та поломка, ради которой шим и заведён. С другой
+# стороны, ноль возвращает и любая посторонняя команда, оказавшаяся на месте
+# python, — скажем, echo: гейт молча разрешал всё.
+#
+# Числа выбраны так, чтобы их не вернул никто другой: 0, 1 и 2 у python свои,
+# 120 — его же сбой сброса буферов, 64–78 заняты `sysexits.h`, 126 и 127
+# печатает оболочка, 128+N — сигналы.
+EXIT_CHECKED_OK = 91
+EXIT_CHECKED_VIOLATION = 92
+
+_HANDSHAKE = {EXIT_OK: EXIT_CHECKED_OK, EXIT_VIOLATION: EXIT_CHECKED_VIOLATION}
+
+# Поля нагрузки, которые читаются как строки. Проверяются здесь, а не по месту
+# чтения: `cwd` числом доезжает до `Path()` и роняет хук `TypeError`'ом про
+# аргумент конструктора — то есть в транскрипт уходит трассировка про строку
+# этого файла вместо строки про то, что случилось со входом.
+_STRING_FIELDS = ("cwd", "session_id")
+
 
 def read_event(stream):
-    """Событие и полезная нагрузка из stdin. Битый JSON — не нарушение."""
+    """Полезная нагрузка из stdin. Непонятный вход — не нарушение.
+
+    Ловится не только `JSONDecodeError`: разобранный JSON бывает массивом,
+    строкой и `null`, и каждый из них раньше давал `AttributeError` на первом
+    же `.get`. Обработан был тот случай, который придумали, а не тот, который
+    приезжает.
+    """
     raw = stream.read()
     try:
-        return json.loads(raw) if raw.strip() else {}
+        payload = json.loads(raw) if raw.strip() else {}
     except json.JSONDecodeError as error:
         raise ValueError("вход не разобран: %s" % error)
+    if not isinstance(payload, dict):
+        raise ValueError("вход не объект, а %s" % type(payload).__name__)
+    for field in _STRING_FIELDS:
+        value = payload.get(field)
+        if value is not None and not isinstance(value, str):
+            raise ValueError("поле %s пришло как %s, а ожидается строка"
+                             % (field, type(value).__name__))
+    return payload
 
 
 def main(argv=None):
@@ -117,10 +157,66 @@ def _root_of(payload):
     base = _base_of(payload)
     root = boundary.find_root(base) if base else None
     if root is None:
-        print("гейт не выполнился: корень репозитория не найден "
-              "(маркер %s не найден вверх от %s)" % (boundary.MARKER, base),
-              file=sys.stderr)
+        print("гейт не выполнился: корень репозитория не найден (вверх от %s "
+              "нет каталога, где маркер %s лежит рядом с .git)"
+              % (base, boundary.MARKER), file=sys.stderr)
     return root
+
+
+def _canonical_first(root, rel):
+    """Первый сегмент пути в том написании, в котором он лежит на диске.
+
+    Зона выводится из первого сегмента, и регистр этот вывод ломал молча:
+    `realpath` на macOS регистр не приводит, поэтому `SOURCES/x.md` — тот же
+    inode, что `sources/x.md`, но зоной не считался, и обработчик уходил
+    в ветку «вне зон», где не говорят ничего. Тем же движением портился
+    список файлов хода: git индексирует `sources/x.md`, а записано было
+    `SOURCES/x.md`, и `Stop` счёл бы правку агента чужой.
+
+    Написание не сравнивается без учёта регистра и не приводится к нижнему:
+    и то и другое было бы неверно на файловой системе, регистр различающей,
+    где `SOURCES/` — действительно другой каталог. Признаётся совпадением
+    только один и тот же inode (`samefile`), и это не эвристика, а
+    доказательство: на такой системе несуществующего `SOURCES/` попросту нет,
+    `samefile` падает `OSError`, и путь остаётся как пришёл.
+
+    Один `listdir` корня и только для первого сегмента: зоны живут в корне
+    и нигде больше.
+    """
+    parts = rel.split("/")
+    head = parts[0]
+    if not head or head in (".", ".."):
+        return rel
+    try:
+        entries = os.listdir(str(root))
+    except OSError:
+        return rel
+    if head in entries:
+        return rel
+    lowered = head.lower()
+    for entry in entries:
+        if entry.lower() != lowered:
+            continue
+        try:
+            if not (Path(root) / entry).samefile(Path(root) / head):
+                continue
+        except OSError:
+            continue
+        return "/".join([entry] + parts[1:])
+    return rel
+
+
+def _relative(root, target):
+    """Путь записи относительно корня, в написании файловой системы.
+
+    Одна форма на обе ветки записи, и разъезжаться ей нельзя: по ней и
+    считается зона, и сравниваются находки гейтов (`Finding.path` собран
+    ровно так же), и пишется список файлов хода. Разное написание в этих
+    трёх местах даёт три разных ответа на один вопрос.
+    """
+    rel = Path(os.path.realpath(str(target))).relative_to(
+        os.path.realpath(str(root))).as_posix()
+    return _canonical_first(root, rel)
 
 
 def _resolved_target(payload):
@@ -155,6 +251,15 @@ def on_pre_tool_use(payload):
     граница репозитория и неизменяемость источника — поломки, и на них код 2;
     переписывание долгоживущей записи — содержимое, а содержимое принадлежит
     автору (линия ответственности), поэтому предупреждение и код 0.
+
+    Остаточный риск назван в том же регистре, что `bashscan.UNCATCHABLE`,
+    и по той же причине: неназванная дыра превращает бэкстоп в притворную
+    песочницу. Зона выводится из пути, а к одному inode ведут два имени —
+    `realpath` разворачивает символические ссылки и не видит жёстких. Отсюда:
+    жёсткая ссылка из `sources` в `core` даёт обычное `core`-предупреждение
+    там, где пишется inode источника. Механизма против этого нет намеренно:
+    искать второе имя inode — обход дерева на каждой записи, а случай ни разу
+    не наблюдался.
     """
     root, target = _resolved_target(payload)
     if root is None:
@@ -165,7 +270,7 @@ def on_pre_tool_use(payload):
               "не пишет наружу никогда" % (target, root), file=sys.stderr)
         return EXIT_VIOLATION
 
-    zone = zones.zone_of(os.path.relpath(os.path.realpath(target), str(root)))
+    zone = zones.zone_of(_relative(root, target))
     exists = Path(target).exists()
     if zone is None or zone in zones.READ_ONLY or not exists:
         # Три разные причины молчать, и ни одна из них не «на всякий случай».
@@ -243,6 +348,13 @@ def on_post_tool_use(payload):
     Возвращает 0 всегда. `PostToolUse` сообщает, а не запрещает: файл уже на
     диске, и код 2 после факта — театр, а не гейт. Красный ход останавливает
     `Stop`, и это его работа.
+
+    Цена фильтра по записанному файлу названа, а не забыта: файл, *вызвавший*
+    находку, — ровно тот, который фильтр и выбрасывает. Новый `areas/dup.md`
+    делает существующий `[[dup]]` в `core/me.md` неоднозначным, и об этом
+    здесь не будет сказано ни слова. Фильтр всё равно остаётся: отчёт по
+    всему дереву на каждой записи — это отчёт, который перестают читать,
+    а красный ход всё равно не уйдёт мимо `Stop`.
     """
     root, target = _resolved_target(payload)
     if root is None:
@@ -258,13 +370,12 @@ def on_post_tool_use(payload):
               file=sys.stderr)
         return EXIT_OK
 
-    rel = Path(os.path.realpath(target)).relative_to(
-        os.path.realpath(str(root))).as_posix()
+    rel = _relative(root, target)
 
-    if not turnfiles.record(root, payload.get("session_id", ""), rel):
-        print("гейт не выполнился: список файлов хода не записан (нет %s). "
-              "Stop сочтёт правки этого хода чужими и ограничится сообщением"
-              % (Path(root) / ".git"), file=sys.stderr)
+    if not turnfiles.record(root, payload.get("session_id") or "", rel):
+        print("гейт не выполнился: список файлов хода не записан (каталог "
+              ".git не открывается в %s). Stop сочтёт правки этого хода "
+              "чужими и ограничится сообщением" % root, file=sys.stderr)
 
     findings, _ = _gate_findings(root, {rel})
     if findings:
@@ -347,14 +458,71 @@ def on_session_start(payload):
     return EXIT_OK
 
 
+def bash_command(payload):
+    """Строка команды из `tool_input`, или None.
+
+    Отдельная функция, а не поле в `_PATH_FIELDS`: у Bash имя поля известно
+    и одно, и путать «не нашли путь среди четырёх кандидатов» с «пришла
+    не команда» нельзя — это разные причины и разные строки.
+    """
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_input, dict):
+        return None
+    command = tool_input.get("command")
+    return command if isinstance(command, str) and command else None
+
+
+def on_pre_tool_use_bash(payload):
+    """Команда в терминале: блок на перемещении, удалении и записи мимо гейтов.
+
+    Отдельное событие, а не ветка внутри `on_pre_tool_use`: матчеры в
+    `hooks.json` разные, и различать их по `tool_name` значило бы завести
+    второй источник истины о том, какой инструмент приехал.
+
+    Корень репозитория здесь не ищется и не нужен: сканер судит по первому
+    сегменту пути, о чём честно сказано в `bashscan.UNCATCHABLE` («запись по
+    абсолютному пути»). Спрашивать корень ради ответа, который от него не
+    зависит, — лишняя причина отказа на пустом месте.
+
+    Неразобранный ввод — код 0 и видимая строка, никогда не блок: блокировать
+    по собственной слепоте значит запретить работу за то, чего не прочитал
+    (незыблемое №4).
+    """
+    command = bash_command(payload)
+    if command is None:
+        received = payload.get("tool_input")
+        print("гейт не выполнился: команда не разобрана в tool_input, "
+              "получено %r"
+              % (sorted(received) if isinstance(received, dict) else received,),
+              file=sys.stderr)
+        return EXIT_OK
+
+    verdict = bashscan.judge(command)
+    if verdict.blocked:
+        print(verdict.reason, file=sys.stderr)
+        return EXIT_VIOLATION
+    return EXIT_OK
+
+
 # Обработчики регистрируются задачами волны. Пустая таблица — не заглушка:
 # каждое незарегистрированное событие называет себя вслух строкой выше.
+#
+# `PreToolUseBash` — не событие ядра, а второй маршрут того же `PreToolUse`:
+# имя приезжает аргументом из `hooks.json`, где матчер `Bash` отделён от
+# матчера записи. Пока этой строки не было, весь сканер команд был мёртвым
+# кодом при 62 зелёных тестах: голый `mv` проходил, а в stderr значилось, что
+# событие не обслуживается.
 HANDLERS = {
     "SessionStart": on_session_start,
     "PreToolUse": on_pre_tool_use,
+    "PreToolUseBash": on_pre_tool_use_bash,
     "PostToolUse": on_post_tool_use,
 }
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # Наружу уходит код рукопожатия, а не результат сам по себе. Код, которого
+    # нет в таблице, не переводится: пусть шим назовёт его вслух, чем он
+    # притворится одним из двух знакомых исходов.
+    _code = main()
+    sys.exit(_HANDSHAKE.get(_code, _code))
