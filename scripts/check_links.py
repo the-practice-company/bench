@@ -2,7 +2,10 @@
 """Гейт ссылок.
 
 Классы: unresolved, md-link-to-file, link-to-transient, escapes-root,
-dead-allow, ambiguous, orphan. Секция 13 спеки.
+dead-allow, broad-allow, ambiguous, orphan, undecodable. Секция 13 спеки
+плюс два класса, которых в её таблице нет: `broad-allow` и `undecodable`
+заведены под наблюдённые поломки этого гейта и вынесены автору правкой
+спеки (незыблемое №7).
 """
 
 import argparse
@@ -53,26 +56,66 @@ REGISTRY_ARCHETYPE = "registry"
 
 
 def _read(path):
-    """Текст файла; недекодируемый байт заменяется, а не уносит файл из гейта.
+    """Текст файла строго в UTF-8. Отказ уходит наверх, а не заменяется.
 
-    Тот же фикс и по той же причине, что в `check_package._iter_package_files`
-    («один недекодируемый байт уводил файл из-под гейта целиком»): 16
-    unresolved замера приехали из Notion-экспорта, и случайный байт в одном
-    из таких файлов — не экзотика. Здесь было хуже тихого пропуска: чтение
-    роняло весь прогон, автор не получал отчёта вовсе, а код возврата
-    оказывался 1 — контракт `findings.py` такого кода не знает (2 или 0).
+    Здесь **нельзя** то, что верно в `check_package._iter_package_files`.
+    Там чтение с `errors="replace"` правильно: замещающий знак ни на что не
+    похож, абсолютным путём он не станет никогда, и замена стоит ровно
+    одного невосстановимого байта. Здесь тот же приём давал обратное. Гейт
+    ссылок читает текст **целей**, а замещающий знак от имени файла ничем не
+    отличается, и находка называла цель, которой никто не писал:
+
+        `core/заметка.md` есть, `core/utf8.md` и `core/cp1251.md` несут
+        дословно одну и ту же ссылку `[[заметка]]` в двух кодировках —
+        вторая давала `unresolved [[???????]]` и код возврата 2.
+
+    С другой стороны та же замена глотала файл целиком: `.md` в UTF-16
+    давал пустой отчёт, ни одной ссылки не видно. Сказать неправду хуже,
+    чем промолчать, но здесь было и то и другое сразу.
+
+    Незыблемое №4: невосстановимое значение уходит в отчёт. Файл, который
+    не читается, — находка `undecodable` про сам файл; ссылки в нём не
+    разбираются вовсе, потому что знать их неоткуда. Крах, ради которого
+    заводилась замена, при этом не возвращается: исключение ловят все
+    вызывающие, отчёт остаётся, код возврата — 2, как и был.
     """
-    return path.read_text(encoding="utf-8", errors="replace")
+    return path.read_text(encoding="utf-8")
+
+
+def _undecodable(rel, error, consequence):
+    """Находка про файл, который не прочитан. Строка — 1, и это не заглушка.
+
+    Номера строки у такого файла нет: строки появляются после декодирования,
+    а его не было. Считать `\\n` в байтах — угадывать: в UTF-16 перевод
+    строки байтом `0x0a` не записан. Подставить угаданное — ровно тот
+    подлог, ради устранения которого класс и заведён, поэтому находка
+    ставится на файл (строка 1), как `orphan` и `skill-without-eval`.
+
+    Байт и позиция — из самого исключения, то есть наблюдаемы и
+    воспроизводимы; `consequence` называет, что именно осталось
+    непроверенным, потому что у разных читателей это разное.
+    """
+    return Finding("undecodable", rel, 1,
+                   "не читается как UTF-8: байт 0x%02x в позиции %d, %s"
+                   % (error.object[error.start], error.start, consequence))
 
 
 class AllowEntry:
-    __slots__ = ("pattern", "reason", "line", "used")
+    """Запись аллоулиста и множество целей, которые она погасила.
+
+    `hits` — множество, а не флаг `used`. Флаг отвечал на один вопрос
+    («сработала ли»), а вопросов два: правило может не гасить ничего
+    (`dead-allow`) и может гасить что угодно (`broad-allow`). Второе
+    по флагу неотличимо от здоровой записи — оно и не отличалось.
+    """
+
+    __slots__ = ("pattern", "reason", "line", "hits")
 
     def __init__(self, pattern, reason, line):
         self.pattern = pattern
         self.reason = reason
         self.line = line
-        self.used = False
+        self.hits = set()
 
 
 def parse_allowlist(text):
@@ -87,6 +130,31 @@ def parse_allowlist(text):
         else:
             entries.append(AllowEntry(stripped, None, lineno))
     return entries
+
+
+def allow_is_anchored(pattern):
+    """Есть ли в шаблоне хоть один сегмент пути без глоб-метасимволов.
+
+    Признак «правило слишком широко». Запрет голой подстроки (`a`) закрыл
+    синтаксис и не закрыл семантику: `*a*`, `*`, `?*`, `[a-z]*` гасят
+    `unresolved` по всему репозиторию, а `dead-allow` о них молчит —
+    правило-то сработало. Уцелевшее исключение, тихо ослабляющее гейт, —
+    это ровно то, против чего спека завела `dead-allow`; здесь ослабление
+    шире и вдобавок выглядит живым.
+
+    Считается литеральный сегмент, а не литеральное начало. Строгий признак
+    «первый сегмент литерален» отнял бы `**/items/*` — правило, называющее
+    имя коллекции, а не место, — и это уже не наблюдённая поломка, а
+    догадка. Ни одного литерального сегмента значит, что правило не
+    называет ни места, ни имени: подпасть под него может что угодно.
+
+    Чего признак не ловит: якорь ничего не говорит о размере. `черновики/*`
+    погасит хоть сотню целей — и это законная «строка на паттерн» секции 13,
+    а не поломка: раздел, которого ещё нет, называется именно так. Сузить
+    правило до одной цели значило бы отменить паттерны вовсе.
+    """
+    return any(segment and not pathlib_rules.is_pattern(segment)
+               for segment in pattern.split("/"))
 
 
 class Link:
@@ -184,9 +252,12 @@ def _orphan_perimeter(root, ignored):
         rel_readme = readme.relative_to(root).as_posix()
         if not _in_perimeter(rel_readme, ignored):
             continue
+        # Нечитаемый README не называется здесь второй раз: главный цикл
+        # по `.md` встречает тот же файл и уже поднял на него `undecodable`.
+        # Архетипа у него нет, значит и периметра сирот он не задаёт.
         try:
             fields = parse_frontmatter(_read(readme))
-        except FrontmatterError:
+        except (FrontmatterError, UnicodeDecodeError):
             continue
         if fields.get("archetype") != REGISTRY_ARCHETYPE:
             continue
@@ -221,20 +292,24 @@ def _transient_violation(source_rel, target):
 
 
 class Ignored(tuple):
-    """Префиксы `.gitignore` плюс его же отрицания (`!`).
+    """Префиксы `.gitignore`, его же отрицания (`!`) и отказ чтения.
 
     Кортеж, потому что `str.startswith` принимает именно кортеж, и оба гейта
     на этом стоят: `check_package` импортирует отсюда и `_ignored`,
     и `_in_perimeter`. Отрицания едут рядом, а не вторым возвращаемым
     значением, — иначе их пришлось бы протаскивать через чужую сигнатуру
-    и периметры двух гейтов снова разошлись бы.
+    и периметры двух гейтов снова разошлись бы. `undecodable` едет тем же
+    вагоном: периметр, собранный не из того текста, — это чужой периметр
+    молча, и вызывающий обязан иметь возможность сказать об этом вслух.
     """
 
     negated = ()
+    undecodable = None
 
-    def __new__(cls, prefixes, negated=()):
+    def __new__(cls, prefixes, negated=(), undecodable=None):
         self = super().__new__(cls, tuple(sorted(prefixes)))
         self.negated = tuple(negated)
+        self.undecodable = undecodable
         return self
 
 
@@ -248,12 +323,21 @@ def _ignored(root):
     файл из исключённого каталога, здесь отрицание сильнее каталога.
     Сдвиг в сторону «прочитать лишний файл»: лишнее гейт назовёт вслух,
     а непрочитанное молчит.
+
+    Нечитаемый `.gitignore` не проглатывается: периметр собирается из
+    умолчаний, а само исключение едет на `Ignored.undecodable`, чтобы
+    вызывающий положил его в отчёт.
     """
     prefixes = {".git/", "archive/"}
     negated = []
+    failure = None
     ignore = root / ".gitignore"
     if ignore.exists():
-        for line in _read(ignore).split("\n"):
+        try:
+            text = _read(ignore)
+        except UnicodeDecodeError as error:
+            text, failure = "", error
+        for line in text.split("\n"):
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
@@ -261,11 +345,24 @@ def _ignored(root):
                 negated.append(line[1:].lstrip("/"))
             else:
                 prefixes.add(line.rstrip("/") + "/")
-    return Ignored(prefixes, negated)
+    return Ignored(prefixes, negated, failure)
 
 
 def _in_perimeter(rel, ignored):
     """Читает ли гейт этот путь. Отрицание `.gitignore` сильнее префикса.
+
+    Две формы записи, а не одна. Поддерево ловится префиксом; запись,
+    называющая **один файл** (`.claude/settings.local.json`), префиксом не
+    ловится ни при каких условиях — `_ignored` дописывает ей косую, и
+    получается `.claude/settings.local.json/`, не совпадающее ни с чем.
+    Отличить файл от каталога по самому шаблону нечем, поэтому проверяются
+    обе формы. Цена бездействия известна поимённо: абсолютный путь в
+    машинно-локальных настройках автора становился `escapes-root` в каждом
+    экземпляре, собранном рецептом.
+
+    Форма файла сверяется `fnmatchcase`, как и отрицание строкой выше:
+    у git запись `*.log` — тоже запись про файлы, и разбирать её иначе, чем
+    `!*.log`, значило бы держать в одной функции два разных `.gitignore`.
 
     `getattr`, а не атрибут напрямую: сюда приходит и голый кортеж —
     из `check_package`, и из мутации «периметр снова слеп к .gitignore».
@@ -273,7 +370,9 @@ def _in_perimeter(rel, ignored):
     for pattern in getattr(ignored, "negated", ()):
         if fnmatchcase(rel, pattern) or rel.startswith(pattern.rstrip("/") + "/"):
             return True
-    return not rel.startswith(tuple(ignored))
+    if rel.startswith(tuple(ignored)):
+        return False
+    return not any(fnmatchcase(rel, prefix.rstrip("/")) for prefix in ignored)
 
 
 def _scanned_for_tokens(rel, name):
@@ -361,7 +460,11 @@ def _settings_paths(root, ignored, allowed):
         rel = path.relative_to(root).as_posix()
         if not _in_perimeter(rel, ignored):
             continue
-        text = _read(path)
+        try:
+            text = _read(path)
+        except UnicodeDecodeError as error:
+            out.append(_undecodable(rel, error, "пути в нём не проверены"))
+            continue
         for lineno, line in enumerate(text.split("\n"), start=1):
             for raw in re.findall(r'"([^"]+)"', line):
                 token = pathlib_rules.unwrap_tool(raw)
@@ -380,11 +483,25 @@ def scan(root, today=None):
     findings = []
     referenced = set()
 
+    if ignored.undecodable is not None:
+        findings.append(_undecodable(".gitignore", ignored.undecodable,
+                                     "периметр прочитан без него"))
+
+    allow = []
     allow_path = root / ALLOWLIST_NAME
-    allow = parse_allowlist(_read(allow_path)) if allow_path.exists() else []
+    if allow_path.exists():
+        # Прочитанный с заменой аллоулист гасит не то, что в нём написано:
+        # запись `черновик` в cp1251 становится набором замещающих знаков,
+        # ни одной цели не совпадает — и автор видит `unresolved` там, где
+        # исключение объявлено. Молчаливая подстановка в обе стороны.
+        try:
+            allow = parse_allowlist(_read(allow_path))
+        except UnicodeDecodeError as error:
+            findings.append(_undecodable(ALLOWLIST_NAME, error,
+                                         "записи аллоулиста не прочитаны"))
 
     def allowed(target):
-        """Гасит ли аллоулист эту цель.
+        """Гасит ли аллоулист эту цель. Погашенное запоминается поимённо.
 
         Совпадение — с целью целиком, глоб-метасимволы работают
         (`черновики/*`). Голая подстрока запрещена: запись `a` гасила
@@ -395,12 +512,17 @@ def scan(root, today=None):
         проверку; подстрочное совпадение делало это ослабление ещё
         и ненаблюдаемым. «Строка на паттерн» читается как шаблон,
         а не как обрывок пути.
+
+        Запрета синтаксиса мало: `*a*`, `*`, `?*`, `[a-z]*` — та же
+        подстрока в глоб-написании. Поэтому цели копятся в `entry.hits`:
+        по ним `broad-allow` ниже показывает автору, что именно правило
+        проглотило, а не сообщает догадку о намерении.
         """
         target = unicodedata.normalize("NFC", target)
         for entry in allow:
             if entry.pattern and fnmatchcase(
                     target, unicodedata.normalize("NFC", entry.pattern)):
-                entry.used = True
+                entry.hits.add(target)
                 return True
         return False
 
@@ -408,7 +530,15 @@ def scan(root, today=None):
         rel = path.relative_to(root).as_posix()
         if not _in_perimeter(rel, ignored):
             continue
-        text = _read(path)
+        # Файл, который не декодируется, называется здесь — и на этом
+        # разбор его ссылок кончается. Чем они были, знать неоткуда, а
+        # догадка про `[[???????]]` — то самое ложное обвинение, ради
+        # снятия которого класс заведён (см. `_read`).
+        try:
+            text = _read(path)
+        except UnicodeDecodeError as error:
+            findings.append(_undecodable(rel, error, "ссылки в нём не проверены"))
+            continue
         for link in extract_links(text):
             target = unicodedata.normalize("NFC", link.target)
 
@@ -472,7 +602,13 @@ def scan(root, today=None):
             continue
         if not _scanned_for_tokens(rel, path.name):
             continue
-        text = _blank_fences(_read(path))
+        # Молча, без второй находки: этот же файл прошёл через цикл выше,
+        # и `undecodable` на нём уже стоит. Два прохода по одному дереву —
+        # деталь устройства гейта, а не два разных факта для автора.
+        try:
+            text = _blank_fences(_read(path))
+        except UnicodeDecodeError:
+            continue
         for lineno, line in enumerate(text.split("\n"), start=1):
             for match in _INLINE.finditer(line):
                 token = match.group(2).strip()
@@ -490,13 +626,35 @@ def scan(root, today=None):
     # использованные записи — иначе запись, разрешающая находку из более
     # позднего прохода, выглядит неиспользованной и гейт противоречит сам
     # себе: одновременно unresolved и «удалите правило, которое это гасит».
+    # Три взаимоисключающих вердикта о строке, а не три независимых
+    # проверки: про одну строку одна находка. Порядок — от того, что
+    # чинится безусловно, к тому, что зависит от сегодняшнего дерева.
+    # `broad-allow` отдельным классом, потому что `dead-allow` утверждает
+    # «правило ничего не исключает», а про правило, погасившее две цели,
+    # это неправда — и сказать про правило неправду ровно то, что чинится
+    # в этом заходе.
+    #
+    # **Остаточный риск, названный вслух.** «Ничего не исключает» и `orphan`
+    # ниже — утверждения об **отсутствии**: такой цели в дереве нет, такой
+    # ссылки на файл нет. Файл, помеченный `undecodable`, не прочитан, и
+    # отсутствие в нём недоказуемо: правило, гасящее ровно одну цель из
+    # такого файла, будет названо мёртвым по ошибке. Гасить оба класса при
+    # первом же нечитаемом файле — лечение хуже болезни: в живом репозитории
+    # один битый файл снял бы `dead-allow` и `orphan` со всего дерева
+    # надолго, а `dead-allow` заведён ровно против такого тихого ослабления.
+    # Прогон при этом красный, и причина в нём названа рядом.
     for entry in allow:
         if entry.reason is None:
             findings.append(Finding("dead-allow", ALLOWLIST_NAME, entry.line,
                                     "строка без причины: %s" % entry.pattern))
-        elif not entry.used:
+        elif not entry.hits:
             findings.append(Finding("dead-allow", ALLOWLIST_NAME, entry.line,
                                     "правило ничего не исключает, удалите: %s" % entry.pattern))
+        elif not allow_is_anchored(entry.pattern):
+            findings.append(Finding(
+                "broad-allow", ALLOWLIST_NAME, entry.line,
+                "правило не привязано ни к месту, ни к имени, сузьте: %s (гасит: %s)"
+                % (entry.pattern, ", ".join(sorted(entry.hits)))))
 
     for rel in sorted(_orphan_perimeter(root, ignored)):
         if rel not in referenced:

@@ -24,7 +24,8 @@ from scripts.frontmatter import FrontmatterError, parse as parse_frontmatter
 # таблицей того же самого, а разошедшиеся копии одной таблицы этому
 # репозиторию уже стоили критерия выхода (tests/test_zones.py). Импорт
 # служебного имени — цена единственного определения, и она меньше.
-from scripts.check_links import _ignored as ignored_prefixes, _in_perimeter
+from scripts.check_links import (_ignored as ignored_prefixes, _in_perimeter,
+                                 _undecodable)
 
 HOOK_EVENTS = frozenset({
     "SessionStart", "PreToolUse", "PostToolUse", "Stop", "PreCompact",
@@ -253,16 +254,20 @@ _NESTED_RUN_GUARD = "TWINKLE_CHECK_PACKAGE_NESTED_RUN"
 def _is_ignored(rel, ignored):
     """Игнорирует ли репозиторий этот путь: поддеревом или файлом поимённо.
 
-    Префиксы считает `check_links._ignored` — единственное место в пакете,
-    которое разбирает `.gitignore`. Оттуда же взят разбор поддерева
-    (`_in_perimeter`), но одного его мало: `.gitignore` называет и отдельные
-    файлы (`.claude/settings.local.json`), а префикс с косой на конце такой
-    записи не совпадает ни с чем. Вторая форма добавлена здесь, а не там:
-    гейт ссылок читает только `*.md`, и для него разницы нет.
+    Обе формы считает `_in_perimeter` — единственное место в пакете, которое
+    решает, что считать репозиторием. Форма файла жила здесь и оправдывалась
+    тем, что «гейт ссылок читает только `*.md`, и для него разницы нет».
+    Это было неправдой в собственном тексте: `check_links._settings_paths`
+    читает `.claude/settings*.json`, то есть ровно тот файл, который
+    `.gitignore` называет поимённо чаще всего. Расплачивался за неправду
+    каждый экземпляр, собранный рецептом: абсолютный путь в машинно-локальных
+    настройках автора становился `escapes-root`.
+
+    Обёртка оставлена именем: она называет вопрос со стороны проверки пакета
+    («игнорирует ли»), тогда как `_in_perimeter` отвечает на обратный
+    («читаем ли»). Второго разбора `.gitignore` за ней нет.
     """
-    if not _in_perimeter(rel, ignored):
-        return True
-    return any(rel == prefix.rstrip("/") for prefix in ignored)
+    return not _in_perimeter(rel, ignored)
 
 
 def _iter_package_files(root):
@@ -321,10 +326,17 @@ def _check_hooks(root):
     path = root / "hooks" / "hooks.json"
     if not path.exists():
         return []
-    # Замена, а не исключение: недекодируемый байт делает файл непригодным
-    # как JSON и уходит в отчёт находкой, а не роняет проверку (№4).
+    # Строго, а не с заменой байта. Общий довод про `errors="replace"` («один
+    # байт не уводит файл из-под гейта») верен там, где замещающий знак ни на
+    # что не похож, — в скане абсолютных путей ниже. Здесь он похож: из
+    # `matcher: "Ed\xffit"` выходит находка `unknown-matcher Ed?it`, то есть
+    # матчер, которого автор не писал. Ложное утверждение хуже пропуска, и
+    # чинится оно так же, как в гейте ссылок, — файл уходит в отчёт целиком.
     try:
-        data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except UnicodeDecodeError as error:
+        return [_undecodable("hooks/hooks.json", error,
+                             "контракт хуков не проверен")]
     except json.JSONDecodeError as error:
         return [_hooks_shape(str(error), error.lineno)]
 
@@ -462,6 +474,22 @@ def check(root):
     root = Path(root)
     findings = []
 
+    # Периметр этой проверки — тот же `.gitignore`, что у гейтов. Нечитаемый,
+    # он молча сужается до умолчаний, и вердикт начинает зависеть от того,
+    # чего проверка не сказала вслух. Класс `undecodable` заведён под гейт
+    # ссылок, но факт здесь ровно тот же, и своего класса под него быть не
+    # должно — это была бы вторая таблица того же самого.
+    #
+    # Имя `gitignore`, а не `ignored`: строка `ignored = ignored_prefixes(root)`
+    # в `_iter_package_files` — образец мутации «периметр снова слеп
+    # к .gitignore», и второе такое же вхождение делает замену неоднозначной.
+    # Мутация тогда не ложится, и оснастка, доказывающая критерий 3, молчит
+    # не потому, что проверка цела.
+    gitignore = ignored_prefixes(root)
+    if gitignore.undecodable is not None:
+        findings.append(_undecodable(".gitignore", gitignore.undecodable,
+                                     "периметр прочитан без него"))
+
     findings.extend(_check_hooks(root))
 
     skills_dir = root / "skills"
@@ -479,9 +507,17 @@ def check(root):
         for manifest in manifests:
             skill = manifest.parent
             rel = skill.relative_to(root).as_posix()
+            # Строго, по тому же доводу, что и `hooks.json` выше: замещающий
+            # знак попадает в **значение** поля, и `skill-name-mismatch`
+            # начинает утверждать `'nam?e' != 'name'` — расхождение, которого
+            # в файле нет. Скан абсолютных путей ниже читает с заменой, и это
+            # не противоречие: там замещающий знак путём не станет никогда.
             try:
-                fields = parse_frontmatter(
-                    manifest.read_text(encoding="utf-8", errors="replace"))
+                fields = parse_frontmatter(manifest.read_text(encoding="utf-8"))
+            except UnicodeDecodeError as error:
+                findings.append(_undecodable(rel + "/SKILL.md", error,
+                                             "манифест скилла не проверен"))
+                continue
             except FrontmatterError as error:
                 findings.append(Finding("unparseable", rel + "/SKILL.md", error.line, str(error)))
                 continue
@@ -499,18 +535,37 @@ def check(root):
             # не `elif`: две причины одного класса — две независимые проверки,
             # и снятие любой из них обязано оставлять вторую на месте.
             if (skill / "eval.txt").exists():
-                defect = _eval_defect((skill / "eval.txt").read_text(
-                    encoding="utf-8", errors="replace"))
+                # Строго: с заменой байта нечитаемый файл превращался в строку
+                # знаков, не начинающуюся с решётки, — то есть считался живой
+                # фразой срабатывания, и проверка молчала. Ложного обвинения
+                # здесь нет, есть ложное зелёное, и оно не лучше.
+                try:
+                    text = (skill / "eval.txt").read_text(encoding="utf-8")
+                except UnicodeDecodeError as error:
+                    findings.append(_undecodable(
+                        rel + "/eval.txt", error,
+                        "срабатывание скилла не проверено"))
+                    continue
+                defect = _eval_defect(text)
                 if defect:
                     findings.append(Finding("skill-without-eval", rel, 1, defect))
 
     for path in _iter_package_files(root):
         rel = path.relative_to(root).as_posix()
-        # Один недекодируемый байт уводил файл из-под гейта целиком: `continue`
+        # Единственное чтение этого модуля, где `errors="replace"` остаётся
+        # верным, и граница проходит не по файлу, а по вопросу. Один
+        # недекодируемый байт уводил файл из-под гейта целиком: `continue`
         # по UnicodeDecodeError делал сокрытие абсолютного пути правкой в один
         # байт. Замена оставляет невосстановимым ровно этот байт, а не весь
         # файл, — незыблемое №4 запрещает молча терять остальное. Бинарник
         # по-прежнему тих: в его замещающих символах абсолютного пути нет.
+        #
+        # Ровно поэтому соседние чтения строгие. Отсюда извлекается один
+        # предикат — «есть ли в строке абсолютный путь», — и `�` не
+        # похож ни на один из его префиксов. А `hooks.json`, `SKILL.md` и
+        # `eval.txt` отдают **значения**, которые доезжают до автора в
+        # находке; там замещающий знак становится матчером `Ed?it` и именем
+        # `nam?e`, то есть обвинением в тексте, которого никто не писал.
         text = path.read_text(encoding="utf-8", errors="replace")
         for lineno, line in enumerate(text.split("\n"), start=1):
             scanned = line

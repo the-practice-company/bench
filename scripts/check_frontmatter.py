@@ -8,7 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.basefile import parse_base
-from scripts.check_links import _ignored, _in_perimeter, _read
+from scripts.check_links import _ignored, _in_perimeter, _read, _undecodable
 from scripts.findings import Finding, Report
 from scripts.frontmatter import FrontmatterError, parse as parse_frontmatter
 
@@ -110,6 +110,10 @@ def _declaration(root, readme, findings):
     except FrontmatterError as error:
         findings.append(Finding("unparseable", rel, error.line, str(error)))
         return None, {}
+    except UnicodeDecodeError as error:
+        findings.append(_undecodable(rel, error,
+                                     "объявление коллекции не прочитано"))
+        return None, {}
     values = declaration.get("values") or {}
     vocabulary = {}
     if isinstance(values, dict):
@@ -126,12 +130,27 @@ def scan(root, today=None):
     # прогон ADOPT не был стеной находок, этим гейтом проверялся целиком.
     ignored = _ignored(root)
     findings = []
+    # Нечитаемый `.gitignore` называется каждым гейтом, который на него
+    # опёрся: периметр у них общий, но отчёты — разные, и в отчёте, где
+    # этой строки нет, часть находок необъяснима.
+    if ignored.undecodable is not None:
+        findings.append(_undecodable(".gitignore", ignored.undecodable,
+                                     "периметр прочитан без него"))
     for base_path in sorted(root.rglob("views.base")):
         rel_base = base_path.relative_to(root).as_posix()
         if not _in_perimeter(rel_base, ignored):
             continue
         collection = base_path.parent
-        base = parse_base(_read(base_path))
+        # Вид, который не прочитан, не называет ни своих папок, ни
+        # обязательных полей. Разбирать записи «по остаткам» здесь значило
+        # бы предъявить автору контракт, которого он не писал: тот же
+        # подлог, что и замещающий знак в значении поля (см. `_read`).
+        try:
+            base = parse_base(_read(base_path))
+        except UnicodeDecodeError as error:
+            findings.append(_undecodable(
+                rel_base, error, "записи коллекции не проверены"))
+            continue
 
         # README отсекается вместе со своим видом, а не отдельно: коллекция
         # внутри периметра, оставшаяся без объявления, — это снова пустой
@@ -147,10 +166,19 @@ def scan(root, today=None):
                 rel = record.relative_to(root).as_posix()
                 if not _in_perimeter(rel, ignored):
                     continue
+                # Замещающий знак в **значении** поля — то же ложное
+                # обвинение, что и в тексте ссылки: `type: заметка` в cp1251
+                # превращался в `type: ???????`, и гейт объявлял вне словаря
+                # значение, которого автор не писал. Незыблемое №4: файл
+                # уходит в отчёт целиком, а не подменяется по знаку.
                 try:
                     fields = parse_frontmatter(_read(record))
                 except FrontmatterError as error:
                     findings.append(Finding("unparseable", rel, error.line, str(error)))
+                    continue
+                except UnicodeDecodeError as error:
+                    findings.append(_undecodable(rel, error,
+                                                 "поля записи не проверены"))
                     continue
                 findings.extend(
                     check_record(rel, fields, base, vocabulary, archetype))

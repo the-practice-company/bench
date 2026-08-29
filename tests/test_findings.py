@@ -5,11 +5,20 @@ from scripts.findings import EXIT_OK, EXIT_VIOLATION, Finding, Report
 
 class TestFinding(unittest.TestCase):
     def test_link_gate_classes_are_closed(self):
+        """Семь классов секции 13 плюс два, заведённых под наблюдённые поломки.
+
+        `undecodable` — вместо чтения с заменой байта, называвшего цель
+        `[[???????]]`, которой никто не писал. `broad-allow` — вместо
+        запрета одного лишь синтаксиса подстроки: `*a*` гасит по всему
+        репозиторию и при этом считается использованной. Оба расхождения
+        со спекой вынесены автору (незыблемое №7).
+        """
         from scripts.findings import LINK_CLASSES
         self.assertEqual(
             set(LINK_CLASSES),
             {"unresolved", "md-link-to-file", "link-to-transient",
-             "escapes-root", "dead-allow", "ambiguous", "orphan"},
+             "escapes-root", "dead-allow", "broad-allow", "ambiguous",
+             "orphan", "undecodable"},
         )
 
     def test_severity_is_a_property_of_the_class_not_the_caller(self):
@@ -17,8 +26,23 @@ class TestFinding(unittest.TestCase):
         self.assertEqual(severity("unresolved"), "error")
         self.assertEqual(severity("escapes-root"), "error")
         self.assertEqual(severity("dead-allow"), "error")
+        self.assertEqual(severity("broad-allow"), "error")
         self.assertEqual(severity("ambiguous"), "warning")
         self.assertEqual(severity("orphan"), "report")
+
+    def test_an_unreadable_file_is_an_error_not_a_softer_verdict(self):
+        """Понизить тяжесть заодно с починкой правдивости — ослабить гейт.
+
+        Класс заведён взамен подстановки замещающего знака, которая давала
+        `unresolved`, то есть ошибку. И по существу: ссылки такого файла
+        не проверил никто, а прогон с непроверенным куском дерева зелёным
+        быть не может.
+        """
+        from scripts.findings import severity
+        self.assertEqual(severity("undecodable"), "error")
+        self.assertEqual(
+            Report([Finding("undecodable", "core/a.md", 1, "x")]).exit_code(),
+            EXIT_VIOLATION)
 
 
 class TestReportDeterminism(unittest.TestCase):

@@ -486,43 +486,114 @@ class TestTransientIsAboutTheTarget(unittest.TestCase):
             self.assertEqual(scan(root).counts(), {})
 
 
-class TestUndecodableByte(unittest.TestCase):
-    """Слепая зона 2: один байт уносил весь отчёт.
+class TestUndecodableFileIsAFinding(unittest.TestCase):
+    """Слепая зона 2, второй заход: замена байта сменила крах ложным обвинением.
 
-    `check_package` починил это у себя (`errors="replace"`, «один
-    недекодируемый байт уводил файл из-под гейта целиком»), гейт ссылок
-    фикс не получил, и здесь хуже: не тихий пропуск файла, а падение без
-    отчёта и код возврата 1, которого контракт `scripts/findings.py`
-    не знает вовсе (2 или 0).
+    Первый фикс читал файл с `errors="replace"`, чтобы один байт не уносил
+    весь отчёт. Крах он закрыл и открыл худшее. Замещающий знак стоит внутри
+    текста ссылки и от имени цели ничем не отличается, поэтому гейт называл
+    цель, которой никто не писал:
+
+        `core/заметка.md` есть, `core/utf8.md` и `core/cp1251.md` несут
+        дословно одну и ту же ссылку `[[заметка]]` в двух кодировках —
+        и вторая давала `unresolved [[???????]]`.
+
+    С другой стороны та же замена глотала файл целиком: `.md`, сохранённый
+    в UTF-16, давал пустой отчёт — ни одной ссылки не видно, и это тоже
+    молчание вместо ответа.
+
+    Незыблемое №4 дословно: невосстановимое значение уходит в отчёт, а не
+    подставляется тихо. Файл, который не декодируется, — находка про файл,
+    и ссылки в нём не разбираются вовсе: чем они были, знать неоткуда.
     """
 
-    JUNK = b"---\ntype: note\n---\n\xff\xfe binary junk\n[[nowhere]]\n"
+    CP1251 = "см. [[заметка]]\n".encode("cp1251")
+    UTF16 = "см. [[заметка]]\n".encode("utf-16")
 
-    def test_the_rest_of_the_file_is_still_read(self):
+    def test_the_same_link_in_two_encodings_never_becomes_a_target_nobody_typed(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = _make(tmp, {"core/me.md": self.JUNK})
+            root = _make(tmp, {"core/заметка.md": "цель\n",
+                               "core/utf8.md": "см. [[заметка]]\n",
+                               "core/cp1251.md": self.CP1251})
             self.assertEqual(
                 places(scan(root)),
-                [("core/me.md", 5, "unresolved", "[[nowhere]]")])
+                [("core/cp1251.md", 1, "undecodable",
+                  "не читается как UTF-8: байт 0xf1 в позиции 0, "
+                  "ссылки в нём не проверены")])
 
-    def test_the_backtick_perimeter_survives_it_too(self):
+    def test_a_utf16_file_is_named_instead_of_vanishing(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = _make(tmp, {"CLAUDE.md": b"\xff\xfe \x9f\n"
-                                            b"\xd0\xa1\xd0\xba\xd1\x80\xd0\xb8\xd0\xbf\xd1\x82 "
-                                            b"`scripts/move.py`\n"})
+            root = _make(tmp, {"core/me.md": self.UTF16})
             self.assertEqual(
                 places(scan(root)),
-                [("CLAUDE.md", 2, "unresolved", "`scripts/move.py`")])
+                [("core/me.md", 1, "undecodable",
+                  "не читается как UTF-8: байт 0xff в позиции 0, "
+                  "ссылки в нём не проверены")])
+
+    def test_the_backtick_perimeter_names_it_once_and_reads_no_tokens(self):
+        """Оба прохода по `.md` встречают тот же файл — находка обязана быть одна."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {"CLAUDE.md": "Скрипт `scripts/move.py`.\n".encode("cp1251")})
+            self.assertEqual(
+                places(scan(root)),
+                [("CLAUDE.md", 1, "undecodable",
+                  "не читается как UTF-8: байт 0xd1 в позиции 0, "
+                  "ссылки в нём не проверены")])
+
+    def test_a_neighbour_file_is_still_scanned(self):
+        """Контроль: находка про один файл, а не про прогон."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {"core/bad.md": self.CP1251,
+                               "core/good.md": "[[nowhere]]\n"})
+            self.assertEqual(
+                places(scan(root)),
+                [("core/bad.md", 1, "undecodable",
+                  "не читается как UTF-8: байт 0xf1 в позиции 0, "
+                  "ссылки в нём не проверены"),
+                 ("core/good.md", 1, "unresolved", "[[nowhere]]")])
+
+    def test_an_undecodable_settings_file_is_named_too(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {".claude/settings.json":
+                               '{"note": "заметка"}\n'.encode("cp1251")})
+            self.assertEqual(
+                places(scan(root)),
+                [(".claude/settings.json", 1, "undecodable",
+                  "не читается как UTF-8: байт 0xe7 в позиции 10, "
+                  "пути в нём не проверены")])
+
+    def test_an_undecodable_allowlist_is_named_too(self):
+        """Аллоулист, который не прочитан, гасит не то, что думает автор."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {".link-allow": "черновик # причина\n".encode("cp1251"),
+                               "core/me.md": "[[черновик]]\n"})
+            self.assertEqual(
+                places(scan(root)),
+                [(".link-allow", 1, "undecodable",
+                  "не читается как UTF-8: байт 0xf7 в позиции 0, "
+                  "записи аллоулиста не прочитаны"),
+                 ("core/me.md", 1, "unresolved", "[[черновик]]")])
+
+    def test_an_undecodable_gitignore_is_named_too(self):
+        """Периметр, прочитанный с заменой, — это чужой периметр молча."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {".gitignore": "черновики/\n".encode("cp1251"),
+                               "core/me.md": "запись\n"})
+            self.assertEqual(
+                places(scan(root)),
+                [(".gitignore", 1, "undecodable",
+                  "не читается как UTF-8: байт 0xf7 в позиции 0, "
+                  "периметр прочитан без него")])
 
     def test_exit_code_stays_inside_the_contract(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = _make(tmp, {"core/me.md": self.JUNK})
+            root = _make(tmp, {"core/me.md": self.CP1251})
             result = subprocess.run(
                 [sys.executable, str(ROOT / "scripts" / "check_links.py"), str(root)],
                 capture_output=True, text=True,
             )
             self.assertEqual(result.returncode, 2)
-            self.assertIn("unresolved", result.stdout)
+            self.assertIn("undecodable", result.stdout)
 
 
 class TestGitignoreNegation(unittest.TestCase):
@@ -742,3 +813,160 @@ class TestMultiBacktickSpan(unittest.TestCase):
             self.assertEqual(
                 places(scan(root)),
                 [("CLAUDE.md", 1, "unresolved", "`scripts/move.py`")])
+
+
+class TestOverBroadAllowEntry(unittest.TestCase):
+    """Слепая зона 6, второй заход: запрет подстроки обошли глоб-синтаксисом.
+
+    Голую подстроку (`a`) запретили, и та же семантика вернулась в форме
+    `*a*`, `*`, `?*`, `[a-z]*`: правило гасит `unresolved` по всему
+    репозиторию и при этом считается использованным, поэтому `dead-allow`
+    о нём молчит. Весь аргумент спеки за `dead-allow` в том, что уцелевшее
+    исключение тихо ослабляет гейт; здесь ослабление везде и невидимо.
+
+    Признак — наличие хотя бы одного целиком литерального сегмента пути.
+    Правило без него не называет ни места, ни имени: подпасть под него
+    может что угодно. Правило с ним место называет — и `черновики/*`
+    остаётся законной «строкой на паттерн» (секция 13), как и было.
+    """
+
+    GHOSTS = "[[nowhere-at-all]] и [[another-ghost]]\n"
+
+    def _findings(self, pattern):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {".link-allow": "%s # причина\n" % pattern,
+                               "core/me.md": self.GHOSTS})
+            return places(scan(root))
+
+    def test_a_substring_wearing_glob_syntax_is_over_broad(self):
+        self.assertEqual(
+            self._findings("*a*"),
+            [(".link-allow", 1, "broad-allow",
+              "правило не привязано ни к месту, ни к имени, сузьте: *a* "
+              "(гасит: another-ghost, nowhere-at-all)")])
+
+    def test_the_bare_star_is_over_broad(self):
+        self.assertEqual(
+            self._findings("*"),
+            [(".link-allow", 1, "broad-allow",
+              "правило не привязано ни к месту, ни к имени, сузьте: * "
+              "(гасит: another-ghost, nowhere-at-all)")])
+
+    def test_the_question_mark_spelling_is_over_broad(self):
+        self.assertEqual(
+            self._findings("?*"),
+            [(".link-allow", 1, "broad-allow",
+              "правило не привязано ни к месту, ни к имени, сузьте: ?* "
+              "(гасит: another-ghost, nowhere-at-all)")])
+
+    def test_a_character_class_spelling_is_over_broad(self):
+        self.assertEqual(
+            self._findings("[a-z]*"),
+            [(".link-allow", 1, "broad-allow",
+              "правило не привязано ни к месту, ни к имени, сузьте: [a-z]* "
+              "(гасит: another-ghost, nowhere-at-all)")])
+
+    def test_one_swallowed_target_is_enough(self):
+        """Ждать второй цели незачем: правило уже гасит что угодно.
+
+        Ровно это состояние опаснее двух: гейт зелен, автор считает его
+        живым, а следующая мёртвая ссылка не покраснеет.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {".link-allow": "* # причина\n",
+                               "core/me.md": "[[nowhere-at-all]]\n"})
+            self.assertEqual(
+                places(scan(root)),
+                [(".link-allow", 1, "broad-allow",
+                  "правило не привязано ни к месту, ни к имени, сузьте: * "
+                  "(гасит: nowhere-at-all)")])
+
+    def test_an_anchored_glob_covering_a_shape_is_still_legal(self):
+        """Контроль: «строка на паттерн» спеки не отменена.
+
+        `черновики/*` называет место — раздел, которого ещё нет. Правило,
+        сведённое к одной цели, не было бы паттерном вовсе, и секция 13
+        перестала бы что-либо значить.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {".link-allow": "черновики/* # раздел ещё не написан\n",
+                               "core/me.md": "[[черновики/один]] и [[черновики/два]]\n"})
+            self.assertEqual(scan(root).counts(), {})
+
+    def test_a_glob_naming_a_file_rather_than_a_place_is_still_legal(self):
+        """Литеральный сегмент не обязан быть первым: `*/README` называет имя."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {".link-allow": "*/README # реестры ещё не заведены\n",
+                               "core/me.md": "[[люди/README]] и [[места/README]]\n"})
+            self.assertEqual(scan(root).counts(), {})
+
+    def test_an_over_broad_entry_is_not_also_called_dead(self):
+        """Два класса про одну строку противоречили бы друг другу.
+
+        `dead-allow` утверждает «правило ничего не исключает». Про правило,
+        погасившее две цели, это ложь — а ложное утверждение и есть то,
+        что чинится в этом заходе.
+        """
+        self.assertEqual([f[2] for f in self._findings("*a*")], ["broad-allow"])
+
+    def test_an_unanchored_entry_that_swallowed_nothing_is_dead_not_broad(self):
+        """Контроль обратной стороны: не гасит ничего — прежний класс."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {".link-allow": "*.md # причина\n",
+                               "core/me.md": "запись без ссылок\n"})
+            self.assertEqual(
+                places(scan(root)),
+                [(".link-allow", 1, "dead-allow",
+                  "правило ничего не исключает, удалите: *.md")])
+
+
+class TestGitignoredFileIsOutsideThePerimeter(unittest.TestCase):
+    """Слепая зона 9: запись `.gitignore` про один файл становилась префиксом.
+
+    `_ignored` дописывает косую каждой записи — верно для каталога и неверно
+    для файла, а различить их по самому шаблону нечем. `.claude/
+    settings.local.json` превращался в префикс `.claude/settings.local.json/`,
+    не совпадающий ни с чем, и гейт читал файл, который репозиторий
+    игнорирует. Последствие приезжает в каждый экземпляр, собранный
+    рецептом: абсолютный путь в машинно-локальных настройках автора
+    становится `escapes-root`.
+    """
+
+    LOCAL = '{"permissions": {"allow": ["Read(/Users/artem/notes.md)"]}}\n'
+
+    def test_a_gitignored_settings_file_is_not_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {".gitignore": ".claude/settings.local.json\n",
+                               ".claude/settings.local.json": self.LOCAL})
+            self.assertEqual(scan(root).counts(), {})
+
+    def test_without_the_gitignore_entry_the_same_file_is_still_read(self):
+        """Контроль: молчит запись, а не проверка."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {".claude/settings.local.json": self.LOCAL})
+            self.assertEqual(
+                places(scan(root)),
+                [(".claude/settings.local.json", 1, "escapes-root",
+                  "Read(/Users/artem/notes.md)")])
+
+    def test_a_gitignored_markdown_file_is_not_scanned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {".gitignore": "core/scratch.md\n",
+                               "core/scratch.md": "[[nowhere]]\n"})
+            self.assertEqual(scan(root).counts(), {})
+
+    def test_the_subtree_form_is_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {".gitignore": "build/\n",
+                               "build/note.md": "[[nowhere]]\n"})
+            self.assertEqual(scan(root).counts(), {})
+
+    def test_a_gitignored_file_is_not_a_resolvable_target(self):
+        """Периметр один: невидимый файл не должен гасить `unresolved`."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {".gitignore": "core/scratch.md\n",
+                               "core/scratch.md": "черновик\n",
+                               "core/me.md": "[[scratch]]\n"})
+            self.assertEqual(
+                places(scan(root)),
+                [("core/me.md", 1, "unresolved", "[[scratch]]")])

@@ -581,6 +581,70 @@ class TestPackageCheck(unittest.TestCase):
                 places(check(root)),
                 [("notes.md", 1, "absolute-path", "Смотри /Users/artem/x.md")])
 
+    def test_an_unreadable_hooks_json_never_invents_a_matcher(self):
+        """Замещающий знак в **значении** — обвинение в чужом тексте.
+
+        Чтение с заменой байта верно ровно там, где извлекается предикат, а
+        не значение: в скане абсолютных путей `�` не похож ни на один
+        префикс. Здесь значение доезжает до автора находкой — `matcher:
+        "Ed\\xffit"` давал `unknown-matcher Ed?it`, матчер, которого никто
+        не писал.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "hooks" / "hooks.json").write_bytes(
+                b'{"hooks": {"PreToolUse": [{"matcher": "Ed\xffit",'
+                b' "hooks": [{"type": "command", "command": "x"}]}]}}')
+            self.assertEqual(
+                places(check(root)),
+                [("hooks/hooks.json", 1, "undecodable",
+                  "не читается как UTF-8: байт 0xff в позиции 41, "
+                  "контракт хуков не проверен")])
+
+    def test_an_unreadable_skill_manifest_never_invents_a_name(self):
+        """`skill-name-mismatch 'nam?e' != 'name'` — расхождение из ниоткуда."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "skills" / "drain-inbox" / "SKILL.md").write_bytes(
+                b"---\nname: drain-inb\xffox\ndescription: x\n---\n")
+            self.assertEqual(
+                places(check(root)),
+                [("skills/drain-inbox/SKILL.md", 1, "undecodable",
+                  "не читается как UTF-8: байт 0xff в позиции 19, "
+                  "манифест скилла не проверен")])
+
+    def test_an_unreadable_eval_is_not_a_trigger_eval(self):
+        """Здесь замена давала не обвинение, а ложное зелёное.
+
+        Нечитаемый файл превращался в строку знаков, не начинающуюся с
+        решётки, — то есть считался живой фразой срабатывания, и
+        `skill-without-eval` молчал.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "skills" / "drain-inbox" / "eval.txt").write_bytes(b"\xff\xfe\n")
+            self.assertEqual(
+                places(check(root)),
+                [("skills/drain-inbox/eval.txt", 1, "undecodable",
+                  "не читается как UTF-8: байт 0xff в позиции 0, "
+                  "срабатывание скилла не проверено")])
+
+    def test_an_unreadable_gitignore_is_named_rather_than_narrowed_silently(self):
+        """Периметр, собранный не из того текста, — чужой периметр молча.
+
+        Проверка обещает вердикт, не зависящий от неотслеживаемого
+        локального состояния. Нечитаемый `.gitignore` сужает периметр до
+        умолчаний, и обещание держится на том, о чём не сказано вслух.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / ".gitignore").write_bytes("черновики/\n".encode("cp1251"))
+            self.assertEqual(
+                places(check(root)),
+                [(".gitignore", 1, "undecodable",
+                  "не читается как UTF-8: байт 0xf7 в позиции 0, "
+                  "периметр прочитан без него")])
+
     def test_service_directories_are_skipped_at_any_depth(self):
         """`__pycache__` в списке первого сегмента был мёртвой строкой.
 
@@ -1103,7 +1167,11 @@ class TestPackageCheck(unittest.TestCase):
         """`read_text` без замены ронял всю проверку на одном байте.
 
         Тот же дефект, что и в скане файлов пакета, только на SKILL.md:
-        исключение уносило и остальные находки, и код возврата.
+        исключение уносило и остальные находки, и код возврата. Замена его
+        закрыла и завела ложное зелёное: `description: caf\\xe9` доезжал как
+        `caf?`, поля считались заполненными, имя — совпавшим, и проверка
+        молчала о файле, который не прочитан. Теперь файл называется, а
+        остальные находки на месте — крах не вернулся.
         """
         with tempfile.TemporaryDirectory() as tmp:
             root = _minimal_package(Path(tmp))
@@ -1111,8 +1179,12 @@ class TestPackageCheck(unittest.TestCase):
                 "---\nname: drain-inbox\ndescription: caf".encode("utf-8")
                 + b"\xe9\n---\n")
             report = check(root)
-            self.assertEqual(places(report), [])
-            self.assertEqual(report.exit_code(), 0)
+            self.assertEqual(
+                places(report),
+                [("skills/drain-inbox/SKILL.md", 1, "undecodable",
+                  "не читается как UTF-8: байт 0xe9 в позиции 38, "
+                  "манифест скилла не проверен")])
+            self.assertEqual(report.exit_code(), 2)
 
 
 class TestGateNotReadOnlyMechanism(unittest.TestCase):

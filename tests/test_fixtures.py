@@ -14,7 +14,9 @@
 | `escapes-root` 3 | абсолютный путь в `CLAUDE.md`, `[[../../../soseddniy-repo/file]]` и глоб `~/vault/**/*.md` в `CLAUDE.md` |
 | `ambiguous` 1 | `[[dup]]` при двух `dup.md` |
 | `dead-allow` 2 | строка без причины и строка, ничего не исключающая |
+| `broad-allow` 1 | запись `*тень*` — подстрока в глоб-написании, гасит обе ссылки `areas/hiring/broad.md` |
 | `orphan` 1 | транскрипт, на который никто не сослался |
+| `undecodable` 1 | `areas/hiring/cp1251.md` — выгрузка из старого редактора не в UTF-8 |
 
 Про `unresolved` 4, а не 3, как стоит в таблице Task 13. Таблица перечислила три
 образца и не досчитала четвёртый, который сама же и положила: `.claude/rules/
@@ -33,6 +35,18 @@ areas.md` — файл, заведённый в фикстуру с подпис
 только в `CLAUDE.md`, `README.md`, `SKILL.md` и `.claude/rules/*.md`. Поэтому
 образец лежит в `CLAUDE.md` фикстуры, а не в `areas/hiring/escapes.md`, как
 писал Task 7: периметр сканирования переезжать за образцом не может (DEC-0003).
+
+Про `undecodable` и `broad-allow`: этих двух классов в таблице секции 13 нет.
+Оба заведены под поломки, наблюдённые на живом выводе, и оба вынесены автору
+правкой спеки (незыблемое №7). Первый — вместо чтения с заменой байта: гейт
+называл цель `[[???????]]`, которой никто не писал. Второй — вместо запрета
+одного лишь синтаксиса подстроки: `*тень*` гасит по всему репозиторию и
+считается использованной, поэтому `dead-allow` о ней молчит.
+
+Образец `undecodable` не даёт шестого `unresolved`, и это часть проверки:
+внутри `cp1251.md` стоит ссылка в никуда, которая обязана остаться
+непрочитанной. Вернётся чтение с заменой — `unresolved` станет 6, и список
+покраснеет.
 
 Третий образец `escapes-root` — глоб `~/vault/**/*.md`, и он тут не для счёта.
 Строка спеки «глоб — шаблон, а не путь» приглашает отсеять глоб входным
@@ -108,7 +122,9 @@ class TestExactFindings(unittest.TestCase):
                 "escapes-root": 3,
                 "ambiguous": 1,
                 "dead-allow": 2,
+                "broad-allow": 1,
                 "orphan": 1,
+                "undecodable": 1,
             },
         )
 
@@ -122,11 +138,17 @@ class TestExactFindings(unittest.TestCase):
                 (".link-allow", 2, "dead-allow", "строка без причины: будущая-заметка"),
                 (".link-allow", 3, "dead-allow",
                  "правило ничего не исключает, удалите: уже-не-нужное"),
+                (".link-allow", 4, "broad-allow",
+                 "правило не привязано ни к месту, ни к имени, сузьте: *тень* "
+                 "(гасит: тень-вторая, тень-первая)"),
                 ("CLAUDE.md", 3, "unresolved", "`scripts/move.py`"),
                 ("CLAUDE.md", 4, "escapes-root", "`/Users/artem/notes.md`"),
                 ("CLAUDE.md", 8, "escapes-root", "`~/vault/**/*.md`"),
                 ("areas/hiring/bare.md", 4, "ambiguous",
                  "[[dup]] → areas/hiring/dup.md, core/dup.md"),
+                ("areas/hiring/cp1251.md", 1, "undecodable",
+                 "не читается как UTF-8: байт 0xc7 в позиции 19, "
+                 "ссылки в нём не проверены"),
                 ("areas/hiring/escapes.md", 4, "escapes-root",
                  "[[../../../soseddniy-repo/file]]"),
                 ("areas/hiring/md-link.md", 4, "md-link-to-file",

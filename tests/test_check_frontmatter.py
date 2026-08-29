@@ -245,11 +245,18 @@ class TestRequired(unittest.TestCase):
             ])
 
 
-class TestUndecodableByte(unittest.TestCase):
-    """Один байт уносил отчёт целиком: `UnicodeDecodeError` и код возврата 1.
+class TestUndecodableFileIsAFinding(unittest.TestCase):
+    """Тот же ложный вердикт, что у гейта ссылок, только в значении поля.
 
-    Тот же фикс и по той же причине, что в `check_package._iter_package_files`
-    и `check_links._read`. Код 1 контракт `findings.py` не знает вовсе.
+    Первый фикс читал с `errors="replace"`, чтобы один байт не уносил отчёт
+    целиком (код возврата 1, которого контракт `findings.py` не знает).
+    Крах он закрыл и завёл обвинение на пустом месте: `status: op\\xffen`
+    доезжал сюда как `op?en`, и гейт объявлял вне словаря значение, которого
+    автор не писал. Точно так же портится и `type`, и любое перечислимое
+    поле — то есть врал класс, ради которого коллекция объявляет словарь.
+
+    Незыблемое №4: нечитаемый файл уходит в отчёт целиком. Полей у него
+    нет — не потому, что они пусты, а потому что читать их неоткуда.
     """
 
     def _tree(self, tmp):
@@ -260,12 +267,46 @@ class TestUndecodableByte(unittest.TestCase):
                 b"---\ntype: decision\ncreated: 2026-07-01\nstatus: op\xffen\n---\n",
         })
 
-    def test_the_report_survives_a_stray_byte_everywhere(self):
+    def test_every_unreadable_file_is_named_and_none_is_judged(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = self._tree(tmp)
             self.assertEqual(places(scan(root)), [
-                ("decisions/items/x.md", 1, "value-outside-vocabulary",
-                 "status='op�en' вне словаря ['open', 'decided', 'revisited']"),
+                ("decisions/views.base", 1, "undecodable",
+                 "не читается как UTF-8: байт 0xff в позиции 125, "
+                 "записи коллекции не проверены"),
+            ])
+
+    def test_an_unreadable_record_is_named_under_a_readable_view(self):
+        """Вид и объявление целы — тогда видно и запись, и её причину."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = tree(tmp, {
+                "decisions/README.md": DECLARATION,
+                "decisions/views.base": view("decisions/items"),
+                "decisions/items/x.md":
+                    b"---\ntype: decision\ncreated: 2026-07-01\nstatus: op\xffen\n---\n",
+            })
+            self.assertEqual(places(scan(root)), [
+                ("decisions/items/x.md", 1, "undecodable",
+                 "не читается как UTF-8: байт 0xff в позиции 49, "
+                 "поля записи не проверены"),
+            ])
+
+    def test_an_unreadable_declaration_leaves_the_records_checked(self):
+        """Словаря нет и он назван вслух; обязательные поля судятся дальше."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = tree(tmp, {
+                "decisions/README.md": DECLARATION.encode("utf-8") + b"\xff\n",
+                "decisions/views.base": view("decisions/items"),
+                "decisions/items/x.md": BARE_RECORD,
+            })
+            self.assertEqual(places(scan(root)), [
+                ("decisions/README.md", 1, "undecodable",
+                 "не читается как UTF-8: байт 0xff в позиции 104, "
+                 "объявление коллекции не прочитано"),
+                ("decisions/items/x.md", 1, "missing-required",
+                 "поле status читает вид"),
+                ("decisions/items/x.md", 1, "missing-required",
+                 "стартовый набор: поле created"),
             ])
 
     def test_exit_code_stays_within_the_contract(self):
@@ -277,7 +318,7 @@ class TestUndecodableByte(unittest.TestCase):
                 capture_output=True, text=True,
             )
             self.assertEqual(result.returncode, 2, result.stderr)
-            self.assertIn("value-outside-vocabulary", result.stdout)
+            self.assertIn("undecodable", result.stdout)
 
 
 class TestPerimeter(unittest.TestCase):
