@@ -74,6 +74,19 @@ class TestZoneReadmes(unittest.TestCase):
                 offenders.append(zone)
         self.assertEqual(offenders, [])
 
+    def test_the_areas_readme_carries_the_directions_heading(self):
+        """`add-area` дописывает строку под фиксированный заголовок. Без него
+        перечисление негде вести, и §4 остаётся невыполнимым."""
+        text = (SCAFFOLD / "areas" / "README.md").read_text(encoding="utf-8")
+        self.assertIn("\n## Directions\n", text)
+
+    def test_the_empty_line_of_the_listing_sits_under_the_heading(self):
+        """Фраза «пусто» — единственная строка перечисления, пока направлений
+        нет: `add-area` заменяет ею свою первую строку. Стой она выше
+        заголовка, замена сняла бы не её, а чужой абзац."""
+        text = (SCAFFOLD / "areas" / "README.md").read_text(encoding="utf-8")
+        self.assertLess(text.index("## Directions"), text.index(NO_SPECIMEN_LINE))
+
     def test_no_zone_readme_lists_files(self):
         """Секция 3: перечисление подпапок — можно, перечисление файлов — нельзя.
 

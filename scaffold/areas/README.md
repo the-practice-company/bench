@@ -20,6 +20,8 @@ Material as received lives in `sources/`.
 **Dated data is welcome here.** A file that is an entry on a date rather than
 a statement about now says so in its own fields; the zone does not split.
 
+## Directions
+
 **Nothing here yet.** There is no direction in this zone — ask before writing.
 
 **By threshold.** A new direction once a stream of work appears. A collection

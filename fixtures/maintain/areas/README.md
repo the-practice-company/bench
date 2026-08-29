@@ -20,7 +20,7 @@ Material as received lives in `sources/`.
 **Dated data is welcome here.** A file that is an entry on a date rather than
 a statement about now says so in its own fields; the zone does not split.
 
-**Directions.**
+## Directions
 
 - `areas/work/` — студийная работа: журнал планёрок и квартальные обзоры.
 
