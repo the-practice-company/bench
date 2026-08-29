@@ -102,10 +102,13 @@ def run(root, paths):
     for path in paths:
         _restore(root, path)
     findings = _sweep(root, paths)
+    forgotten = tree.forget_touched(root, paths)
 
     lines = [line for line in (Report(findings).render(),) if line]
     lines.extend("опустевший каталог остался: %s" % name
                  for name in _emptied(root, paths))
+    if forgotten:
+        lines.append("снято записей журнала правок: %d" % forgotten)
     lines.append("возвращено в HEAD: %s" % ", ".join(sorted(paths)))
     return "\n".join(lines) + "\n", EXIT_OK
 

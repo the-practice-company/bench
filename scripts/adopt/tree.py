@@ -93,9 +93,38 @@ def record_touched(root, source, files):
     """
     entries = set(read_touched(root))
     entries.update((source, rel) for rel in files)
+    _write_touched(root, entries)
+
+
+def _write_touched(root, entries):
     _meta(root, TOUCHED_FILE).write_text(
         "".join("%s\t%s\n" % pair for pair in sorted(entries)),
         encoding="utf-8")
+
+
+def forget_touched(root, paths):
+    """Снять записи журнала об этих путях. Возвращает число снятых.
+
+    Запись журнала оправдывает правку файла под согласованной строкой:
+    `check-plan` видит изменившийся файл, находит запись и молчит. Откат
+    возвращает файл в `HEAD`, и оправдание перестаёт что-либо описывать —
+    но, оставшись, оно продолжает работать. Следующая правка того же файла,
+    уже мимо плана, оправдывается им молча, то есть настоящий
+    `unagreed-change` не называется.
+
+    Ложного обвинения из устаревшей записи не выйдет: журнал только
+    оправдывает. Выйдет пропуск, а пропуск здесь дороже.
+
+    Сравнение посегментное, а не по подстроке: `journal` не предок
+    `journalism.md`, и запись о соседнем имени снимать не за что.
+    """
+    entries = read_touched(root)
+    kept = [(source, rel) for source, rel in entries
+            if not any(rel == p or rel.startswith(p.rstrip("/") + "/")
+                       for p in paths)]
+    if len(kept) != len(entries):
+        _write_touched(root, kept)
+    return len(entries) - len(kept)
 
 
 def inside(root, target):

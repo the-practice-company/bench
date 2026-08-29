@@ -222,3 +222,53 @@ class TestFalsifiers(unittest.TestCase):
         self.assertNotEqual(after, self.before)
         self.assertEqual({k: v[0] for k, v in after[0].items()},
                          {k: v[0] for k, v in self.before[0].items()})
+
+
+class TestJournal(unittest.TestCase):
+    """Журнал `.git/adopt-touched` не переживает откат.
+
+    Журнал оправдывает правку файла под согласованной строкой: `check-plan`
+    видит изменившийся файл, находит запись и молчит. Откат возвращает файл
+    в `HEAD`, и оправдание перестаёт что-либо описывать — но, оставшись,
+    оно продолжает работать. Следующая правка того же файла, уже мимо
+    плана, оправдывается им молча, то есть настоящий `unagreed-change`
+    не называется.
+
+    Ложного обвинения из устаревшей записи не выйдет — журнал только
+    оправдывает. Выйдет пропуск, а пропуск здесь дороже.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = materialise(self.tmp.name, git_root=False, nested=False)
+        committer(self)
+        init_tree.run(self.root)
+
+    def test_an_entry_about_a_reverted_file_is_forgotten(self):
+        tree.record_touched(self.root, "notes", ["README.md"])
+        report, code = revert.run(self.root, ["README.md"])
+        self.assertEqual(code, EXIT_OK, report)
+        self.assertEqual(tree.read_touched(self.root), [])
+
+    def test_an_entry_about_a_file_left_alone_survives(self):
+        """Откат части этапа не отменяет оправданий остальной части."""
+        tree.record_touched(self.root, "notes", ["README.md"])
+        tree.record_touched(self.root, "media", ["state.md"])
+        revert.run(self.root, ["README.md"])
+        self.assertEqual(tree.read_touched(self.root), [("media", "state.md")])
+
+    def test_a_directory_argument_forgets_everything_under_it(self):
+        tree.record_touched(self.root, "media", ["journal/2026-01-04.md"])
+        revert.run(self.root, ["journal"])
+        self.assertEqual(tree.read_touched(self.root), [])
+
+    def test_a_prefix_that_is_not_a_path_boundary_is_not_forgotten(self):
+        """`journal` не предок `journalism.md`. Сравнение посегментное."""
+        (self.root / "journalism.md").write_text("х\n", encoding="utf-8")
+        tree.git(self.root, "add", "--", "journalism.md")
+        tree.git(self.root, "commit", "-q", "-m", "соседнее имя")
+        tree.record_touched(self.root, "media", ["journalism.md"])
+        revert.run(self.root, ["journal"])
+        self.assertEqual(tree.read_touched(self.root),
+                         [("media", "journalism.md")])
