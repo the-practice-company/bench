@@ -103,7 +103,19 @@ TDD: падающий тест раньше кода, всегда.
 
 - Спека: `docs/superpowers/specs/2026-08-08-context-repo-plugin-design.md`
 - Волны и критерии выхода: `docs/roadmap.md`
-- Трекер прогона и правила текущей сессии: `docs/tracker.md`
-- План текущей волны: `docs/superpowers/plans/2026-08-08-wave-1-gates-and-package-check.md`
+- **Трекер прогона: `docs/tracker.md`.** Начинать с него — первый раздел
+  говорит, где мы и что делать дальше
 - Покрытие классов находок: `docs/gate-coverage.md`
 - Покрытие критериев выхода мутациями: `docs/criteria-coverage.md`
+- Оснастка мутаций: `dev/mutate.py`. В `./check` не входит; волна не
+  закрывается, пока она не показала, что посаженное нарушение краснеет
+
+Спеки и планы волн — по одному документу на волну:
+
+| волна | спека | план |
+|---|---|---|
+| 1 | секции общей спеки | `docs/superpowers/plans/2026-08-08-wave-1-gates-and-package-check.md` |
+| 2 | `docs/superpowers/specs/2026-08-29-wave-2-hooks-design.md` | `docs/superpowers/plans/2026-08-29-wave-2-hooks.md` |
+| 3 | `docs/superpowers/specs/2026-08-29-wave-3-scaffold-and-create-design.md` | `docs/superpowers/plans/2026-08-29-wave-3-scaffold-and-create.md` |
+| 4 | `docs/superpowers/specs/2026-08-29-wave-4-adopt-design.md` | нет |
+| 5 | `docs/superpowers/specs/2026-08-29-wave-5-maintain-design.md` | нет |

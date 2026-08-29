@@ -17,4 +17,6 @@ paths: ["inbox/**"]
 - Nothing stays here for ever. Age here is a fact about the pipeline, not
   about the item.
 
-Not gated — this is a convention.
+Held by gates: write hook — a warning when an existing item here is edited
+rather than moved out; end-of-turn hook — the count and the age of the oldest
+item, reported every turn and never blocking.

@@ -359,11 +359,25 @@ class TestPathScopedRules(unittest.TestCase):
         self.assertEqual(unknown, [])
 
     def test_both_closing_forms_are_actually_used(self):
-        """Форма «не гейтится» существует не на бумаге: конвенций две —
-        разбор inbox и жанр README, и обе названы конвенциями в спеке."""
+        """Форма «не гейтится» существует не на бумаге. Конвенция ровно одна.
+
+        План называл конвенциями две — разбор inbox и жанр README, — но
+        спека подтверждает только вторую: «Гейта под это нет… само
+        перечисление это конвенция, и держит её path-scoped rule
+        `readme.md`». Про inbox та же спека говорит обратное в таблице
+        секции 15: «правка существующего в `inbox`, `decisions` —
+        предупреждение», и `hooks/hook.py` печатает его той же веткой
+        `ADD_ONLY`, а Stop-хук каждый ход печатает возраст старшего
+        элемента. Назвать inbox негейтящимся значило бы противоречить
+        двум файлам из тех же одиннадцати, где ровно то же предупреждение
+        write hook названо гейтом (`core`, `areas`).
+
+        Одного пользователя форме довольно: мёртвой она станет на нуле,
+        а не на единице.
+        """
         ungated = [p.name for p in rule_files()
                    if NOT_GATED in p.read_text(encoding="utf-8")]
-        self.assertEqual(ungated, ["inbox.md", "readme.md"])
+        self.assertEqual(ungated, ["readme.md"])
 
     def test_no_rule_reproduces_a_collection_vocabulary(self):
         offenders = []

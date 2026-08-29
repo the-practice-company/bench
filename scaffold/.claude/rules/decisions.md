@@ -23,4 +23,5 @@ opposite, do I want the agent to object by pointing at this record?
   view can compare it. What can be computed is not stored.
 
 Held by gates: frontmatter gate — the starter fields on every record and the
-status value from the vocabulary the zone README declares.
+status value from the vocabulary the zone README declares; write hook — a
+warning when an existing record here is edited rather than superseded.
