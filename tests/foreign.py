@@ -10,9 +10,11 @@
 `subprocess`; ни одного нового механизма.
 """
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 FOREIGN = ROOT / "fixtures" / "foreign"
@@ -21,6 +23,34 @@ FOREIGN = ROOT / "fixtures" / "foreign"
 NESTED = "vendor-lib"
 
 _EXCLUDE_HEADER = "# вложенные репозитории, исключены ADOPT"
+
+# Личность коммиттера для тех тестов, где репозиторий заводит не фикстура,
+# а `init-tree`: настроить его конфиг до себя самого некому, а глобальный
+# `user.email` в среде прогона может быть не настроен — тот же довод, что у
+# `tests/test_hook_events.commit_all`. Переменные среды старше конфига,
+# поэтому тест на отказ без личности снимает их сам, `no_committer`.
+COMMITTER = {
+    "GIT_AUTHOR_NAME": "adopt",
+    "GIT_AUTHOR_EMAIL": "adopt@example.invalid",
+    "GIT_COMMITTER_NAME": "adopt",
+    "GIT_COMMITTER_EMAIL": "adopt@example.invalid",
+}
+
+
+def committer(case):
+    """Личность коммиттера в среде на время одного теста."""
+    patcher = mock.patch.dict(os.environ, COMMITTER)
+    patcher.start()
+    case.addCleanup(patcher.stop)
+
+
+def no_committer(case):
+    """Ни личности в среде, ни следа от неё после теста."""
+    patcher = mock.patch.dict(os.environ)
+    patcher.start()
+    case.addCleanup(patcher.stop)
+    for name in COMMITTER:
+        os.environ.pop(name, None)
 
 
 def git(root, *args):

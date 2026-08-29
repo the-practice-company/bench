@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""Общее для мутирующих команд ADOPT: git, точка отката, манифест.
+
+Границу рабочего каталога здесь не переопределяют: предикат один на пакет и
+живёт в `scripts/boundary.py`. Копия расходится молча — три разошедшиеся
+таблицы зон однажды стоили этому репозиторию критерия выхода.
+
+Пути из git читаются **только** через `git_zlines`, то есть с `-z`. Без него
+git отдаёт не-ASCII имена в C-кавычках: `local/заметка.md` приезжает строкой
+`"local/\\320\\267..."`, и всё, что с ней делают дальше, работает не с тем
+файлом. Проверено на живом git; чужие деревья в этом пакете русские целиком,
+так что случай не редкий, а обычный.
+"""
+
+import hashlib
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
+from scripts import boundary
+
+# Точка отката живёт внутри `.git`: это единственное место внутри корня,
+# невидимое для `git status`, и файл там принадлежит плагину, а не автору.
+# Тот же приём, что у волны 2.
+BASE_FILE = "adopt-base"
+
+
+def git(root, *args):
+    return subprocess.run(["git", *args], cwd=str(root),
+                          capture_output=True, text=True)
+
+
+def git_zlines(root, *args):
+    """Строки вывода `git ... -z`: разделитель — нулевой байт, кавычек нет.
+
+    Флаг `-z` ставит вызывающий, а не эта обёртка: у разных подкоманд он
+    стоит в разных местах командной строки, и обёртка, дописывающая его
+    сама, ошиблась бы позицией.
+    """
+    return [line for line in git(root, *args).stdout.split("\0") if line]
+
+
+def head(root):
+    proc = git(root, "rev-parse", "--verify", "-q", "HEAD")
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def _meta(root, name):
+    return Path(root) / ".git" / name
+
+
+def read_base(root):
+    path = _meta(root, BASE_FILE)
+    return path.read_text(encoding="utf-8").strip() if path.exists() else None
+
+
+def write_base(root, sha):
+    _meta(root, BASE_FILE).write_text(sha + "\n", encoding="utf-8")
+
+
+def inside(root, target):
+    """Путь внутри корня. Предикат чужой, здесь только вопрос.
+
+    Порядок аргументов `boundary.outside(путь, корень)` — не деталь вкуса:
+    переставленный, он делает `inside` тождественно ложным, и `revert`
+    отказывает по каждому пути, а тест на отказ по пути вне корня проходит
+    зелёным. Разводит это `TestInside`.
+    """
+    return not boundary.outside(Path(root) / target, Path(root))
+
+
+def nested_repositories(root):
+    """Каталоги с `.git` внутри, кроме самого корня. Единственный механически
+    определяемый факт о чужом репозитории (§18)."""
+    root = Path(root)
+    out = []
+
+    def walk(base, rel):
+        for entry in sorted(base.iterdir(), key=lambda p: p.name):
+            if not entry.is_dir() or entry.is_symlink():
+                continue
+            if entry.name == ".git":
+                continue
+            child = entry.name if not rel else "%s/%s" % (rel, entry.name)
+            if (entry / ".git").exists():
+                out.append(child)
+                continue        # внутрь чужого репозитория не спускаемся
+            walk(entry, child)
+
+    walk(root, "")
+    return out
+
+
+def manifest(root):
+    """путь → (sha256 содержимого, режим), плюс множество непустых каталогов.
+
+    Каталоги в манифесте — только непустые: git пустых каталогов не знает и
+    вернуть их не может, и требовать этого от `revert` значило бы требовать
+    невозможного. Опустевшие каталоги — названный остаток, он уходит в отчёт.
+
+    Режим берётся вместе с содержимым и это не педантизм: `git mv` его
+    сохраняет, а восстановление записью байтов — нет, и манифест без режима
+    объявил бы такой откат побайтовым.
+
+    Файлы внутри вложенного репозитория берутся — не потому, что `revert` их
+    возвращает (он не может), а потому, что их равенство доказывает, что до
+    них никто не дотянулся.
+    """
+    root = Path(root)
+    files, dirs = {}, set()
+    for path in sorted(root.rglob("*")):
+        rel = path.relative_to(root).as_posix()
+        if rel == ".git" or rel.startswith(".git/"):
+            continue
+        if path.is_symlink() or not path.is_file():
+            continue
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        files[rel] = (digest, path.stat().st_mode & 0o777)
+        dirs.add(path.parent.relative_to(root).as_posix())
+    return files, frozenset(dirs)
