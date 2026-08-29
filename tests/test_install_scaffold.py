@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 from scripts import check_frontmatter, check_links, install_scaffold, zones
+from scripts.adopt import plan as adopt_plan
 from scripts.findings import EXIT_OK, EXIT_VIOLATION
 from tests.test_fixtures import places
 
@@ -289,6 +290,139 @@ class TestSettingsMerge(unittest.TestCase):
                              self.FRAGMENT_DATA["claudeMdExcludes"])
 
 
+class TestMergeIntoForeignFiles(unittest.TestCase):
+    """Два файла чужого дерева, которые каркас не вправе затереть."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name) / "foreign"
+        self.root.mkdir()
+
+    def test_an_existing_claude_md_keeps_its_text_and_gains_the_zone_map(self):
+        self.root.joinpath("CLAUDE.md").write_text(
+            "# Чужой проект\n\nЗдесь были свои правила.\n", encoding="utf-8")
+        install_scaffold.merge(self.root, "CLAUDE.md")
+        text = self.root.joinpath("CLAUDE.md").read_text(encoding="utf-8")
+        self.assertTrue(text.startswith("# Чужой проект\n\nЗдесь были свои правила.\n"))
+        self.assertIn(adopt_plan.MERGE_MARKER, text)
+        self.assertIn("## Zone map", text)
+
+    def test_merging_twice_changes_nothing_the_second_time(self):
+        """Состояние строки `merge` читается из маркера. Неидемпотентное
+        слияние дало бы новую копию карты зон на каждом запуске."""
+        self.root.joinpath("CLAUDE.md").write_text("# Чужой\n", encoding="utf-8")
+        install_scaffold.merge(self.root, "CLAUDE.md")
+        once = self.root.joinpath("CLAUDE.md").read_text(encoding="utf-8")
+        install_scaffold.merge(self.root, "CLAUDE.md")
+        self.assertEqual(self.root.joinpath("CLAUDE.md").read_text(encoding="utf-8"),
+                         once)
+
+    def test_gitignore_gains_only_the_lines_it_lacks(self):
+        self.root.joinpath(".gitignore").write_text(
+            "node_modules/\n.DS_Store\n", encoding="utf-8")
+        install_scaffold.merge(self.root, ".gitignore")
+        lines = [l for l in self.root.joinpath(".gitignore")
+                 .read_text(encoding="utf-8").split("\n") if l.strip()]
+        self.assertEqual(lines.count(".DS_Store"), 1)
+        self.assertEqual(lines.count("node_modules/"), 1)
+        self.assertIn(".trash/", lines)
+
+    def test_the_marker_is_a_comment_in_both_syntaxes(self):
+        """Голая строка маркера в `.gitignore` — шаблон игнорирования: слияние
+        формы поменяло бы поведение git. В `CLAUDE.md` она же — видимый текст
+        посреди чужого документа."""
+        self.root.joinpath(".gitignore").write_text("node_modules/\n",
+                                                    encoding="utf-8")
+        self.root.joinpath("CLAUDE.md").write_text("# Чужой\n", encoding="utf-8")
+        install_scaffold.merge(self.root, ".gitignore")
+        install_scaffold.merge(self.root, "CLAUDE.md")
+        self.assertIn("# " + adopt_plan.MERGE_MARKER,
+                      self.root.joinpath(".gitignore").read_text(encoding="utf-8"))
+        self.assertIn("<!-- %s -->" % adopt_plan.MERGE_MARKER,
+                      self.root.joinpath("CLAUDE.md").read_text(encoding="utf-8"))
+
+    def test_a_gitignore_that_lacks_nothing_still_gains_the_marker(self):
+        """Иначе состояние строки `merge` навсегда `pending`: дописывать
+        нечего, маркера нет, и слияние повторяется на каждом запуске."""
+        source = (SCAFFOLD / ".gitignore").read_text(encoding="utf-8")
+        self.root.joinpath(".gitignore").write_text(source, encoding="utf-8")
+        install_scaffold.merge(self.root, ".gitignore")
+        text = self.root.joinpath(".gitignore").read_text(encoding="utf-8")
+        self.assertIn(adopt_plan.MERGE_MARKER, text)
+        self.assertEqual(text.count(".trash/"), 1)
+
+    def test_a_missing_file_is_created_whole_not_merged(self):
+        """Создание — не изменение, и под инвариант волны оно не подпадает."""
+        install_scaffold.merge(self.root, ".gitignore")
+        text = self.root.joinpath(".gitignore").read_text(encoding="utf-8")
+        self.assertEqual(text, (SCAFFOLD / ".gitignore").read_text(encoding="utf-8"))
+        self.assertNotIn(adopt_plan.MERGE_MARKER, text)
+
+    def test_only_these_two_files_can_be_merged(self):
+        """Закрытое множество: слияние — операция над формой, и расширять её
+        на содержимое чужого дерева плагин не вправе (незыблемое №1)."""
+        self.assertEqual(sorted(install_scaffold.MERGEABLE),
+                         [".gitignore", "CLAUDE.md"])
+        with self.assertRaises(ValueError):
+            install_scaffold.merge(self.root, "README.md")
+
+
+class TestDeferredToTheMergeLine(unittest.TestCase):
+    """Занятое имя, которое план согласовал слить строкой `merge`.
+
+    Без этого ADOPT не ставит каркас вовсе: `CLAUDE.md` и `.gitignore` в чужом
+    дереве обычно уже есть, установщик отказывает по ним обоим, и коммит 1 —
+    чисто аддитивный — не собирается ни при каких условиях. Отказ по занятому
+    имени при этом остаётся на месте: откладывается ровно то, что названо.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = _new_repo(self.tmp.name, "foreign")
+        (self.root / "CLAUDE.md").write_text("автор писал сюда сам\n",
+                                             encoding="utf-8")
+        (self.root / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
+
+    def test_a_named_occupied_path_is_left_to_the_merge_line(self):
+        written = install_scaffold.install(SCAFFOLD, self.root,
+                                           merging=("CLAUDE.md", ".gitignore"))
+        self.assertNotIn("CLAUDE.md", written)
+        self.assertNotIn(".gitignore", written)
+        self.assertIn("core/README.md", written)
+        self.assertEqual((self.root / "CLAUDE.md").read_text(encoding="utf-8"),
+                         "автор писал сюда сам\n")
+        self.assertEqual((self.root / ".gitignore").read_text(encoding="utf-8"),
+                         "node_modules/\n")
+
+    def test_an_occupied_path_nobody_named_still_stops_the_whole_run(self):
+        (self.root / "core").mkdir()
+        (self.root / "core" / "README.md").write_text("своё\n", encoding="utf-8")
+        with self.assertRaises(install_scaffold.Refused) as caught:
+            install_scaffold.install(SCAFFOLD, self.root, merging=("CLAUDE.md",))
+        self.assertIn("core/README.md", str(caught.exception))
+        self.assertEqual((self.root / "core" / "README.md")
+                         .read_text(encoding="utf-8"), "своё\n")
+
+    def test_a_free_name_is_written_whole_even_when_it_is_named(self):
+        """Откладывается существующее, а не названное: файла нет — каркас
+        кладёт его целиком, и сливать потом будет нечего."""
+        (self.root / "CLAUDE.md").unlink()
+        written = install_scaffold.install(SCAFFOLD, self.root,
+                                           merging=("CLAUDE.md", ".gitignore"))
+        self.assertIn("CLAUDE.md", written)
+        self.assertEqual((self.root / "CLAUDE.md").read_bytes(),
+                         (SCAFFOLD / "CLAUDE.md").read_bytes())
+
+    def test_nothing_outside_the_closed_set_can_be_deferred(self):
+        """Иначе отказ по занятому имени снимается любым путём подряд — то
+        есть чужой файл остаётся без каркаса и без строки плана о нём."""
+        with self.assertRaises(ValueError):
+            install_scaffold.install(SCAFFOLD, self.root,
+                                     merging=("core/README.md",))
+
+
 class TestCommandLine(unittest.TestCase):
     def test_exit_codes_follow_the_contract(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -304,6 +438,36 @@ class TestCommandLine(unittest.TestCase):
                  str(root)], capture_output=True, text=True)
             self.assertEqual(again.returncode, EXIT_VIOLATION)
             self.assertIn("CLAUDE.md", again.stderr)
+
+    def test_a_deferred_path_is_named_aside_from_the_list_of_written_paths(self):
+        """Отложенное уходит в stderr, а не в список путей: коммит 1 скилл
+        собирает из напечатанных строк, и заметка среди них стала бы путём,
+        которого нет."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _new_repo(tmp)
+            (root / "CLAUDE.md").write_text("автор писал сюда сам\n",
+                                            encoding="utf-8")
+            proc = subprocess.run(
+                [sys.executable, str(ROOT / "scripts" / "install_scaffold.py"),
+                 str(root), "--merging", "CLAUDE.md"],
+                capture_output=True, text=True)
+            self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+            self.assertNotIn("CLAUDE.md", proc.stdout.split("\n"))
+            self.assertIn("отложено на слияние: CLAUDE.md", proc.stderr)
+            self.assertEqual((root / "CLAUDE.md").read_text(encoding="utf-8"),
+                             "автор писал сюда сам\n")
+
+    def test_the_command_line_defers_nothing_it_cannot_merge(self):
+        """Дверь мимо отказа по занятому имени закрыта разбором аргументов."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _new_repo(tmp)
+            proc = subprocess.run(
+                [sys.executable, str(ROOT / "scripts" / "install_scaffold.py"),
+                 str(root), "--merging", "core/README.md"],
+                capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("--merging", proc.stderr)
+            self.assertEqual(sorted(p.name for p in root.iterdir()), [".git"])
 
 
 class TestFirstCommit(unittest.TestCase):

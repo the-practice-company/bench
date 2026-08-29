@@ -11,6 +11,12 @@ CREATE волны 3 и ADOPT волны 4, — и оба обязаны полу
 в `.claude/settings.json`. Копия поверх затёрла бы `enabledPlugins`, которым
 включён сам плагин, и плагин выключил бы себя первым же действием.
 
+Ещё два имени каркас делит с чужим деревом — `CLAUDE.md` и `.gitignore`. В
+CREATE их там нет; в ADOPT они существуют до усыновления, значит подпадают
+под инвариант волны 4, и меняет их не установка каркаса, а `merge` по
+согласованной строке плана. Установка о них знает ровно одно: названные ей
+занятые имена она не пишет и отказом на них не отвечает.
+
 Отказ приходит до первой записи, а не посреди неё: половина каркаса в чужом
 дереве хуже, чем ни одного файла, — её нечем отличить от работы автора.
 """
@@ -23,10 +29,21 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts import boundary
+from scripts.adopt.plan import MERGE_MARKER
 from scripts.findings import EXIT_OK, EXIT_VIOLATION
 
 FRAGMENT = ".claude/settings-fragment.json"
 SETTINGS = ".claude/settings.json"
+SCAFFOLD = Path(__file__).resolve().parent.parent / "scaffold"
+
+# Закрытое множество. Слияние — операция над формой; расширять её на
+# содержимое чужого дерева плагин не вправе (незыблемое №1).
+MERGEABLE = ("CLAUDE.md", ".gitignore")
+
+# Синтаксис комментария у каждого из двух свой, и маркер обязан быть
+# комментарием в обоих: голой строкой в `.gitignore` он становится шаблоном
+# игнорирования, то есть слияние формы меняло бы поведение git.
+_COMMENT = {"CLAUDE.md": "<!-- %s -->", ".gitignore": "# %s"}
 
 
 class Refused(Exception):
@@ -117,7 +134,61 @@ def _existing_settings(root):
     return data
 
 
-def install(scaffold, root):
+def merge(root, rel, scaffold=SCAFFOLD):
+    """Дописывает каркасную часть в существующий чужой файл.
+
+    Файла нет — он создаётся целиком и маркера не несёт: создание не
+    изменение, под инвариант волны 4 оно не подпадает и в плане строкой не
+    нуждается. Файл есть — дописывается блок под маркером, и повторный вызов
+    ничего не делает: состояние строки `merge` читается именно из маркера.
+
+    Маркер ставится и тогда, когда дописывать нечего: без него состояние
+    строки навсегда `pending`, то есть слияние повторяется на каждом запуске.
+
+    Возвращает True, если каркасная часть дописана в чужой файл: создание
+    целиком и повторный вызов — оба False, и оба ничего не дописали.
+    """
+    if rel not in MERGEABLE:
+        raise ValueError("слиянию подлежат только %s" % ", ".join(MERGEABLE))
+    root = Path(root)
+    source = Path(scaffold) / rel
+    target = root / rel
+    if not target.exists():
+        target.write_bytes(source.read_bytes())
+        return False
+    text = target.read_text(encoding="utf-8")
+    if MERGE_MARKER in text:
+        return False
+    mark = _COMMENT[rel] % MERGE_MARKER
+    if rel == ".gitignore":
+        # Построчно и без комментариев каркаса: у автора здесь свои правила и
+        # свои пояснения к ним, и дописывать к ним чужую прозу незачем.
+        # Шаблон, который у автора уже есть, вторым вхождением не поедет.
+        have = {line.strip() for line in text.split("\n")}
+        missing = [line for line in source.read_text(encoding="utf-8").split("\n")
+                   if line.strip() and not line.startswith("#")
+                   and line.strip() not in have]
+        block = "\n".join([mark] + missing)
+    else:
+        block = mark + "\n" + source.read_text(encoding="utf-8")
+    target.write_text(text.rstrip("\n") + "\n\n" + block + "\n", encoding="utf-8")
+    return True
+
+
+def deferred(root, merging):
+    """Пути каркаса, которые кладёт не он: план согласовал слить их строкой.
+
+    Отложенным путь становится, только **существуя**: которого в чужом дереве
+    нет, тот пишется целиком и сливать его потом не с чем. Названный, но
+    отложенный молча путь не остаётся: `plan.coverage` требует строку на
+    каждый путь дерева, и файл, отложенный без строки `merge`, приезжает
+    автору находкой `uncovered-path`.
+    """
+    root = Path(root)
+    return [rel for rel in merging if (root / rel).exists()]
+
+
+def install(scaffold, root, merging=()):
     """Копирует каркас в `root`, сливает настройки. Возвращает список путей.
 
     Ничего не перезаписывает: существующий файл — это работа автора либо
@@ -125,9 +196,21 @@ def install(scaffold, root):
     имена называются все разом: усыновление приходит в чужое дерево, где
     занято обычно не одно, и отказ по одному файлу за прогон превращает
     разбор в двадцать четыре прогона.
+
+    `merging` — занятые имена, которые план усыновления согласовал слить
+    строкой `merge`. Они не пишутся и отказа не вызывают; остальные занятые
+    имена останавливают прогон, как и раньше. Без этого списка ADOPT не
+    ставит каркас вовсе: `CLAUDE.md` и `.gitignore` в чужом дереве обычно
+    уже есть, и коммит 1 — чисто аддитивный — не собирается ни при каких
+    условиях. Множество закрыто тем же кортежем, что и само слияние.
     """
+    unknown = [rel for rel in merging if rel not in MERGEABLE]
+    if unknown:
+        raise ValueError("слиянию подлежат только %s, а не %s"
+                         % (", ".join(MERGEABLE), ", ".join(unknown)))
     scaffold = Path(scaffold)
     root = Path(root)
+    postponed = set(deferred(root, merging))
 
     if not (root / ".git").exists():
         raise Refused("нет git: `git init` делается до первой записи, "
@@ -149,6 +232,8 @@ def install(scaffold, root):
         # приходит в дерево, где симлинки ставил не плагин.
         if boundary.outside(target, root):
             escaping.append(rel)
+        elif rel in postponed:
+            continue
         elif target.exists():
             occupied.append(rel)
         else:
@@ -183,16 +268,28 @@ def install(scaffold, root):
 def main(argv=None):
     parser = argparse.ArgumentParser(description="install the recipe scaffold")
     parser.add_argument("root")
-    parser.add_argument("--scaffold",
-                        default=str(Path(__file__).resolve().parent.parent
-                                    / "scaffold"))
+    parser.add_argument("--scaffold", default=str(SCAFFOLD))
+    # `choices`, а не проверка внутри: закрытое множество здесь — дверь мимо
+    # отказа по занятому имени, и закрыта она разбором аргументов, а не
+    # дисциплиной вызывающего. Тот же приём, что у обязательного `--plan`
+    # мутирующих команд ADOPT.
+    parser.add_argument("--merging", action="append", default=[],
+                        choices=MERGEABLE, metavar="ПУТЬ",
+                        help="занятое имя, которое план согласовал слить "
+                             "строкой `merge`: каркас его не пишет")
     args = parser.parse_args(argv)
     try:
-        for rel in install(args.scaffold, args.root):
-            print(rel)
+        written = install(args.scaffold, args.root, args.merging)
     except Refused as error:
         print("каркас не развёрнут: %s" % error, file=sys.stderr)
         return EXIT_VIOLATION
+    for rel in written:
+        print(rel)
+    # Не в stdout: коммит 1 собирается из напечатанных путей, и заметка среди
+    # них стала бы путём, которого нет. Молчать тоже нельзя — незыблемое №4:
+    # каркасного файла в дереве не появилось, и сказано об этом вслух.
+    for rel in deferred(args.root, args.merging):
+        print("отложено на слияние: %s" % rel, file=sys.stderr)
     return EXIT_OK
 
 

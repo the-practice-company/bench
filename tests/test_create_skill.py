@@ -24,11 +24,15 @@ CYRILLIC = re.compile(r"[а-яё]", re.I)
 STAGES_EVERYTHING = re.compile(r"git\s+add\s+(?:-A|--all|\.)(?![\w-])")
 
 
-def _eval_sections():
-    """Фразы, по которым скилл обязан подняться, и соседние, по которым нет."""
+def _eval_sections(skill=SKILL):
+    """Фразы, по которым скилл обязан подняться, и соседние, по которым нет.
+
+    Каталог — параметр: разбор один на пакет, и второй его копией эвал скилла
+    усыновления читать незачем (`tests/test_adopt_skill.py`).
+    """
     sections = {"triggers": [], "non-triggers": []}
     current = None
-    for line in (SKILL / "eval.txt").read_text(encoding="utf-8").split("\n"):
+    for line in (skill / "eval.txt").read_text(encoding="utf-8").split("\n"):
         line = line.strip()
         if not line:
             continue
