@@ -37,26 +37,38 @@ def agreed_line(root, source, target, plan_path, expected_action):
     «перенос»: ту же функцию зовёт `drop`, и отчёт, обвиняющий автора в
     несогласованном переезде там, где речь про удаление, говорит о
     происходящем неправду.
+
+    `target=None` — цель берётся из плана, а не сверяется с ней. Так зовёт
+    `drop`: цели он не принимает, она подразумевается одна. Сверка по паре
+    отвечала бы «такой строки в плане нет» на строку, которая в плане есть
+    и исполняется переносом, — то есть прятала бы от автора настоящую
+    причину отказа за той, которой нет. Двух строк с одним источником сюда
+    не доезжает: их называет находкой `overlapping-line`.
     """
     lines, found = adopt_plan.load(root, plan_path)
     report = Report(found)
     if report.exit_code() != EXIT_OK:
         return None, report.render() + "\nплан не разобран, мутация не идёт"
     for line in lines:
-        if line.source != source or line.target != target:
+        if line.source != source:
+            continue
+        if target is not None and line.target != target:
             continue
         if not line.agreed:
-            return None, "строка не согласована: `%s` -> `%s`" % (source, target)
+            return None, ("строка не согласована: `%s` -> `%s`"
+                          % (line.source, line.target))
         if adopt_plan.is_question(line.target):
             return None, "цель несёт знак вопроса: `%s`" % line.target
         what = adopt_plan.action(line)
         if what is None:
             return None, ("строка не исполняется ничем: `%s` -> `%s`"
-                          % (source, target))
+                          % (line.source, line.target))
         if what != expected_action:
             return None, ("строка исполняется не как `%s`, а как `%s`: `%s` -> `%s`"
-                          % (expected_action, what, source, target))
+                          % (expected_action, what, line.source, line.target))
         return line, None
+    if target is None:
+        return None, "такой строки в плане нет: `%s`" % source
     return None, "такой строки в плане нет: `%s` -> `%s`" % (source, target)
 
 
