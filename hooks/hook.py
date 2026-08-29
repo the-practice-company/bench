@@ -18,8 +18,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from hooks import bashscan, boundary, summary, turnfiles
-from scripts import check_frontmatter, check_links, zones
+from hooks import bashscan, summary, turnfiles
+from scripts import boundary, check_frontmatter, check_links, zones
 from scripts.findings import EXIT_OK, EXIT_VIOLATION
 
 # Коды рукопожатия с шимом. Их единственная работа — доказать, что hook.py

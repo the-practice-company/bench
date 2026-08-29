@@ -1,8 +1,11 @@
+import re
 import tempfile
 import unittest
 from pathlib import Path
 
-from hooks import boundary
+from scripts import boundary
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 class TestFindRoot(unittest.TestCase):
@@ -121,3 +124,74 @@ class TestOutside(unittest.TestCase):
         sibling = Path(self._tmp.name) / "repo-neighbour"
         sibling.mkdir()
         self.assertTrue(boundary.outside(sibling / "x.md", self.root))
+
+
+# Признак собственной копии предиката границы: нормализация `realpath`
+# **и** посегментное сравнение с корнем — в одном файле. Два сигнала, а не
+# один: `os.path.realpath` сам по себе стоит в `hooks/hook.py` шесть раз и
+# там законен, а срез `parts[:len(` без нормализации — уже другая проверка.
+# Копию выдаёт именно пара.
+#
+# Срез ищется без ведущей точки: копия, которую план и вёз, сначала
+# складывала сегменты в локальные `root_parts`/`target_parts` и резала уже
+# их, — `\.parts\[` не нашёл бы её ни разу.
+NORMALISATION = "os.path.realpath"
+SEGMENTS = re.compile(r"parts\[:\s*len\(")
+
+# Каталоги вне пакета: тот же периметр, что у
+# `tests/test_zones.py::TestSingleDefinition`, плюс `dev/` — таблица мутаций
+# цитирует продукт по построению и офендером быть не может.
+_NOT_PACKAGE = {".git", "__pycache__", "tests", "fixtures", "docs", "dev"}
+
+
+def _boundary_carriers(root):
+    """Файлы пакета, несущие собственную реализацию сравнения с корнем."""
+    out = []
+    for path in sorted(Path(root).rglob("*.py")):
+        rel = path.relative_to(root)
+        if any(part in _NOT_PACKAGE for part in rel.parts):
+            continue
+        text = path.read_text(encoding="utf-8")
+        if NORMALISATION in text and SEGMENTS.search(text):
+            out.append(rel.as_posix())
+    return out
+
+
+class TestOneBoundaryDefinition(unittest.TestCase):
+    """Предикат границы определён ровно один раз, и это `scripts/boundary.py`.
+
+    Утверждение прямое, а не эвристика про «похоже на копию»: список
+    несущих файлов сверяется целиком, и второй файл в нём — это провал.
+    Эвристика внутри признака грубая, как и у таблицы зон: копия,
+    написанная через `startswith` по строке, сюда не попадёт. Она и не
+    должна — такая копия не эквивалентна, она просто неверна, и её ловит
+    `TestOutside::test_prefix_match_alone_is_not_enough` этажом выше,
+    в тот же день, когда её позовут.
+    """
+
+    def test_only_one_file_carries_the_comparison(self):
+        self.assertEqual(_boundary_carriers(ROOT), ["scripts/boundary.py"])
+
+    def test_a_second_copy_is_visible_to_this_check(self):
+        """Регрессия на сам детектор: не находящий ничего зелен и бесполезен.
+
+        Посажена не выдумка, а буквально тот `_inside`, который вёз этот
+        план до правки, — с локальными `root_parts`/`target_parts`.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp)
+            (fake / "scripts").mkdir()
+            (fake / "scripts" / "boundary.py").write_bytes(
+                (ROOT / "scripts" / "boundary.py").read_bytes())
+            (fake / "scripts" / "install_scaffold.py").write_text(
+                "import os\n"
+                "from pathlib import Path\n"
+                "\n"
+                "def _inside(root, target):\n"
+                "    root_parts = Path(os.path.realpath(str(root))).parts\n"
+                "    target_parts = Path(os.path.realpath(str(target))).parts\n"
+                "    return target_parts[:len(root_parts)] == root_parts\n",
+                encoding="utf-8")
+            self.assertEqual(_boundary_carriers(fake),
+                             ["scripts/boundary.py",
+                              "scripts/install_scaffold.py"])

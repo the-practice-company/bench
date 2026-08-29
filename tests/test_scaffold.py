@@ -742,3 +742,17 @@ class TestScaffoldPassesBothGates(unittest.TestCase):
                             and points_into(token, PLUGIN_DIR)):
                         offenders.append((rel, lineno, "`%s`" % token))
         self.assertEqual(offenders, [])
+
+
+class TestScaffoldIsProduct(unittest.TestCase):
+    def test_the_product_hash_covers_the_scaffold(self):
+        """`tests-touched-product` обязан видеть запись в каркас: он уезжает
+        пользователю ровно так же, как `scripts/` и `hooks/`."""
+        from scripts import check_package
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "scaffold").mkdir()
+            (root / "scaffold" / "CLAUDE.md").write_text("a", encoding="utf-8")
+            before = check_package._product_hash(root)
+            (root / "scaffold" / "CLAUDE.md").write_text("b", encoding="utf-8")
+            self.assertNotEqual(check_package._product_hash(root), before)

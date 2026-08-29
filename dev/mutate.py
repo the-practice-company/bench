@@ -664,7 +664,7 @@ MUTATIONS = (
         expect="tests.test_boundary.TestOutside.test_dotdot_above_root_is_outside",
         steps=(
             substitution(
-                "hooks/boundary.py",
+                "scripts/boundary.py",
                 "    resolved = Path(os.path.realpath(str(path)))\n"
                 "    base = Path(os.path.realpath(str(root)))\n",
                 "    resolved = Path(path)\n"
