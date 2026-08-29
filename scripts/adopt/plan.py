@@ -44,6 +44,12 @@ _ACTIONS = {"git-history": "drop", "merge": "merge",
 # в `.gitignore` — после решётки. Проверка вхождения работает для обоих.
 MERGE_MARKER = "twinkle-repo-builder: рецепт"
 
+# Отказ автора заводить git живёт в шапке плана, а не в `OPEN-THREADS.md`:
+# этот файл в чужом дереве может уже существовать, и дописать в него —
+# изменение файла, запрещённое критерием 4. Повторный запуск читает шапку и
+# не переспрашивает — ровно то, ради чего §18 отказ и записывал.
+DECLINED = "автор отказался заводить git"
+
 
 class PlanLine:
     __slots__ = ("lineno", "agreed", "source", "target", "body", "stage")
@@ -150,6 +156,28 @@ def parse(text, plan_rel):
         rejected = True
     close()
     return lines, found
+
+
+def header(text):
+    """Шапка: комментарии до первой строки плана и до первого этапа.
+
+    Комментарий ниже по файлу шапкой не является. Иначе «шапка» значит «где
+    угодно», и фраза, дописанная в тело задним числом, читается как решение,
+    принятое до усыновления.
+    """
+    out = []
+    for raw in text.split("\n"):
+        if not raw.strip() or raw[0] in " \t":
+            continue
+        if raw.startswith("##") or not raw.startswith("#"):
+            break
+        out.append(raw)
+    return out
+
+
+def declined(text):
+    """Записан ли в шапке отказ автора заводить git."""
+    return any(DECLINED in line for line in header(text))
 
 
 def _under(child, parent):

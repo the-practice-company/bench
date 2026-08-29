@@ -28,7 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from scripts.adopt import tree
+from scripts.adopt import plan, tree
 from scripts.findings import EXIT_OK, EXIT_VIOLATION, Finding, Report
 
 MARK = "# вложенные репозитории, исключены ADOPT"
@@ -65,8 +65,12 @@ def run(root, no_git=False):
     """(отчёт, код возврата). Ничего не печатает сам."""
     root = Path(root)
     if no_git:
+        # Строка шапки называется дословно и берётся у `plan`: её ищет
+        # повторный запуск, и разошедшиеся копии дали бы вечный переспрос
+        # при на вид записанном отказе.
         return ("git не заведён по решению автора: дерево не тронуто, "
-                "усыновление останавливается после плана\n"), EXIT_OK
+                "усыновление останавливается после плана; в шапку плана — "
+                "«%s»\n" % plan.DECLINED), EXIT_OK
 
     nested = tree.nested_repositories(root)
     findings = [Finding("foreign-repo", name, 1,
