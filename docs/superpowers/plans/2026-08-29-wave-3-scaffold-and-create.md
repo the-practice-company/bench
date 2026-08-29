@@ -21,14 +21,15 @@
 
 ## Состояние плана
 
-**Задачи 1–5 исполнены** — код в дереве, `./check` зелёный, галочки проставлены.
+**Задачи 1–6 исполнены** — код в дереве, `./check` зелёный, галочки проставлены.
 Перечитывать и переисполнять их не нужно: гейт frontmatter больше не считает
 README коллекции записью; восемь зон, восемь README, `CLAUDE.md`, одиннадцать
 `.claude/rules/*.md` и четыре мелких артефакта (`.gitignore`,
 `.twinkle-repo-builder`, `OPEN-THREADS.md`, `settings-fragment.json`) лежат
-в `scaffold/`; оба гейта на каркасе молчат, и с удалённым `.claude/` тоже.
+в `scaffold/`; инвентарь утверждён поимённо — двадцать четыре файла и десять
+каталогов, — оба гейта на каркасе молчат, и с удалённым `.claude/` тоже.
 
-**Начинать с задачи 6.**
+**Начинать с задачи 7.**
 
 ---
 
@@ -1540,7 +1541,7 @@ git commit -m "wave3: gitignore, маркер версии, открытые н�
 **Files:**
 - Modify: `tests/test_scaffold.py`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 ```python
 from tests.test_fixtures import places
@@ -1646,7 +1647,7 @@ class TestScaffoldPassesBothGates(unittest.TestCase):
         self.assertEqual(offenders, [])
 ```
 
-- [ ] **Step 2: Прогнать и убедиться, что падает**
+- [x] **Step 2: Прогнать и убедиться, что падает**
 
 Run: `python3 -m unittest tests.test_scaffold -v`
 Expected: `test_the_scaffold_is_exactly_these_files` FAIL, если инвентарь
@@ -1673,18 +1674,18 @@ Expected: `test_the_scaffold_is_exactly_these_files` FAIL, если инвент
 `LINK_CLASSES`; таблица выше не перечисление классов, а перечисление
 вероятных причин.
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 Кода в этой задаче нет: она проверяет уже написанное. Всё, что краснеет, —
 правка текста каркаса по таблице выше.
 
-- [ ] **Step 4: Прогнать — должно пройти**
+- [x] **Step 4: Прогнать — должно пройти**
 
 Run: `./check`
 Expected: код 0. Проверка пакета сканирует `scaffold/` наравне со `scripts/`
 и обязана не найти в нём абсолютных путей.
 
-- [ ] **Step 5: Коммит**
+- [x] **Step 5: Коммит**
 
 ```bash
 git add tests/test_scaffold.py scaffold

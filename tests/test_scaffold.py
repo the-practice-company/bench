@@ -7,11 +7,14 @@
 
 import json
 import re
+import shutil
+import tempfile
 import unittest
 from pathlib import Path
 
-from scripts import paths, zones
+from scripts import check_frontmatter, check_links, paths, zones
 from scripts.frontmatter import parse as parse_frontmatter
+from tests.test_fixtures import places
 
 ROOT = Path(__file__).resolve().parent.parent
 SCAFFOLD = ROOT / "scaffold"
@@ -572,4 +575,170 @@ class TestSmallArtefactsAreEnglish(unittest.TestCase):
             for lineno, line in enumerate(text.split("\n"), start=1):
                 if _CYRILLIC.search(line):
                     offenders.append((name, lineno))
+        self.assertEqual(offenders, [])
+
+
+# Инвентарь каркаса поимённо. Спека волны называет двадцать два артефакта;
+# из её же состава получается двадцать четыре файла и десять каталогов, и
+# расхождение вынесено автору. Здесь стоит то, что можно проверить.
+SCAFFOLD_FILES = (
+    ".claude/rules/areas.md",
+    ".claude/rules/collection.md",
+    ".claude/rules/core.md",
+    ".claude/rules/decisions.md",
+    ".claude/rules/inbox.md",
+    ".claude/rules/knowledge.md",
+    ".claude/rules/projects.md",
+    ".claude/rules/readme.md",
+    ".claude/rules/sources.md",
+    ".claude/rules/tmp.md",
+    ".claude/rules/views.md",
+    ".claude/settings-fragment.json",
+    ".gitignore",
+    ".twinkle-repo-builder",
+    "CLAUDE.md",
+    "OPEN-THREADS.md",
+    "areas/README.md",
+    "core/README.md",
+    "decisions/README.md",
+    "inbox/README.md",
+    "knowledge/README.md",
+    "projects/README.md",
+    "sources/README.md",
+    "tmp/README.md",
+)
+
+# Вторая половина инвентаря. Таблица зон не дублируется: восемь имён
+# приходят из `zones.ZONES`, своих у каркаса ровно два.
+SCAFFOLD_DIRS = (".claude", ".claude/rules") + tuple(zones.ZONES)
+
+# Каталог, который плагин везёт и может унести. Всё, что переживает его
+# уход, не имеет права на него ссылаться.
+PLUGIN_DIR = ".claude"
+
+
+def points_into(target, directory):
+    """Ведёт ли цель ссылки в этот каталог. Сегмент, а не префикс строки.
+
+    `str.startswith(".claude")` путал обе стороны сразу: голый `.claude`
+    — указатель в каталог и им не считался, а выдуманный `.claudette/`
+    — не указатель и считался. Нормализация заодно приводит `./.claude/…`
+    к той же форме, в какой каталог назван здесь.
+    """
+    return paths.normalise(target).split("/")[0] == directory
+
+
+class TestScaffoldInventory(unittest.TestCase):
+    def test_the_scaffold_is_exactly_these_files(self):
+        actual = sorted(p.relative_to(SCAFFOLD).as_posix()
+                        for p in SCAFFOLD.rglob("*") if p.is_file())
+        self.assertEqual(actual, sorted(SCAFFOLD_FILES))
+
+    def test_the_scaffold_is_exactly_these_directories(self):
+        """Вторая половина инвентаря, которой в плане не было.
+
+        Пустой каталог git в пакет не увозит и в ревью не показывает —
+        а `shutil.copytree` задачи 7 увозит его в каждый инстанс. Пустой
+        `items/` ловит по имени соседний тест, пустой каталог с любым
+        другим именем не ловит никто: у автора появилась бы папка,
+        которой он не заводил, и объяснить её было бы нечем.
+        """
+        actual = sorted(p.relative_to(SCAFFOLD).as_posix()
+                        for p in SCAFFOLD.rglob("*") if p.is_dir())
+        self.assertEqual(actual, sorted(SCAFFOLD_DIRS))
+
+    def test_the_scaffold_carries_no_collection(self):
+        """Зона заводится всегда, коллекция без настоящей записи — никогда.
+
+        Вид, отбирающий из несуществующей папки, — буквально класс находки
+        битой фикстуры, и пустая коллекция не сигналит ничем: она выглядит
+        рабочей.
+        """
+        self.assertEqual(list(SCAFFOLD.rglob("views.base")), [])
+        self.assertEqual([p for p in SCAFFOLD.rglob("items") if p.is_dir()], [])
+
+    def test_the_scaffold_carries_no_exemplar(self):
+        """CREATE не генерирует правдоподобное: синтетическая запись хуже
+        пустой папки, потому что автор не отличит её от своего."""
+        stray = [p.relative_to(SCAFFOLD).as_posix()
+                 for p in SCAFFOLD.rglob("*.md")
+                 if p.name != "README.md" and p.parent != SCAFFOLD
+                 and PLUGIN_DIR not in p.parts]
+        self.assertEqual(stray, [])
+
+    def test_the_scaffold_ships_neither_allowlist_nor_hooks(self):
+        """`.link-allow` принадлежит репозиторию, хуки регистрирует плагин."""
+        self.assertFalse((SCAFFOLD / ".link-allow").exists())
+        self.assertFalse((SCAFFOLD / "hooks.json").exists())
+        self.assertFalse((SCAFFOLD / PLUGIN_DIR / "hooks.json").exists())
+
+
+class TestScaffoldPassesBothGates(unittest.TestCase):
+    """Критерий 1 волны: ноль находок обоих гейтов, и то же без `.claude/`."""
+
+    def test_the_link_gate_finds_nothing(self):
+        self.assertEqual(places(check_links.scan(SCAFFOLD)), [])
+
+    def test_the_frontmatter_gate_finds_nothing(self):
+        """Зелёное здесь означает меньше, чем кажется, и это сказано вслух.
+
+        `check_frontmatter.scan` заходит только туда, где лежит `views.base`;
+        коллекций у каркаса нет, значит гейт молчит по построению, а не
+        потому, что записи в порядке. Утверждение всё равно нужно: краснеть
+        ему в тот день, когда каркас обзаведётся коллекцией, — и до тех пор
+        отсутствие коллекций держит соседний набор, а не молчание этого.
+        """
+        self.assertEqual(places(check_frontmatter.scan(SCAFFOLD)), [])
+
+    def test_both_gates_are_still_silent_without_the_claude_directory(self):
+        """Проверка пакета требует того же: ни одна проверка не опирается
+        на файлы, которых у человека может не быть.
+
+        Вопрос ровно один: не стал ли репозиторий читаемым только вместе
+        с плагином. Правила и настройки — слой, который плагин везёт и
+        может унести; записи, коллекции и виды остаются у автора.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            copy = Path(tmp) / "instance"
+            shutil.copytree(SCAFFOLD, copy)
+            shutil.rmtree(copy / PLUGIN_DIR)
+            self.assertEqual(places(check_links.scan(copy)), [])
+            self.assertEqual(places(check_frontmatter.scan(copy)), [])
+
+    def test_no_surviving_file_points_into_the_claude_directory(self):
+        """Причина, по которой предыдущий тест зелёный, названа отдельно.
+
+        Ссылка в `.claude/` резолвится на полном каркасе и становится
+        находкой ровно тогда, когда каталог унесли, — то есть в чужом
+        репозитории без плагина.
+
+        Форм ссылки у гейта три, и план проверял здесь одну — backtick-
+        токен. Она же из трёх наименее опасна: `[…](.claude/rules/…)` —
+        это `md-link-to-file` уже на полном каркасе, то есть краснеет
+        здесь и сейчас. А `[[.claude/rules/core]]` на полном каркасе
+        молчит и краснеет только после удаления каталога — у автора,
+        а не в этом наборе. Поэтому проверяются все три, каждая в том
+        периметре, в каком её читает сам гейт: wikilink и markdown-ссылка
+        — в любом `.md`, backtick-токен — только в четырёх строках
+        таблицы (`_scanned_for_tokens`), с вырезанными fenced-блоками,
+        как это делает `scan`.
+        """
+        offenders = []
+        for path in sorted(SCAFFOLD.rglob("*.md")):
+            rel = path.relative_to(SCAFFOLD).as_posix()
+            if rel.startswith(PLUGIN_DIR + "/"):
+                continue
+            text = path.read_text(encoding="utf-8")
+            for link in check_links.extract_links(text):
+                if points_into(link.target, PLUGIN_DIR):
+                    offenders.append((rel, link.line, link.raw))
+            if not check_links._scanned_for_tokens(rel, path.name):
+                continue
+            blanked = check_links._blank_fences(text)
+            for lineno, line in enumerate(blanked.split("\n"), start=1):
+                for match in check_links._INLINE.finditer(line):
+                    token = match.group(2).strip()
+                    if (paths.is_path_token(token)
+                            and points_into(token, PLUGIN_DIR)):
+                        offenders.append((rel, lineno, "`%s`" % token))
         self.assertEqual(offenders, [])
