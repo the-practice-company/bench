@@ -5,6 +5,7 @@
 означает дефект пакета, а не дефект инстанса.
 """
 
+import json
 import re
 import unittest
 from pathlib import Path
@@ -443,4 +444,132 @@ class TestPathScopedRules(unittest.TestCase):
                     path.read_text(encoding="utf-8").split("\n"), start=1):
                 if _CYRILLIC.search(line):
                     offenders.append((path.name, lineno))
+        self.assertEqual(offenders, [])
+
+
+# Четыре мелких артефакта каркаса. Пути, а не имена: фрагмент настроек лежит
+# под `.claude/`, и остальные три — в корне.
+FRAGMENT = SCAFFOLD / ".claude" / "settings-fragment.json"
+MARKER = SCAFFOLD / ".twinkle-repo-builder"
+GITIGNORE = SCAFFOLD / ".gitignore"
+OPEN_THREADS = SCAFFOLD / "OPEN-THREADS.md"
+
+GITIGNORE_LINES = (
+    ".obsidian/workspace*.json",
+    ".trash/",
+    ".DS_Store",
+    "node_modules/",
+    "__pycache__/",
+)
+
+# Словарь размера: любое из этих слов в `.gitignore` — обещание порога,
+# которого до волны 5 нет ни в одном коде.
+_SIZE_WORDS = re.compile(
+    r"(?<![\w-])(?:size|threshold|limit|bytes?|megabytes?|[kmg]i?b)(?![\w-])",
+    re.I)
+
+
+class TestSettingsFragment(unittest.TestCase):
+    def test_the_fragment_is_composed_from_the_single_definition(self):
+        """Обёртки собираются из zones.DENY_PATTERNS, а не пишутся заново.
+
+        Глубина глоба — отсуженное решение: `knowledge/**` был шире своей
+        причины и блокировал CREATE, которому надо положить в зону README.
+        Разошедшиеся копии такого решения молчаливы.
+
+        Составленное ожидание сходится с составленным файлом и на пустоте:
+        `READ_ONLY` не закреплён литералом нигде в наборе, и опустевший
+        источник дал бы два пустых списка и зелёный тест на пустом запрете.
+        Непустота утверждается отдельно — она и есть содержание правила.
+        """
+        excludes = ["**/%s/**" % zone for zone in sorted(zones.READ_ONLY)]
+        deny = ["%s(./%s)" % (tool, pattern)
+                for tool in ("Edit", "Write")
+                for pattern in zones.DENY_PATTERNS]
+        self.assertEqual([bool(excludes), bool(deny)], [True, True])
+        fragment = json.loads(FRAGMENT.read_text(encoding="utf-8"))
+        self.assertEqual(
+            fragment,
+            {
+                "claudeMdExcludes": excludes,
+                "permissions": {"deny": deny},
+            },
+        )
+
+    def test_the_fragment_is_not_named_settings_json(self):
+        """Копия поверх `settings.json` затёрла бы `enabledPlugins`, которым
+        включён сам плагин: он выключил бы себя первым же действием."""
+        self.assertFalse((SCAFFOLD / ".claude" / "settings.json").exists())
+
+
+class TestRecipeMarker(unittest.TestCase):
+    def test_the_marker_carries_the_version_and_nothing_else(self):
+        """Секция 22: в конфиге только то, чего не вывести из дерева.
+        Осталось одно поле, и это признак работающего правила."""
+        manifest = json.loads(
+            (ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        marker = json.loads(MARKER.read_text(encoding="utf-8"))
+        self.assertEqual(marker, {"version": manifest["version"]})
+
+
+class TestGitignore(unittest.TestCase):
+    def test_it_carries_exactly_these_lines(self):
+        lines = [line.strip() for line
+                 in GITIGNORE.read_text(encoding="utf-8").split("\n")
+                 if line.strip() and not line.strip().startswith("#")]
+        self.assertEqual(lines, list(GITIGNORE_LINES))
+
+    def test_it_states_no_size_threshold(self):
+        """Порог в байтах здесь выразить нечем; механизм переезжает в MAINTAIN
+        и до тех пор не притворяется существующим.
+
+        Судится проза: строки шаблонов закреплены поимённо соседним тестом,
+        и обещание может спрятаться только в комментарии. Признак — словарь
+        размера целыми словами и без учёта регистра. План искал подстроки
+        `MB` и `size`, то есть пропускал и `10 mb`, и `Size limit` с
+        заглавной — тот же промах, что закрытое множество матчеров ловило
+        в проверке пакета.
+        """
+        found = _SIZE_WORDS.findall(GITIGNORE.read_text(encoding="utf-8"))
+        self.assertEqual(found, [])
+
+
+class TestOpenThreads(unittest.TestCase):
+    def test_it_ships_as_a_form_without_invented_content(self):
+        """Пустой список — не выдуманное содержимое, а форма, как README зоны."""
+        text = OPEN_THREADS.read_text(encoding="utf-8")
+        self.assertTrue(text.startswith("# Open threads"))
+        bullets = [line for line in text.split("\n") if line.startswith("- ")]
+        self.assertEqual(bullets, [])
+
+    def test_it_lives_in_the_root_and_not_in_a_zone(self):
+        """Это состояние работы над доменом, а не содержимое домена; `tmp`
+        вдобавок исчезающая зона, и ссылка на неё — класс находки."""
+        strays = sorted(p.relative_to(SCAFFOLD).as_posix()
+                        for p in SCAFFOLD.rglob("OPEN-THREADS.md"))
+        self.assertEqual(strays, ["OPEN-THREADS.md"])
+
+
+# Четыре артефакта этой задачи, путями от корня каркаса.
+SMALL_ARTEFACTS = (".gitignore", ".twinkle-repo-builder", "OPEN-THREADS.md",
+                   ".claude/settings-fragment.json")
+
+
+class TestSmallArtefactsAreEnglish(unittest.TestCase):
+    def test_none_of_them_carries_russian(self):
+        """Секция 25, четвёртый раз тем же признаком.
+
+        У README зон, у CLAUDE.md и у одиннадцати правил проверка языка
+        есть, у четырёх мелких артефактов в плане её не было. Прозу везут
+        двое из них — комментарии `.gitignore` и текст `OPEN-THREADS.md`, —
+        и это ровно те файлы, которые правятся между делом. Остальные два
+        стоят здесь потому, что список артефактов задачи должен быть один,
+        а не «те, в которых проза сегодня есть».
+        """
+        offenders = []
+        for name in SMALL_ARTEFACTS:
+            text = (SCAFFOLD / name).read_text(encoding="utf-8")
+            for lineno, line in enumerate(text.split("\n"), start=1):
+                if _CYRILLIC.search(line):
+                    offenders.append((name, lineno))
         self.assertEqual(offenders, [])

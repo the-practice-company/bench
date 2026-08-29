@@ -21,13 +21,14 @@
 
 ## Состояние плана
 
-**Задачи 1–4 исполнены** — код в дереве, `./check` зелёный, галочки проставлены.
+**Задачи 1–5 исполнены** — код в дереве, `./check` зелёный, галочки проставлены.
 Перечитывать и переисполнять их не нужно: гейт frontmatter больше не считает
-README коллекции записью; восемь зон, восемь README, `CLAUDE.md` и одиннадцать
-`.claude/rules/*.md` лежат в `scaffold/`; оба гейта на каркасе молчат, и с
-удалённым `.claude/` тоже.
+README коллекции записью; восемь зон, восемь README, `CLAUDE.md`, одиннадцать
+`.claude/rules/*.md` и четыре мелких артефакта (`.gitignore`,
+`.twinkle-repo-builder`, `OPEN-THREADS.md`, `settings-fragment.json`) лежат
+в `scaffold/`; оба гейта на каркасе молчат, и с удалённым `.claude/` тоже.
 
-**Начинать с задачи 5.**
+**Начинать с задачи 6.**
 
 ---
 
@@ -1375,7 +1376,7 @@ git commit -m "wave3: одиннадцать правил по пути — во
   `scaffold/OPEN-THREADS.md`, `scaffold/.claude/settings-fragment.json`
 - Modify: `tests/test_scaffold.py`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 ```python
 FRAGMENT = SCAFFOLD / ".claude" / "settings-fragment.json"
@@ -1456,12 +1457,12 @@ class TestOpenThreads(unittest.TestCase):
         self.assertEqual(strays, ["OPEN-THREADS.md"])
 ```
 
-- [ ] **Step 2: Прогнать и убедиться, что падает**
+- [x] **Step 2: Прогнать и убедиться, что падает**
 
 Run: `python3 -m unittest tests.test_scaffold -v`
 Expected: четыре класса FAIL с `FileNotFoundError`.
 
-- [ ] **Step 3: Реализация — `scaffold/.claude/settings-fragment.json`**
+- [x] **Step 3: Реализация — `scaffold/.claude/settings-fragment.json`**
 
 ```json
 {
@@ -1472,7 +1473,7 @@ Expected: четыре класса FAIL с `FileNotFoundError`.
 }
 ```
 
-- [ ] **Step 4: Реализация — `scaffold/.twinkle-repo-builder`**
+- [x] **Step 4: Реализация — `scaffold/.twinkle-repo-builder`**
 
 ```json
 {
@@ -1480,7 +1481,7 @@ Expected: четыре класса FAIL с `FileNotFoundError`.
 }
 ```
 
-- [ ] **Step 5: Реализация — `scaffold/.gitignore`**
+- [x] **Step 5: Реализация — `scaffold/.gitignore`**
 
 ```
 # Rewritten on every click in Obsidian.
@@ -1500,7 +1501,7 @@ __pycache__/
 заметки и находит в них дохлые ссылки в первом же живом инстансе. Расхождение
 со спекой волны названо в разделе «Расхождения».
 
-- [ ] **Step 6: Реализация — `scaffold/OPEN-THREADS.md`**
+- [x] **Step 6: Реализация — `scaffold/OPEN-THREADS.md`**
 
 ```markdown
 # Open threads
@@ -1511,12 +1512,12 @@ They live here, in git, rather than in a report that dies with the session.
 A thread is removed when it is answered, not when it gets old.
 ```
 
-- [ ] **Step 7: Прогнать — должно пройти**
+- [x] **Step 7: Прогнать — должно пройти**
 
 Run: `python3 -m unittest tests.test_scaffold -v`
 Expected: зелено.
 
-- [ ] **Step 8: Коммит**
+- [x] **Step 8: Коммит**
 
 ```bash
 git add scaffold/.gitignore scaffold/.twinkle-repo-builder \
