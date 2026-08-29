@@ -39,6 +39,17 @@ def _minimal_package(root):
     return root
 
 
+def _adopt_skill(root, line, name="adopt-context-repo"):
+    """Скилл усыновления, инструкция — ровно на пятой строке SKILL.md."""
+    skill = root / "skills" / name
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text(
+        "---\nname: %s\ndescription: x\n---\n%s\n" % (name, line), encoding="utf-8")
+    (skill / "eval.txt").write_text("прими репозиторий\nadopt this repo\n",
+                                    encoding="utf-8")
+    return "skills/%s/SKILL.md" % name
+
+
 class TestPackageCheck(unittest.TestCase):
     def test_minimal_package_passes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -588,6 +599,295 @@ class TestPackageCheck(unittest.TestCase):
             self.assertIn("scripts/check_package.py", result.stdout)
 
 
+    def test_hooks_json_without_the_top_level_key_is_a_finding(self):
+        """Файл без ключа `hooks` Claude Code не читает вовсе.
+
+        `(data.get("hooks") or {})` превращал такую форму в пустой контракт:
+        `counts()` пустой, код возврата 0, а каждый объявленный пакетом хук
+        молча не запускается — ровно та поломка, которую docstring модуля
+        называет стоившей аналогу трёх с половиной месяцев.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "hooks" / "hooks.json").write_text(
+                json.dumps({"PreToolUse": [
+                    {"matcher": "Bahs", "hooks": [{"type": "script"}]}
+                ]}), encoding="utf-8")
+            report = check(root)
+            self.assertEqual(
+                places(report),
+                [("hooks/hooks.json", 1, "unparseable",
+                  "нет ключа hooks: контракт хуков не объявлен")])
+            self.assertEqual(report.exit_code(), 2)
+
+    def test_a_structurally_wrong_hooks_json_does_not_lose_other_findings(self):
+        """Валидный JSON неверной формы ронял `check()` исключением.
+
+        `AttributeError: 'str' object has no attribute 'get'` уносил все
+        остальные находки пакета и возвращал код 1, которого в контракте
+        `scripts/findings.py` нет вовсе: там либо 2, либо 0.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "hooks" / "hooks.json").write_text(
+                json.dumps({"hooks": {"PreToolUse": {
+                    "matcher": "Bahs", "hooks": [{"type": "script"}]}}}),
+                encoding="utf-8")
+            (root / "hooks" / "leak.py").write_text(
+                'P = "/Users/artem/leak"\n', encoding="utf-8")
+            report = check(root)
+            self.assertEqual(
+                places(report),
+                [("hooks/hooks.json", 1, "unparseable",
+                  "hooks.PreToolUse не список, а dict"),
+                 ("hooks/leak.py", 1, "absolute-path", 'P = "/Users/artem/leak"')])
+            self.assertEqual(report.exit_code(), 2)
+
+    def test_every_wrong_shape_of_hooks_json_is_named(self):
+        """Форма проверяется на каждом уровне, а не только на верхнем."""
+        cases = [
+            ("[]", "верхний уровень не объект, а list"),
+            ('"hello"', "верхний уровень не объект, а str"),
+            ('{"hooks": []}', "hooks не объект, а list"),
+            ('{"hooks": {"PreToolUse": "нет"}}',
+             "hooks.PreToolUse не список, а str"),
+            ('{"hooks": {"PreToolUse": ["нет"]}}',
+             "hooks.PreToolUse[0] не объект, а str"),
+            ('{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": "нет"}]}}',
+             "hooks.PreToolUse[0].hooks не список, а str"),
+            ('{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": ["нет"]}]}}',
+             "hooks.PreToolUse[0].hooks[0] не объект, а str"),
+        ]
+        for text, detail in cases:
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as tmp:
+                root = _minimal_package(Path(tmp))
+                (root / "hooks" / "hooks.json").write_text(text, encoding="utf-8")
+                self.assertEqual(
+                    places(check(root)),
+                    [("hooks/hooks.json", 1, "unparseable", detail)])
+
+    def test_an_empty_hook_contract_is_a_legal_form(self):
+        """`{"hooks": {}}` — пакет без хуков, а не находка."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "hooks" / "hooks.json").write_text(
+                json.dumps({"hooks": {}}), encoding="utf-8")
+            self.assertEqual(places(check(root)), [])
+
+    def test_a_skill_directory_named_adopt_is_still_adopt(self):
+        """`startswith("skills/adopt-")` требовал дефиса.
+
+        `skills/adopt/` — самое естественное имя для скилла усыновления, и
+        оно выключало `destructive-example` целиком.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            line = "Переложи так: mv journal areas/journal"
+            rel = _adopt_skill(root, line, name="adopt")
+            self.assertEqual(
+                places(check(root)),
+                [(rel, 5, "destructive-example", line)])
+
+    def test_every_destructive_form_is_caught(self):
+        """Разрушающих форм не две: удаление, усечение и откат тоже.
+
+        Все перечисленные проходили зелёными в инструкциях ADOPT, потому
+        что класс знал ровно `mv` и `rm`.
+        """
+        forms = [
+            "mv journal areas/journal",
+            "rm -rf areas/old",
+            "rmdir areas/old",
+            "git clean -fdx",
+            "find . -name '*.md' -delete",
+            "shutil.rmtree(target)",
+            "> notes.md",
+            "git checkout -- .",
+            "rsync -a --delete src/ dst/",
+            "truncate -s 0 log.txt",
+            "git reset --hard",
+        ]
+        for form in forms:
+            with self.subTest(form=form), tempfile.TemporaryDirectory() as tmp:
+                root = _minimal_package(Path(tmp))
+                line = "Сделай: %s" % form
+                rel = _adopt_skill(root, line)
+                self.assertEqual(
+                    places(check(root)),
+                    [(rel, 5, "destructive-example", line)])
+
+    def test_prose_in_adopt_instructions_is_not_destructive(self):
+        """Цена расширения: цитата markdown и стрелка остаются прозой.
+
+        `>` в начале строки — цитата, а не усекающее перенаправление;
+        отличает их вид цели, а не сам знак.
+        """
+        for line in ("> Форму правит плагин, содержимое не трогает",
+                     "> см. docs/roadmap.md, там таблица",
+                     "Переход a -> b ничего не удаляет",
+                     "Разметка <br>текста",
+                     "Каталог areas/ остаётся на месте"):
+            with self.subTest(line=line), tempfile.TemporaryDirectory() as tmp:
+                root = _minimal_package(Path(tmp))
+                _adopt_skill(root, line)
+                self.assertEqual(places(check(root)), [])
+
+    def test_an_empty_trigger_eval_is_not_a_trigger_eval(self):
+        """`exists()` был всей проверкой: пустой файл считался эвалом.
+
+        Критерий 4 уже установил, что пустая причина не проходит; к
+        `eval.txt` тот же принцип не применяли.
+        """
+        for content in ("", "   \n\t\n"):
+            with self.subTest(content=repr(content)), tempfile.TemporaryDirectory() as tmp:
+                root = _minimal_package(Path(tmp))
+                (root / "skills" / "drain-inbox" / "eval.txt").write_text(
+                    content, encoding="utf-8")
+                self.assertEqual(
+                    places(check(root)),
+                    [("skills/drain-inbox", 1, "skill-without-eval",
+                      "пустой eval.txt: срабатывание не проверяется")])
+
+    def test_a_quoted_whitespace_description_is_empty(self):
+        """Кавычки сохраняют пробелы, и `not fields.get(...)` их пропускал.
+
+        Незакавыченная форма ловилась случайно: там пробелы съедает сам
+        разбор frontmatter и поле становится `None`.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "skills" / "drain-inbox" / "SKILL.md").write_text(
+                '---\nname: drain-inbox\ndescription: "   "\n---\n', encoding="utf-8")
+            self.assertEqual(
+                places(check(root)),
+                [("skills/drain-inbox", 1, "skill-without-description",
+                  "пустое описание")])
+
+    def test_every_relative_call_form_in_a_skill_is_caught(self):
+        """Регулярка требовала запускающего слова и знала один каталог.
+
+        Все четыре формы разрешаются от рабочего каталога — репозитория
+        пользователя, а не плагина, — и все четыре были зелёными.
+        """
+        forms = [
+            "Запусти scripts/check_links.py на корне.",
+            "python3 -m scripts.check_links .",
+            "python3 hooks/hook.py",
+            "uv run scripts/check_links.py .",
+            "python3 scripts/drain.py",
+        ]
+        for form in forms:
+            with self.subTest(form=form), tempfile.TemporaryDirectory() as tmp:
+                root = _minimal_package(Path(tmp))
+                (root / "skills" / "drain-inbox" / "SKILL.md").write_text(
+                    "---\nname: drain-inbox\ndescription: x\n---\n%s\n" % form,
+                    encoding="utf-8")
+                self.assertEqual(
+                    places(check(root)),
+                    [("skills/drain-inbox/SKILL.md", 5, "relative-path-in-skill",
+                      form)])
+
+    def test_a_relative_command_in_hooks_json_is_caught(self):
+        """Та же дыра в hooks.json: команда хука тоже путь, и тоже чужой."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "hooks" / "hooks.json").write_text(
+                '{\n'
+                '  "hooks": {\n'
+                '    "PreToolUse": [\n'
+                '      {"matcher": "Bash", "hooks": [\n'
+                '        {"type": "command", "command": "python3 hooks/hook.py"}\n'
+                '      ]}\n'
+                '    ]\n'
+                '  }\n'
+                '}\n', encoding="utf-8")
+            self.assertEqual(
+                places(check(root)),
+                [("hooks/hooks.json", 5, "relative-path-in-skill",
+                  '{"type": "command", "command": "python3 hooks/hook.py"}')])
+
+    def test_the_plugin_root_form_in_hooks_json_stays_silent(self):
+        """Форма с `${CLAUDE_PLUGIN_ROOT}` — единственная законная."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "hooks" / "hooks.json").write_text(
+                '{\n'
+                '  "hooks": {\n'
+                '    "PreToolUse": [\n'
+                '      {"matcher": "Bash", "hooks": [\n'
+                '        {"type": "command",\n'
+                '         "command": "${CLAUDE_PLUGIN_ROOT}/hooks/hook.sh PreToolUse"}\n'
+                '      ]}\n'
+                '    ]\n'
+                '  }\n'
+                '}\n', encoding="utf-8")
+            self.assertEqual(places(check(root)), [])
+
+    def test_a_nested_skill_directory_is_checked_as_a_skill(self):
+        """Плоский `iterdir()` видел только первый уровень.
+
+        `skills/group/nested-skill/SKILL.md` давал находку «нет SKILL.md» на
+        `skills/group` — неверную и по пути, и по существу, — а настоящий
+        скилл не проверялся вовсе.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            nested = root / "skills" / "group" / "nested-skill"
+            nested.mkdir(parents=True)
+            (nested / "SKILL.md").write_text(
+                "---\nname: nested-skill\ndescription: Вложенный\n---\n",
+                encoding="utf-8")
+            self.assertEqual(
+                places(check(root)),
+                [("skills/group/nested-skill", 1, "skill-without-eval",
+                  "нет eval.txt: срабатывание не проверяется")])
+
+    def test_a_directory_without_any_manifest_is_still_a_finding(self):
+        """Каталог, в котором SKILL.md нет нигде, остаётся находкой."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "skills" / "пусто").mkdir()
+            self.assertEqual(
+                places(check(root)),
+                [("skills/пусто", 1, "skill-without-description", "нет SKILL.md")])
+
+    def test_container_roots_are_absolute_too(self):
+        """`/workspace/`, `/workspaces/` и `/data/` списку известны не были.
+
+        `/workspaces/` — умолчание GitHub Codespaces, `/workspace/` — почти
+        любого образа: путь оттуда верен ровно в одном контейнере.
+        """
+        for form in ("/workspace/repo/x.py", "/workspaces/repo/x.py",
+                     "/data/db/x.sqlite"):
+            with self.subTest(form=form):
+                self.assertIsNotNone(
+                    check_package.ABSOLUTE.search("Зовёт %s отсюда" % form), form)
+
+    def test_a_container_root_is_reported_like_any_other(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "notes.md").write_text(
+                "Смотри /workspaces/repo/x.md\n", encoding="utf-8")
+            self.assertEqual(
+                places(check(root)),
+                [("notes.md", 1, "absolute-path", "Смотри /workspaces/repo/x.md")])
+
+    def test_an_undecodable_skill_manifest_does_not_crash_the_check(self):
+        """`read_text` без замены ронял всю проверку на одном байте.
+
+        Тот же дефект, что и в скане файлов пакета, только на SKILL.md:
+        исключение уносило и остальные находки, и код возврата.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "skills" / "drain-inbox" / "SKILL.md").write_bytes(
+                "---\nname: drain-inbox\ndescription: caf".encode("utf-8")
+                + b"\xe9\n---\n")
+            report = check(root)
+            self.assertEqual(places(report), [])
+            self.assertEqual(report.exit_code(), 0)
+
+
 class TestGateNotReadOnlyMechanism(unittest.TestCase):
     """Доказательство для `gate-not-read-only` в docs/gate-coverage.md.
 
@@ -630,6 +930,37 @@ class TestGateNotReadOnlyMechanism(unittest.TestCase):
             findings = check_read_only(root, "honest_gate.py", fixture)
 
             self.assertEqual(findings, [])
+
+    def test_a_gate_that_writes_outside_the_fixture_is_caught(self):
+        """Хеш одной фикстуры не доказывает ничего о остальном дереве.
+
+        Посаженный гейт создавал файл двумя уровнями выше фикстуры:
+        `counts()` оставался пустым, а файл действительно появлялся.
+        Незыблемое №6 запрещает плагину писать что бы то ни было вне корня,
+        и проверка обязана видеть это, а не только правку внутри фикстуры.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "scripts").mkdir()
+            (root / "scripts" / "leaky_gate.py").write_text(
+                "import sys\n"
+                "from pathlib import Path\n"
+                "fixture = Path(sys.argv[1])\n"
+                "fixture.parent.parent.joinpath('GATE_WROTE_HERE.txt')"
+                ".write_text('touched', encoding='utf-8')\n",
+                encoding="utf-8",
+            )
+            fixture = root / "fixtures" / "broken"
+            fixture.mkdir(parents=True)
+            (fixture / "keep.md").write_text("исходное содержимое\n", encoding="utf-8")
+
+            findings = check_read_only(root, "leaky_gate.py", fixture)
+
+            self.assertEqual(
+                [(f.path, f.line, f.cls, f.detail) for f in findings],
+                [("scripts/leaky_gate.py", 1, "gate-not-read-only",
+                  "дерево репозитория изменилось после прогона")])
+            self.assertTrue((root / "GATE_WROTE_HERE.txt").exists())
 
 
 class TestTestsTouchedProductMechanism(unittest.TestCase):
@@ -680,6 +1011,40 @@ class TestTestsTouchedProductMechanism(unittest.TestCase):
             findings = _check_tests_touched_product(root)
 
             self.assertEqual(findings, [])
+
+    def test_every_shipped_directory_is_watched(self):
+        """`hooks/` и `skills/` в снимке продукта не было вовсе.
+
+        Docstring рядом называл `scripts/` и `.claude-plugin/` «единственным,
+        чего тесты не вправе трогать», а `hooks/` — уже отгруженный продукт:
+        тест, переписывающий `hooks/hook.py`, был для проверки невидим.
+        """
+        for rel in ("scripts/marker.py", ".claude-plugin/plugin.json",
+                    "hooks/hook.py", "skills/drain-inbox/SKILL.md"):
+            with self.subTest(rel=rel), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                target = root / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("исходное\n", encoding="utf-8")
+                tests_dir = root / "tests"
+                tests_dir.mkdir()
+                (tests_dir / "__init__.py").write_text("", encoding="utf-8")
+                (tests_dir / "test_mutator.py").write_text(
+                    "import unittest\n"
+                    "from pathlib import Path\n\n"
+                    "class T(unittest.TestCase):\n"
+                    "    def test_touches_product(self):\n"
+                    "        target = Path(__file__).resolve().parent.parent / %r\n"
+                    "        target.write_text('изменено\\n', encoding='utf-8')\n" % rel,
+                    encoding="utf-8",
+                )
+
+                findings = _check_tests_touched_product(root)
+
+                self.assertEqual(
+                    [(f.path, f.line, f.cls, f.detail) for f in findings],
+                    [("tests", 1, "tests-touched-product",
+                      "продукт изменился после прогона тестов")])
 
 
 class TestThisPackage(unittest.TestCase):

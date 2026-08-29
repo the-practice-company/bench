@@ -76,6 +76,12 @@ _ABSOLUTE_PREFIXES = (
     "/" + "bin/", "/" + "sbin/", "/" + "dev/", "/" + "sys/", "/" + "proc/",
     "/" + "run/", "/" + "lib/", "/" + "lib64/", "/" + "boot/", "/" + "snap/",
     "/" + "nix/", "/" + "cores/", "/" + "Network/",
+    # Корни контейнеров и облачных сред: `workspace` — почти любой образ,
+    # `workspaces` — умолчание GitHub Codespaces, `data` — смонтированный
+    # том. Путь оттуда верен ровно в одном контейнере, то есть это та же
+    # машинная зависимость, ради которой класс заведён, — а списку они не
+    # были известны вовсе.
+    "/" + "workspace/", "/" + "workspaces/", "/" + "data/",
 )
 ABSOLUTE = re.compile(
     "(?<![\\w.])(?:%s)" % "|".join(re.escape(p) for p in _ABSOLUTE_PREFIXES)
@@ -112,10 +118,48 @@ _PORTABLE_SHEBANGS = ("/" + "usr/bin/env", "/" + "bin/sh")
 # слеп ровно к тому месту, куда абсолютный путь в такой строке и попадает.
 _PORTABLE_SHEBANG = re.compile(
     r"^#!(?:%s)(?=\s|$)" % "|".join(re.escape(s) for s in _PORTABLE_SHEBANGS))
-# Вызов скрипта пакета из прозы скилла.
-SCRIPT_CALL = re.compile(r"(?:python3?\s+|sh\s+|bash\s+|\./)\S*scripts/\S+")
-# Разрушающий пример в инструкциях ADOPT.
-DESTRUCTIVE = re.compile(r"(?<![\w-])(?:mv|rm)\s+[^\s`]")
+# Каталоги пакета, в которых лежит исполняемое. Ссылка сюда без
+# `${CLAUDE_PLUGIN_ROOT}` разрешается от рабочего каталога — репозитория
+# пользователя, а не плагина. Список закрытый: появился новый каталог с
+# кодом — он дописывается сюда, как и `TOOL_NAMES` выше.
+_PACKAGE_DIRS = ("scripts", "hooks")
+# Ссылка на файл пакета по относительному пути. Запускающего слова не
+# требуется: `Запусти scripts/check_links.py` — та же самая ссылка, которую
+# агент разрешит от чужого корня. Прежняя форма требовала `python3`, `sh`,
+# `bash` или `./` и знала ровно один каталог, поэтому мимо неё проходили и
+# проза без префикса, и `uv run`, и всё, что лежит не в `scripts/`. Косая
+# слева в запрете — ровно исключение законной формы: в
+# `${CLAUDE_PLUGIN_ROOT}/scripts/x.py` перед именем каталога стоит она.
+SCRIPT_CALL = re.compile(
+    r"(?<![\w./~-])(?:%s)/[\w.-]*\.[A-Za-z0-9]+" % "|".join(_PACKAGE_DIRS)
+    # Форма `-m` адресует тот же файл точкой, а не косой, и разбор, искавший
+    # косую, не видел её вовсе.
+    + r"|(?<![\w./~-])-m\s+(?:%s)\.[\w.]+" % "|".join(_PACKAGE_DIRS)
+)
+# Цель усекающего перенаправления — один токен, похожий на путь: с косой
+# или с коротким расширением. Без этого условия ветка ловила бы цитату
+# markdown (`> строка текста`), а в инструкциях ADOPT цитаты — обычная
+# проза: класс, краснеющий на каждой цитате, перестаёт быть проверкой.
+_REDIRECT_TARGET = r"[^\s`'\"|>]*(?:/|\.[A-Za-z0-9]{1,4})[^\s`'\"|>]*(?=[\s`'\"]|$)"
+# Разрушающий пример в инструкциях ADOPT. Разрушают не только `mv` и `rm`:
+# удаление каталога, чистка рабочего дерева git, `find -delete`, `rmtree`,
+# усекающее перенаправление, откат правок, зеркалирование с `--delete`,
+# усечение файла и `reset --hard` — всё это исполнят буквально на чужом
+# дереве, и всё это класс пропускал зелёным.
+DESTRUCTIVE = re.compile(
+    r"(?<![\w-])(?:mv|rmdir|rm)\s+[^\s`]"
+    r"|(?<![\w-])git\s+clean(?![\w-])"
+    r"|(?<![\w-])git\s+checkout\s+--(?:\s|$)"
+    r"|(?<![\w-])git\s+reset\s+--hard(?![\w-])"
+    r"|(?<![\w-])find\s[^`]*(?<![\w-])-delete(?![\w-])"
+    r"|(?<![\w.])(?:shutil\.)?rmtree\s*\("
+    r"|(?<![\w-])rsync\s[^`]*(?<![\w-])--delete(?![\w-])"
+    r"|(?<![\w-])truncate\s[^`]*(?<![\w-])-s\s+0(?![\w])"
+    # Стрелка (`->`, `=>`) и закрывающая скобка разметки — не
+    # перенаправление, поэтому знак слева от `>` ограничен; `>>` дописывает,
+    # а не усекает.
+    r"|(?<![-=<>])>(?!>)\s*" + _REDIRECT_TARGET
+)
 
 # Каталоги, не входящие в пакет. Списка два, потому что правила разные, и
 # смешаны они были не зря: у каждого своя поломка.
@@ -192,46 +236,138 @@ def _iter_package_files(root):
         yield path
 
 
+def _hooks_shape(detail, line=1):
+    """Находка о форме hooks.json. Класс — `unparseable`, потому что файл
+    неверной формы не читается как контракт хуков, даже когда он валидный
+    JSON. Другого класса под это в `scripts/findings.py` нет, а заводить
+    свой ради одного места — вторая таблица того же самого."""
+    return Finding("unparseable", "hooks/hooks.json", line, detail)
+
+
+def _check_hooks(root):
+    """Контракт хуков: сначала форма файла целиком, потом известность имён.
+
+    Промах формы — не опечатка в одном поле, а тихое отключение всего
+    пакета. Файл без верхнего ключа `hooks` Claude Code не читает вовсе:
+    ни один объявленный хук не запускается, а `(data.get("hooks") or {})`
+    возвращал на такой файл пустой контракт и тишину — ровно та поломка,
+    которую docstring модуля называет стоившей аналогу трёх с половиной
+    месяцев. Валидный JSON неверной формы вдобавок ронял всю проверку
+    исключением: находки остальных гейтов терялись, а код возврата
+    становился 1, которого в контракте `scripts/findings.py` нет.
+    Поэтому форма утверждается на каждом уровне и каждое расхождение
+    называется путём внутри файла, а не общим «битый hooks.json».
+    """
+    path = root / "hooks" / "hooks.json"
+    if not path.exists():
+        return []
+    # Замена, а не исключение: недекодируемый байт делает файл непригодным
+    # как JSON и уходит в отчёт находкой, а не роняет проверку (№4).
+    try:
+        data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except json.JSONDecodeError as error:
+        return [_hooks_shape(str(error), error.lineno)]
+
+    if not isinstance(data, dict):
+        return [_hooks_shape("верхний уровень не объект, а %s" % _type_name(data))]
+    if "hooks" not in data:
+        return [_hooks_shape("нет ключа hooks: контракт хуков не объявлен")]
+    events = data["hooks"]
+    if not isinstance(events, dict):
+        return [_hooks_shape("hooks не объект, а %s" % _type_name(events))]
+
+    findings = []
+    for event, entries in events.items():
+        if event not in HOOK_EVENTS:
+            findings.append(Finding("unknown-hook-event", "hooks/hooks.json", 1, event))
+        if not isinstance(entries, list):
+            findings.append(_hooks_shape(
+                "hooks.%s не список, а %s" % (event, _type_name(entries))))
+            continue
+        for index, entry in enumerate(entries):
+            where = "hooks.%s[%d]" % (event, index)
+            if not isinstance(entry, dict):
+                findings.append(_hooks_shape(
+                    "%s не объект, а %s" % (where, _type_name(entry))))
+                continue
+            matcher = entry.get("matcher", "*")
+            if not matcher_is_known(matcher):
+                findings.append(Finding("unknown-matcher", "hooks/hooks.json", 1,
+                                        str(matcher)))
+            hooks = entry.get("hooks", [])
+            if not isinstance(hooks, list):
+                findings.append(_hooks_shape(
+                    "%s.hooks не список, а %s" % (where, _type_name(hooks))))
+                continue
+            for hook_index, hook in enumerate(hooks):
+                if not isinstance(hook, dict):
+                    findings.append(_hooks_shape(
+                        "%s.hooks[%d] не объект, а %s"
+                        % (where, hook_index, _type_name(hook))))
+                    continue
+                if hook.get("type") not in HOOK_TYPES:
+                    findings.append(Finding("unknown-hook-type", "hooks/hooks.json", 1,
+                                            str(hook.get("type"))))
+    return findings
+
+
+def _type_name(value):
+    return type(value).__name__
+
+
+def _nonblank(value):
+    """Поле заполнено по существу, а не по признаку «не None».
+
+    `description: "   "` — кавычки сохраняют пробелы, парсер возвращает
+    строку, и `not fields.get(...)` объявлял её заполненной. Незакавыченная
+    форма ловилась случайно: там пробелы съедает сам разбор frontmatter.
+    """
+    return value is not None and str(value).strip() != ""
+
+
+def _is_adopt_file(rel):
+    """Файл внутри скилла усыновления, на любой глубине вложенности.
+
+    `rel.startswith("skills/adopt-")` требовал дефиса: каталог
+    `skills/adopt/` — самое естественное имя для этого скилла — выключал
+    `destructive-example` целиком. Имя файла из проверки исключено: скилл
+    `drain-inbox` с заметкой `adopt.md` усыновлением не становится.
+    """
+    parts = rel.split("/")
+    if parts[0] != "skills":
+        return False
+    return any(part == "adopt" or part.startswith("adopt-")
+               for part in parts[1:-1])
+
+
 def check(root):
     root = Path(root)
     findings = []
 
-    hooks_file = root / "hooks" / "hooks.json"
-    if hooks_file.exists():
-        try:
-            data = json.loads(hooks_file.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as error:
-            # Невосстановимое значение уходит в отчёт, а не роняет всю проверку
-            # (незыблемое №4): битый hooks.json не обязан гасить остальные находки.
-            findings.append(Finding("unparseable", "hooks/hooks.json", error.lineno, str(error)))
-            data = None
-        if data is not None:
-            for event, entries in (data.get("hooks") or {}).items():
-                if event not in HOOK_EVENTS:
-                    findings.append(Finding("unknown-hook-event", "hooks/hooks.json", 1, event))
-                for entry in entries or []:
-                    matcher = entry.get("matcher", "*")
-                    if not matcher_is_known(matcher):
-                        findings.append(Finding("unknown-matcher", "hooks/hooks.json", 1, str(matcher)))
-                    for hook in entry.get("hooks") or []:
-                        if hook.get("type") not in HOOK_TYPES:
-                            findings.append(Finding("unknown-hook-type", "hooks/hooks.json", 1,
-                                                    str(hook.get("type"))))
+    findings.extend(_check_hooks(root))
 
     skills_dir = root / "skills"
     if skills_dir.exists():
-        for skill in sorted(p for p in skills_dir.iterdir() if p.is_dir()):
+        # Скилл — каталог с SKILL.md, на любой глубине под `skills/`. Плоский
+        # `iterdir()` видел только первый уровень: на `skills/group/` садилась
+        # находка «нет SKILL.md» — неверная и по пути, и по существу, — а
+        # лежащий внутри настоящий скилл не проверялся вовсе.
+        manifests = sorted(p for p in skills_dir.rglob("SKILL.md") if p.is_file())
+        for top in sorted(p for p in skills_dir.iterdir() if p.is_dir()):
+            if not any(top == m.parent or top in m.parents for m in manifests):
+                findings.append(Finding("skill-without-description",
+                                        top.relative_to(root).as_posix(), 1,
+                                        "нет SKILL.md"))
+        for manifest in manifests:
+            skill = manifest.parent
             rel = skill.relative_to(root).as_posix()
-            manifest = skill / "SKILL.md"
-            if not manifest.exists():
-                findings.append(Finding("skill-without-description", rel, 1, "нет SKILL.md"))
-                continue
             try:
-                fields = parse_frontmatter(manifest.read_text(encoding="utf-8"))
+                fields = parse_frontmatter(
+                    manifest.read_text(encoding="utf-8", errors="replace"))
             except FrontmatterError as error:
                 findings.append(Finding("unparseable", rel + "/SKILL.md", error.line, str(error)))
                 continue
-            if not fields.get("description"):
+            if not _nonblank(fields.get("description")):
                 findings.append(Finding("skill-without-description", rel, 1, "пустое описание"))
             if fields.get("name") != skill.name:
                 findings.append(Finding("skill-name-mismatch", rel, 1,
@@ -239,6 +375,15 @@ def check(root):
             if not (skill / "eval.txt").exists():
                 findings.append(Finding("skill-without-eval", rel, 1,
                                         "нет eval.txt: срабатывание не проверяется"))
+            # Пустой файл — не эвал: `exists()` был всей проверкой, и файл из
+            # одних пробелов считался доказательством срабатывания. Критерий 4
+            # то же самое уже установил для пустой причины. Условие полное, а
+            # не `elif`: две причины одного класса — две независимые проверки,
+            # и снятие любой из них обязано оставлять вторую на месте.
+            if (skill / "eval.txt").exists() and not (skill / "eval.txt").read_text(
+                    encoding="utf-8", errors="replace").strip():
+                findings.append(Finding("skill-without-eval", rel, 1,
+                                        "пустой eval.txt: срабатывание не проверяется"))
 
     for path in _iter_package_files(root):
         rel = path.relative_to(root).as_posix()
@@ -260,14 +405,17 @@ def check(root):
                 findings.append(Finding("absolute-path", rel, lineno, line.strip()[:80]))
             # Восемь скиллов у изученного аналога звали скрипт относительным
             # путём: рабочим каталогом оказался репозиторий пользователя,
-            # и вся заявленная функциональность молча не работала.
-            if rel.startswith("skills/") and SCRIPT_CALL.search(line) \
+            # и вся заявленная функциональность молча не работала. Периметр —
+            # скиллы и hooks.json: команда хука — такой же путь, и такой же
+            # чужой, а проверялись до этого только скиллы.
+            if (rel.startswith("skills/") or rel == "hooks/hooks.json") \
+                    and SCRIPT_CALL.search(line) \
                     and "${CLAUDE_PLUGIN_ROOT}" not in line:
                 findings.append(Finding("relative-path-in-skill", rel, lineno,
                                         line.strip()[:80]))
-            # ADOPT мутирует чужое дерево; пример mv или rm в его инструкциях
+            # ADOPT мутирует чужое дерево; разрушающий пример в его инструкциях
             # рано или поздно исполнят буквально.
-            if rel.startswith("skills/adopt-") and DESTRUCTIVE.search(line):
+            if _is_adopt_file(rel) and DESTRUCTIVE.search(line):
                 findings.append(Finding("destructive-example", rel, lineno,
                                         line.strip()[:80]))
 
@@ -284,35 +432,57 @@ def check(root):
 
 
 def _tree_hash(root):
-    """Хеш дерева: имя, размер и содержимое каждого файла, кроме служебного."""
+    """Хеш дерева: путь и содержимое каждого файла, кроме служебного.
+
+    Служебные каталоги отсекаются на спуске, а не после обхода: снимок
+    берётся со всего корня репозитория, и заходить внутрь `.git` ради
+    того, чтобы каждый его объект потом отбросить, незачем.
+    """
     digest = hashlib.sha256()
-    for path in sorted(root.rglob("*")):
-        if not path.is_file():
-            continue
-        rel = path.relative_to(root).as_posix()
-        if rel.startswith((".git/", "__pycache__/")) or "/__pycache__/" in rel:
-            continue
-        digest.update(rel.encode("utf-8"))
-        digest.update(path.read_bytes())
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_ANY_DEPTH)
+        for name in sorted(filenames):
+            path = Path(dirpath) / name
+            if not path.is_file():
+                continue
+            digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+            digest.update(path.read_bytes())
     return digest.hexdigest()
 
 
 def check_read_only(root, gate, fixture):
-    """Гейт обязан доказать read-only хешем дерева до и после."""
-    before = _tree_hash(fixture)
+    """Гейт обязан доказать read-only хешем дерева до и после.
+
+    Хешируется весь корень репозитория, а не одна фикстура. Гейт, который
+    пишет мимо неё, фикстурному хешу не доказывает ничего: посаженный
+    образец создавал файл двумя уровнями выше, `counts()` оставался
+    пустым, а файл действительно появлялся. Незыблемое №6 запрещает
+    плагину писать что бы то ни было вне корня, и снимок корня — форма
+    этой проверки, видящая нарушение целиком, а не в одном подкаталоге.
+    За корень снимок не выходит: запись в чужое дерево ловится границей
+    рабочего каталога в хуках, а не здесь.
+    """
+    before = _tree_hash(root)
     subprocess.run([sys.executable, str(root / "scripts" / gate), str(fixture)],
                    capture_output=True, text=True)
-    after = _tree_hash(fixture)
+    after = _tree_hash(root)
     if before != after:
         return [Finding("gate-not-read-only", "scripts/" + gate, 1,
-                        "дерево фикстуры изменилось после прогона")]
+                        "дерево репозитория изменилось после прогона")]
     return []
 
 
+# Продукт: всё, что уезжает в пакет. `hooks/` и `skills/` в снимке не было,
+# хотя docstring рядом называл его «единственным, чего тесты не вправе
+# трогать»: тест, переписывающий `hooks/hook.py`, был невидим, а `hooks/` —
+# уже отгруженный продукт.
+_PRODUCT_DIRS = ("scripts", ".claude-plugin", "hooks", "skills")
+
+
 def _product_hash(root):
-    """Хеш `scripts/` и `.claude-plugin/`: единственное, чего тесты не вправе трогать."""
+    """Хеш продуктовых каталогов: единственное, чего тесты не вправе трогать."""
     digest = hashlib.sha256()
-    for sub in ("scripts", ".claude-plugin"):
+    for sub in _PRODUCT_DIRS:
         base = root / sub
         if not base.exists():
             continue
@@ -331,7 +501,7 @@ def _check_tests_touched_product(root):
     """`tests-touched-product`: тесты не создали и не изменили ни одного файла продукта.
 
     Тот же приём, что и check_read_only, только вокруг всего набора тестов,
-    а продукт — `scripts/` и `.claude-plugin/`, а не одна фикстура.
+    а снимок — `_PRODUCT_DIRS`, а не одна фикстура.
     """
     if _NESTED_RUN_GUARD in os.environ:
         return []
@@ -343,7 +513,7 @@ def _check_tests_touched_product(root):
     after = _product_hash(root)
     if before != after:
         return [Finding("tests-touched-product", "tests", 1,
-                        "scripts/ или .claude-plugin/ изменились после прогона тестов")]
+                        "продукт изменился после прогона тестов")]
     return []
 
 
