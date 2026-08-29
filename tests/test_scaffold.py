@@ -358,6 +358,36 @@ class TestPathScopedRules(unittest.TestCase):
                 unknown.append((path.name, closing.strip()[:60]))
         self.assertEqual(unknown, [])
 
+    def test_every_clause_of_a_closing_names_a_mechanism(self):
+        """`any` по всему закрытию — дыра, а не строгость.
+
+        Закрытие перечисляет механизмы через `;`. Пока судится закрытие
+        целиком, фраза из трёх частей проходит, назови она два выдуманных
+        механизма и один настоящий: проверено на строке `frontmatter gate —
+        real; vibes gate — invented.`, которую соседний тест признаёт
+        законной. Закрытым список становится, только когда судится каждая
+        часть.
+
+        Чего эта проверка не ловит и не может поймать: **что именно**
+        механизм делает. `link gate — the folder the filter names` из плана
+        состояла из известного имени и неправды во всём остальном — ни один
+        гейт не читает `.base`, а `check_frontmatter` на несуществующей
+        папке молча делает `continue`. Такое ловится чтением кода гейта,
+        им и было поймано.
+        """
+        wrong = []
+        for path in rule_files():
+            text = path.read_text(encoding="utf-8")
+            index = text.rfind(HELD)
+            if index < 0:
+                continue
+            for clause in text[index + len(HELD):].split(";"):
+                if not clause.strip():
+                    continue
+                if not any(name in clause for name in KNOWN_MECHANISMS):
+                    wrong.append((path.name, " ".join(clause.split())[:50]))
+        self.assertEqual(wrong, [])
+
     def test_both_closing_forms_are_actually_used(self):
         """Форма «не гейтится» существует не на бумаге. Конвенция ровно одна.
 
