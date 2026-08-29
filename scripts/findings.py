@@ -52,6 +52,19 @@ ADOPT_CLASSES = (
     "created-unrecoverable",
 )
 
+MAINTAIN_CLASSES = (
+    "content-modified",
+    "unexplained-count",
+    "silent-substitution",
+    "structure-without-content",
+    "empty-collection",
+    "declared-unused",
+    "view-selects-nothing",
+    "map-tree-divergence",
+    "archetype-mismatch",
+    "unreferenced-ignored-binary",
+)
+
 _SEVERITY = {
     "unresolved": "error",
     "md-link-to-file": "error",
@@ -114,6 +127,24 @@ _SEVERITY = {
     # виноватым и остановить процедуру на том, что в ней не чинится.
     "foreign-repo": "report",
     "created-unrecoverable": "report",
+    # Четыре ошибки — про нарушенное обещание плагина о себе: прогон тронул
+    # содержимое, счётчики не сошлись, значение записано молча, единица
+    # доведена до диска без записи. Каждая означает, что режиму нельзя
+    # верить дальше, и потому останавливает его собственным откатом.
+    "content-modified": "error",
+    "unexplained-count": "error",
+    "silent-substitution": "error",
+    "structure-without-content": "error",
+    # Шесть отчётов — наблюдения о дереве. Чинить их либо не плагину
+    # (архетип, карта, бинарь), либо нечем детерминированно. Ошибкой их
+    # сделать значило бы остановить режим на том, чего в нём не чинится, —
+    # тот же довод, что у `foreign-repo` волной раньше.
+    "empty-collection": "report",
+    "declared-unused": "report",
+    "view-selects-nothing": "report",
+    "map-tree-divergence": "report",
+    "archetype-mismatch": "report",
+    "unreferenced-ignored-binary": "report",
 }
 
 

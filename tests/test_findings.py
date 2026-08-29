@@ -71,6 +71,43 @@ class TestAdoptClasses(unittest.TestCase):
                          ["created-unrecoverable", "foreign-repo"])
 
 
+class TestMaintainClasses(unittest.TestCase):
+    def test_the_wave_carries_exactly_these_ten(self):
+        from scripts import findings
+        self.assertEqual(list(findings.MAINTAIN_CLASSES), [
+            "content-modified",
+            "unexplained-count",
+            "silent-substitution",
+            "structure-without-content",
+            "empty-collection",
+            "declared-unused",
+            "view-selects-nothing",
+            "map-tree-divergence",
+            "archetype-mismatch",
+            "unreferenced-ignored-binary",
+        ])
+
+    def test_four_are_errors_and_six_are_reports(self):
+        """Ошибка — про нарушенное обещание плагина о себе. Отчёт — про
+        наблюдение о дереве, которое чинить не плагину."""
+        from scripts import findings
+        by_severity = {}
+        for cls in findings.MAINTAIN_CLASSES:
+            by_severity.setdefault(findings.severity(cls), []).append(cls)
+        self.assertEqual(sorted(by_severity), ["error", "report"])
+        self.assertEqual(sorted(by_severity["error"]), [
+            "content-modified", "silent-substitution",
+            "structure-without-content", "unexplained-count"])
+        self.assertEqual(len(by_severity["report"]), 6)
+
+    def test_no_class_named_demand_acted_on_exists(self):
+        """Соблазн есть: имя выглядит как гарантия. Производителя у него в
+        бою нет — это утверждение теста, — а имя без стоящего за ним
+        поведения волна 1 уже оплачивала (`EXIT_TOOL_FAILED`)."""
+        from scripts import findings
+        self.assertNotIn("demand-acted-on", findings.MAINTAIN_CLASSES)
+
+
 class TestReportDeterminism(unittest.TestCase):
     def test_same_findings_in_any_order_render_identically(self):
         a = Finding("unresolved", "areas/b.md", 12, "[[nope]]")
