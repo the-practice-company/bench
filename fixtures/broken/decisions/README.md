@@ -1,6 +1,9 @@
 ---
 archetype: pipeline
 values:
-  status: [open, decided, revisited]
+  status:
+    - open
+    - decided
+    - revisited
 ---
 # Решения

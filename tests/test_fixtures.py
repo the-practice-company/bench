@@ -49,13 +49,25 @@ areas.md` — файл, заведённый в фикстуру с подпис
 
 | класс | образцы |
 |---|---|
-| `missing-required` 3 | `no-status.md`: нет `status`, который читает вид, и нет `created` из стартового набора; `bad-status.md`: нет `created` |
+| `missing-required` 3 | `no-status.md`: нет `status`, обязательного архетипу `pipeline`, и нет `created` из стартового набора; `bad-status.md`: нет `created` |
 | `value-outside-vocabulary` 1 | `status: активно` при словаре коллекции `[open, decided, revisited]` |
 | `unparseable` 1 | блочный скаляр в `broken-yaml.md` |
 
 `description` из `order` вида требованием не является — вид его показывает, но
 не группирует по нему и не сортирует, поэтому в `missing-required` он не
 попадает. Отсюда 3, а не 5.
+
+Причина у `status` названа архетипом, хотя вид коллекции по нему ещё и
+группирует: источники контракта перечислены секцией 14 по старшинству, и
+стартовый набор стоит раньше вида. Требование архетипа переживёт правку
+вида, требование вида — нет, и автору чинить надо то, что глубже. Одно поле
+даёт одну находку, а не две: это один факт о записи.
+
+Словарь в `decisions/README.md` объявлен **блочным списком** — формой, которой
+Obsidian Properties пишет multi-value свойство. Раньше там стоял flow-список,
+и вся дорога «блочный список внутри вложенной мапы» фикстурой не проверялась:
+на ней разбор падал, гейт глотал отказ, и коллекция оставалась без словаря.
+Flow-форма осталась в зелёной фикстуре — проверяются обе.
 """
 
 import shutil
@@ -144,9 +156,9 @@ class TestExactFindings(unittest.TestCase):
                 ("decisions/items/broken-yaml.md", 4, "unparseable",
                  "блочный скаляр не поддерживается (строка 4)"),
                 ("decisions/items/no-status.md", 1, "missing-required",
-                 "поле status читает вид"),
-                ("decisions/items/no-status.md", 1, "missing-required",
                  "стартовый набор: поле created"),
+                ("decisions/items/no-status.md", 1, "missing-required",
+                 "стартовый набор: поле status у архетипа pipeline"),
             ],
         )
 

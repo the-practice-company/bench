@@ -24,11 +24,47 @@ class TestParse(unittest.TestCase):
         self.assertEqual(parse(text), {"tags": ["найм", "продукт"]})
 
     def test_nested_map_is_how_values_are_declared(self):
-        text = "---\narchetype: конвейер\nvalues:\n  status: [open, decided, revisited]\n---\n"
+        text = "---\narchetype: pipeline\nvalues:\n  status: [open, decided, revisited]\n---\n"
         self.assertEqual(
             parse(text),
-            {"archetype": "конвейер", "values": {"status": ["open", "decided", "revisited"]}},
+            {"archetype": "pipeline", "values": {"status": ["open", "decided", "revisited"]}},
         )
+
+    def test_block_list_inside_the_nested_map(self):
+        """Форма, которой Obsidian Properties пишет multi-value свойство.
+
+        Докстрока модуля обещала и блочные списки, и вложенную мапу; их
+        сочетание — ровно то, что писала панель Properties, — роняло разбор
+        `элемент списка после скаляра`. Гейт эту ошибку глотал, и коллекция
+        оставалась без словаря вовсе.
+        """
+        text = ("---\narchetype: pipeline\nvalues:\n  status:\n"
+                "    - open\n    - decided\n    - revisited\n---\n")
+        self.assertEqual(
+            parse(text),
+            {"archetype": "pipeline",
+             "values": {"status": ["open", "decided", "revisited"]}},
+        )
+
+    def test_key_after_a_nested_block_list_returns_to_its_level(self):
+        """Закрытие вложенного списка не теряет владельца.
+
+        Разбор обязан вернуться и на уровень вложенной мапы, и на верхний:
+        иначе форма выше разбирается, а следующее за ней поле уезжает не
+        туда — тихо, потому что структура остаётся правдоподобной.
+        """
+        text = ("---\nvalues:\n  status:\n    - open\n  labels:\n    - срочно\n"
+                "archetype: pipeline\n---\n")
+        self.assertEqual(
+            parse(text),
+            {"values": {"status": ["open"], "labels": ["срочно"]},
+             "archetype": "pipeline"},
+        )
+
+    def test_block_list_flush_with_its_key(self):
+        """Отступ у блочного списка не обязателен, и ключ после него — ключ."""
+        text = "---\ntags:\n- найм\n- продукт\nstatus: open\n---\n"
+        self.assertEqual(parse(text), {"tags": ["найм", "продукт"], "status": "open"})
 
     def test_empty_value_is_none_not_empty_string(self):
         self.assertEqual(parse("---\ncreated:\n---\n"), {"created": None})
@@ -61,3 +97,43 @@ class TestNeverGuesses(unittest.TestCase):
         и молча сбрасывал состояние на всём остальном. Здесь — любой отступ."""
         text = "---\ntags:\n    - a\n---\n"
         self.assertEqual(parse(text), {"tags": ["a"]})
+
+    def test_duplicate_key_raises_rather_than_last_wins(self):
+        """Повторный ключ — тот самый молчаливый сброс состояния.
+
+        Побеждала последняя строка, и первое значение исчезало без следа:
+        `status: НЕТ-ТАКОГО` перед `status: open` уходил из-под словаря
+        коллекции, потому что до гейта не доезжал вовсе.
+        """
+        text = "---\ntype: decision\nstatus: НЕТ-ТАКОГО\nstatus: open\n---\n"
+        with self.assertRaises(FrontmatterError) as ctx:
+            parse(text)
+        self.assertEqual(ctx.exception.line, 4)
+        self.assertIn("повторный ключ", str(ctx.exception))
+
+    def test_duplicate_key_inside_the_nested_map_raises_too(self):
+        text = "---\nvalues:\n  status: [open]\n  status: [decided]\n---\n"
+        with self.assertRaises(FrontmatterError) as ctx:
+            parse(text)
+        self.assertEqual(ctx.exception.line, 4)
+
+    def test_a_uniformly_indented_block_is_still_read(self):
+        """Строгость к отступу не имеет права стать регрессией.
+
+        Сдвинутый целиком блок — законный YAML, и разбирался он здесь
+        всегда; ронять его вместе с потерянной вложенностью значит
+        объявить нарушением то, что нарушением не было.
+        """
+        self.assertEqual(parse("---\n  type: note\n  status: open\n---\n"),
+                         {"type": "note", "status": "open"})
+
+    def test_key_indented_under_a_scalar_raises(self):
+        """Отступ без владельца не приводится молча к верхнему уровню.
+
+        `weird` уезжал в корневую мапу как обычное поле: структура на выходе
+        оставалась правдоподобной, и об утраченной вложенности никто не знал.
+        """
+        text = "---\ntype: note\n  weird: x\n---\n"
+        with self.assertRaises(FrontmatterError) as ctx:
+            parse(text)
+        self.assertEqual(ctx.exception.line, 3)
