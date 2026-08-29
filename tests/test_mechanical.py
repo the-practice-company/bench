@@ -216,7 +216,7 @@ class TestDirtyPaths(unittest.TestCase):
         восьмеричными последовательностями: `sources/дубль.md` вернулся бы
         именем, которого в дереве нет, — грязный путь прочитался бы чистым."""
         (self.root / "sources" / "дубль.md").write_text("x\n", encoding="utf-8")
-        self.assertIn("sources/дубль.md", mechanical._dirty(self.root))
+        self.assertIn("sources/дубль.md", mechanical.dirty(self.root))
 
     def test_a_renamed_path_names_both_of_its_sides(self):
         """У переименования две записи подряд, и вторая приходит голой, без
@@ -226,7 +226,7 @@ class TestDirtyPaths(unittest.TestCase):
                  "core/people/items/anna2.md")
         self.assertLessEqual(
             {"core/people/items/anna.md", "core/people/items/anna2.md"},
-            mechanical._dirty(self.root))
+            mechanical.dirty(self.root))
 
     def test_a_tree_without_git_refuses_instead_of_rewriting_itself(self):
         """Пустое множество грязных путей здесь значило бы «всё чисто» —
@@ -234,7 +234,7 @@ class TestDirtyPaths(unittest.TestCase):
         о котором ничего не знает (незыблемое №4)."""
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(RuntimeError):
-                mechanical._dirty(tmp)
+                mechanical.dirty(tmp)
 
 
 class TestSurfaceIsTheOnlyDefinitionOfForm(unittest.TestCase):

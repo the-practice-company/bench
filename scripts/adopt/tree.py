@@ -35,8 +35,16 @@ BASE_FILE = "adopt-base"
 TOUCHED_FILE = "adopt-touched"
 
 
-def git(root, *args):
-    return subprocess.run(["git", *args], cwd=str(root),
+def git(root, *args, env=None):
+    """Ход git в корне. `env` — среда целиком, а не добавка к текущей.
+
+    Нужна она ровно одному вызывающему: MAINTAIN пиннит дату собственного
+    коммита через `GIT_AUTHOR_DATE`/`GIT_COMMITTER_DATE`, потому что дату
+    этого коммита слой спроса потом читает обратно. Смысл ключей живёт у
+    вызывающего: обёртка, дописывающая дату сама, решала бы за ADOPT, чем
+    датировать его коммиты, а ADOPT датирует их часами машины по делу.
+    """
+    return subprocess.run(["git", *args], cwd=str(root), env=env,
                           capture_output=True, text=True)
 
 

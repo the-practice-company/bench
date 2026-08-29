@@ -37,8 +37,12 @@ SCAFFOLD = ROOT / "scaffold"
 CLAUDE = "CLAUDE.md"
 
 
-def _dirty(root):
+def dirty(root):
     """Пути с незакоммиченными изменениями. Их MAINTAIN не трогает.
+
+    Публично, потому что спрашивают двое: этот слой — чтобы не переписать
+    работу человека, и `run` — чтобы сравнить дерево до и после прогона.
+    Второй разбор `git status` разошёлся бы с первым молча.
 
     Три подробности вызова, каждая с ценой бездействия.
 
@@ -93,12 +97,12 @@ def _whole_files():
     return out
 
 
-def _restore_whole(root, dirty, fixed, skipped):
+def _restore_whole(root, dirty_paths, fixed, skipped):
     for rel, reference in _whole_files():
         target = root / rel
         if target.exists() and target.read_bytes() == reference.read_bytes():
             continue
-        if rel in dirty:
+        if rel in dirty_paths:
             skipped.append(rel)
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -106,7 +110,7 @@ def _restore_whole(root, dirty, fixed, skipped):
         fixed.append(rel)
 
 
-def _restore_sections(root, dirty, fixed, skipped):
+def _restore_sections(root, dirty_paths, fixed, skipped):
     """Форм-секции `CLAUDE.md` — по секции, а не файлом.
 
     Файлом нельзя: в том же файле стоит описание домена, и оно авторское.
@@ -129,7 +133,7 @@ def _restore_sections(root, dirty, fixed, skipped):
             changed = surface.replace_section(changed, title, want)
     if changed == text:
         return
-    if CLAUDE in dirty:
+    if CLAUDE in dirty_paths:
         skipped.append(CLAUDE)
         return
     path.write_text(changed, encoding="utf-8")
@@ -155,11 +159,11 @@ def run(root):
     отчёт рос бы от любой правки рядом.
     """
     root = Path(root)
-    dirty = _dirty(root)
+    dirty_paths = dirty(root)
     fixed, skipped = [], []
 
-    _restore_whole(root, dirty, fixed, skipped)
-    _restore_sections(root, dirty, fixed, skipped)
+    _restore_whole(root, dirty_paths, fixed, skipped)
+    _restore_sections(root, dirty_paths, fixed, skipped)
 
     findings = list(check_links.scan(root).findings)
     findings.extend(check_frontmatter.scan(root).findings)

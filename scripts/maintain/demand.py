@@ -49,7 +49,7 @@ def _git_out(root, *args):
     Каждый вопрос этого слоя к git — вопрос о дате. Отказ git, прочитанный
     как пустой ответ, дал бы `no-commit` по неотличимой причине: так же
     выглядел бы путь, которого в истории нет (незыблемое №4). Тот же приём,
-    что у `structural._git_out` и `mechanical._dirty`.
+    что у `structural._git_out` и `mechanical.dirty`.
     """
     proc = tree.git(root, *args)
     if proc.returncode != 0:
