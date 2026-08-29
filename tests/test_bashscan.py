@@ -172,6 +172,12 @@ class TestDirectWriteIntoContent(unittest.TestCase):
         """Сравнение по сегменту и здесь: `areasx/` — не зона."""
         self.assertFalse(bashscan.judge("echo x > areasx/a.md").blocked)
 
+    def test_noclobber_override_is_still_a_write(self):
+        """`>|` — то же перенаправление, только поверх запрета затирания.
+        Его `|` не конвейер, и разделителем считать его нельзя."""
+        for line in ("echo x >| areas/a.md", "echo x >|areas/a.md"):
+            self.assertTrue(bashscan.judge(line).blocked, line)
+
     def test_redirection_inside_quotes_is_not_a_write(self):
         self.assertFalse(bashscan.judge("echo 'x > areas/a.md'").blocked)
 
@@ -248,6 +254,15 @@ class TestDeleteInsideTheContentTree(unittest.TestCase):
         for line in ("rm tmp/черновик.md", "rm -rf tmp/", "rm inbox/дамп.txt"):
             self.assertFalse(bashscan.judge(line).blocked, line)
 
+    def test_every_non_transient_zone_is_guarded(self):
+        """Предикат, а не список: сторожится всё, что не транзитно. Зона,
+        добавленная в таблицу завтра, сторожится сама собой — список пришлось
+        бы вспоминать, а `decisions` в нём один раз уже забыли."""
+        for zone in bashscan.zones.ZONES:
+            line = "rm %s/файл.md" % zone
+            guarded = zone not in bashscan.zones.TRANSIENT
+            self.assertEqual(bashscan.judge(line).blocked, guarded, line)
+
     def test_delete_of_an_unclassifiable_path_is_allowed(self):
         """Путь, чью зону прочитать нечем, — не повод блокировать."""
         for line in ("rm build.log", "rm *.md", "rm -rf /tmp/сборка",
@@ -266,6 +281,45 @@ class TestDeleteInsideTheContentTree(unittest.TestCase):
         reason = bashscan.judge("rm areas/a.md").reason
         self.assertIn("find-refs", reason)
         self.assertIn("автор", reason)
+
+
+class TestWorkingDirectory(unittest.TestCase):
+    """Переход в зону и работа по имени файла — накатанная форма, а не уловка:
+    так пишут, когда возятся с одной папкой. Отслеживается только литеральный
+    `cd`: переход через переменную зоны не даёт, и догадываться сканер
+    не станет."""
+
+    def test_delete_after_a_literal_cd_into_a_guarded_zone_is_blocked(self):
+        for line in ("cd areas && rm a.md", "cd areas/hiring; rm заметка.md",
+                     "cd projects && rm -rf старый", "cd areas && rm *.md"):
+            self.assertTrue(bashscan.judge(line).blocked, line)
+
+    def test_write_after_a_literal_cd_into_a_guarded_zone_is_blocked(self):
+        self.assertTrue(bashscan.judge("cd areas && echo x > заметка.md").blocked)
+
+    def test_delete_after_a_cd_into_a_transient_zone_is_allowed(self):
+        for line in ("cd tmp && rm x.md", "cd inbox; rm дамп.txt",
+                     "cd tmp && echo x > out.txt"):
+            self.assertFalse(bashscan.judge(line).blocked, line)
+
+    def test_an_unreadable_cd_gives_no_zone(self):
+        """`cd` в переменную или подстановку — не зона. Гадать нельзя:
+        блок по угаданному каталогу и есть ложный блок."""
+        for line in ("cd $HOME && rm a.md", 'cd "$(pwd)" && rm a.md',
+                     "cd .. && rm a.md", "cd docs && rm a.md",
+                     "cd && rm a.md"):
+            self.assertFalse(bashscan.judge(line).blocked, line)
+
+    def test_the_last_cd_wins(self):
+        self.assertFalse(bashscan.judge("cd areas && cd tmp && rm x.md").blocked)
+        self.assertTrue(bashscan.judge("cd tmp && cd areas && rm x.md").blocked)
+
+    def test_a_path_leaving_the_directory_is_not_judged_by_it(self):
+        """После `cd` в зону абсолютный путь и путь вверх ведут не в неё:
+        судить их по каталогу перехода значило бы блокировать чужое."""
+        for line in ("cd areas && rm /tmp/сборка", "cd areas && rm ../соседний.md",
+                     "cd areas && git diff > /tmp/diff.txt"):
+            self.assertFalse(bashscan.judge(line).blocked, line)
 
 
 class TestWritingIntoAReadOnlyZone(unittest.TestCase):
@@ -319,7 +373,7 @@ class TestUncatchableIsHonest(unittest.TestCase):
                      "M=mv; $M areas/a.md areas/b.md",
                      "busybox mv areas/a.md areas/b.md",
                      "rsync --remove-source-files areas/a.md tmp/",
-                     "cd areas && rm a.md",
+                     "cd $ЗОНА && rm a.md",
                      "echo x > /Users/кто-то/репозиторий/areas/a.md",
                      "sh <<EOF\nmv areas/a.md areas/b.md\nEOF"):
             self.assertFalse(bashscan.judge(line).blocked, line)
@@ -331,7 +385,7 @@ class TestUncatchableIsHonest(unittest.TestCase):
         text = " ".join(bashscan.UNCATCHABLE)
         for word in ("python", "eval", "bash -c", "cp", "tee", "sed -i",
                      "имя команды в кавычках", "значение опции", "here-doc",
-                     "переменной", "мультикоманд", "rsync", "текущий каталог",
+                     "переменной", "мультикоманд", "rsync", "литерального cd",
                      "абсолютному пути", "функцию оболочки"):
             self.assertIn(word, text)
 

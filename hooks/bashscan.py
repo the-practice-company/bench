@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 """Сканер команды Bash: что блокируем в терминале и что честно не ловим.
 
-Две поломки, ради которых он существует (секция 4 спеки волны 2):
+Три поломки, ради которых он существует (секция 4 спеки волны 2):
 
 1. Перемещение мимо цепочки `find-refs → rewrite-refs → move` ломает все
    входящие ссылки на файл разом: они остаются на старом пути и никуда
    не ведут. Это поломка, а не вопрос вкуса, поэтому голое `mv` блокируется.
-2. Прямая запись в дерево контента минует `PostToolUse`: гейты по файлу
+2. Удаление ломает ровно то же самое: ссылки остаются на пути, которого
+   больше нет. Отличие одно — блокируется по зоне, а не всегда: в зонах,
+   чьё содержимое исчезает по построению, чистка и есть назначение.
+3. Прямая запись в дерево контента минует `PostToolUse`: гейты по файлу
    не отработают, и в списке файлов хода его не будет, поэтому `Stop` сочтёт
    поломку чужой и не заблокирует ход.
 
 Разбор посимвольный: `echo 'mv a b'` — не перемещение. Пути сравниваются
 по сегменту, а не по префиксу строки, иначе гейт краснеет на невинных именах,
-и его учатся обходить.
+и его учатся обходить. Вердикт один на все зоны, а текст отказа свой у каждой:
+совет взять инструмент записи в чужом сабмодуле был бы советом сделать
+запрещённое.
 
 **Это бэкстоп против случайности, а не песочница против намерения.** Читается
 только текст команды; всё, что мимо, названо в `UNCATCHABLE` поимённо.
@@ -48,14 +53,17 @@ def _forms(catalogue):
 _MOVE_COMMANDS, _GIT_MOVE = _forms(BLOCKED)
 _DELETE_COMMANDS, _GIT_DELETE = _forms(DELETES)
 
-# Сырьё: неизменяемость держит доказуемость всего производного знания,
-# поэтому правка и удаление здесь — поломка, а не нарушение конвенции.
+# Сырьё. В приговоре не участвует: сторожится оно наравне с остальными
+# нетранзитными зонами. Названо здесь только ради текста отказа — причина
+# у него своя, а вердикт общий.
 _IMMUTABLE_RAW = frozenset({"sources"})
 
-# Зоны, где правка и удаление мимо инструментов ломают чужие ссылки или
-# доказуемость. Транзитные не сторожатся: чистка стола — его назначение,
-# и блок там был бы ложным.
-_GUARDED = frozenset(zones.LONG_LIVED | _IMMUTABLE_RAW)
+# Путь, который уводит из каталога перехода: судить его по этому каталогу
+# нельзя, потому что он не в нём.
+_LEAVES_DIRECTORY = ("/", "..")
+
+# Аргумент, который раскрывает оболочка: зоны из него не прочитать.
+_UNREADABLE_ARG = re.compile(r"[$*?~]")
 
 # Явный список неперехватываемого — часть поставки, а не оговорка. Каждая
 # строка проверена тестом `TestUncatchableIsHonest`: запись «не ловим»,
@@ -64,8 +72,9 @@ _GUARDED = frozenset(zones.LONG_LIVED | _IMMUTABLE_RAW)
 UNCATCHABLE = (
     "удаление и перемещение через python-скрипт, запущенный из Bash",
     "перемещение наружу репозитория редактором или файловым менеджером",
-    "удаление по пути, чью зону нечем прочитать: переход в зону, а следом "
-    "удаление по имени файла — текущий каталог сканеру не виден",
+    "удаление по пути, чью зону нечем прочитать: каталог перехода виден "
+    "только у литерального cd — переход через переменную или подстановку "
+    "раскрывает оболочка, и зоны из него не достать",
     "eval со строкой, собранной во время исполнения",
     "перемещение внутри строки, отданной в bash -c или sh -c, и внутри тела "
     "here-doc, отданного оболочке: и то и другое гасится как данные",
@@ -114,7 +123,7 @@ _REDIRECT = re.compile(r"\d*>>?\|?\s*([^\s>|;&()]+)")
 
 # Перенаправление, стоящее перед командой, — не команда. Голый оператор
 # съедает и следующий токен: это его цель, а не имя команды.
-_FD_DUP = re.compile(r"(?<=>)&")
+_AFTER_REDIRECT = re.compile(r"(?<=>)[&|]")
 _REDIRECT_BARE = re.compile(r"^\d*(?:>>?|<)\|?$")
 _REDIRECT_GLUED = re.compile(r"^\d*(?:>>?|<)\|?\S+$")
 
@@ -252,11 +261,11 @@ def _strip_heredocs(text):
 def _clean(text):
     """Команда без того, что командой не является: тел here-doc и кавычек.
 
-    Заодно гасится `&` в дублировании дескриптора: в `2>&1` это не фоновый
-    запуск, и разделителем его считать нельзя — иначе следующая за ним
-    команда начинает новый сегмент с обломка `1`.
+    Заодно гасятся `&` и `|` сразу за `>`: в `2>&1` это не фоновый запуск,
+    а в `>|` не конвейер. Считать их разделителями нельзя — следующий
+    сегмент начался бы с обломка, и команда за ним осталась бы неразобранной.
     """
-    return _FD_DUP.sub(" ", _strip_quoted(_strip_heredocs(text)))
+    return _AFTER_REDIRECT.sub(" ", _strip_quoted(_strip_heredocs(text)))
 
 
 def _segments(line):
@@ -350,17 +359,55 @@ def touches_zone(line, zone_names):
     return False
 
 
-def _written_into_content(line):
-    """Цель перенаправления, попадающая в сторожимую зону, или None.
+def _is_guarded(zone):
+    """Зона, где правка и удаление ломают чужие ссылки.
 
-    Сторожатся долгоживущие зоны — те, на которые ссылаются, — и сырьё,
-    чью неизменяемость держит доказуемость производного знания. Транзитные
-    не сторожатся: их содержимое исчезает по построению, ссылок на него нет.
+    Сторожится всё, что не транзитно. Транзитные зоны — ровно те, чьё
+    содержимое исчезает по построению: ссылаться там не на что, а чистка
+    и есть их назначение, так что блок был бы ложным.
+
+    Предикат, а не список: зона, добавленная в таблицу завтра, начинает
+    сторожиться сама собой. Список пришлось бы вспоминать — и один раз
+    в нём уже забыли зону решений.
     """
-    for target in _REDIRECT.findall(_clean(line)):
-        if touches_zone(target, _GUARDED):
-            return target
+    return zone in zones.ZONES and zone not in zones.TRANSIENT
+
+
+def _zone_of_target(token, cwd_zone):
+    """Зона пути, при нужде — по каталогу литерального `cd` перед ним.
+
+    Путь, уводящий из этого каталога — абсолютный или через `..`, — по нему
+    не судится: он не в нём.
+    """
+    zone = _first_segment(token)
+    if zone in zones.ZONES:
+        return zone
+    if token.startswith(_LEAVES_DIRECTORY):
+        return None
+    return cwd_zone
+
+
+def _written_into(text, cwd_zone):
+    """Цель перенаправления, попадающая в сторожимую зону, и её зона."""
+    for target in _REDIRECT.findall(_clean(text)):
+        zone = _zone_of_target(target, cwd_zone)
+        if _is_guarded(zone):
+            return target, zone
     return None
+
+
+def _cd_zone(rest):
+    """Зона, в которую уводит литеральный `cd`, или None.
+
+    Только литеральный аргумент: `cd` в переменную или в подстановку зоны
+    не даёт. Догадываться нельзя — блок по угаданному каталогу и есть
+    ложный блок, а он учит обходить гейт.
+    """
+    args = [token for token in rest if not token.startswith("-")]
+    if len(args) != 1 or _UNREADABLE_ARG.search(args[0]):
+        return None
+    zone = _first_segment(args[0])
+    return zone if zone in zones.ZONES else None
 
 
 def _exec_commands(tokens):
@@ -376,19 +423,21 @@ def _exec_commands(tokens):
     return out
 
 
-def _candidates(tokens):
-    """Команды сегмента: своя голова и всё, что запущено через `-exec`.
+def _zone_verdict(zone, token, in_zone_reason):
+    """Отказ по зоне. Вердикт общий, текст — свой у каждой из трёх.
 
-    Третий элемент — токены, среди которых ищется зона: у головы это её
-    собственные аргументы, у команды из `-exec` — весь вызов find.
+    Совет «возьми инструмент записи» в чужом сабмодуле и разговор о
+    подтверждении автора в неизменяемом сырье были бы советами сделать
+    запрещённое, поэтому текст выбирается зоной, а не одной строкой на всех.
     """
-    name, rest = _head(tokens)
-    out = [] if name is None else [(name, rest, rest)]
-    out.extend(_exec_commands(tokens))
-    return out
+    if zone in zones.READ_ONLY:
+        return Verdict(True, _READONLY_REASON % token)
+    if zone in _IMMUTABLE_RAW:
+        return Verdict(True, _RAW_REASON)
+    return Verdict(True, in_zone_reason)
 
 
-def _delete_verdict(pool):
+def _delete_verdict(pool, cwd_zone):
     """Приговор удалению: по зоне пути, а не по самой команде.
 
     Путь, чью зону прочитать нечем, блоком не наказывается: блокировать
@@ -397,50 +446,52 @@ def _delete_verdict(pool):
     for token in pool:
         if token.startswith("-"):
             continue
-        zone = _first_segment(token)
-        if zone in zones.READ_ONLY:
-            return Verdict(True, _READONLY_REASON % token)
-        if zone in _IMMUTABLE_RAW:
-            return Verdict(True, _RAW_REASON)
-        if zone in zones.LONG_LIVED:
-            return Verdict(True, _DELETE_REASON)
+        zone = _zone_of_target(token, cwd_zone)
+        if _is_guarded(zone):
+            return _zone_verdict(zone, token, _DELETE_REASON)
     return None
 
 
-def _verdict_for(name, rest, pool):
+def _verdict_for(name, rest, pool, cwd_zone):
     """Приговор одной команде или None, если она не из закрытых множеств."""
     simple = _basename(name)
     if simple in _MOVE_COMMANDS:
         return Verdict(True, _MOVE_REASON)
     if simple in _DELETE_COMMANDS:
-        return _delete_verdict(pool)
+        return _delete_verdict(pool, cwd_zone)
     if simple == "git":
         subcommand = _git_subcommand(rest)
         if subcommand in _GIT_MOVE:
             return Verdict(True, _MOVE_REASON)
         if subcommand in _GIT_DELETE:
-            return _delete_verdict(pool)
+            return _delete_verdict(pool, cwd_zone)
     return None
 
 
 def judge(line):
     """Блокировать ли команду. В причине — имя правильного пути."""
+    cwd_zone = None
     for segment in _segments(line):
         tokens = segment.split()
         if "--help" in tokens:
             # Справка ничего не двигает, а ложный блок на безобидной команде
             # учит обходить гейт целиком.
             continue
-        for name, rest, pool in _candidates(tokens):
-            verdict = _verdict_for(name, rest, pool)
+        name, rest = _head(tokens)
+        # Третий элемент — токены, среди которых ищется зона: у головы это
+        # её собственные аргументы, у команды из `-exec` — весь вызов find.
+        candidates = [] if name is None else [(name, rest, rest)]
+        candidates.extend(_exec_commands(tokens))
+        for candidate, candidate_rest, pool in candidates:
+            verdict = _verdict_for(candidate, candidate_rest, pool, cwd_zone)
             if verdict is not None:
                 return verdict
-    target = _written_into_content(line)
-    if target is not None:
-        zone = _first_segment(target)
-        if zone in zones.READ_ONLY:
-            return Verdict(True, _READONLY_REASON % target)
-        if zone in _IMMUTABLE_RAW:
-            return Verdict(True, _RAW_REASON)
-        return Verdict(True, _WRITE_REASON % target)
+        written = _written_into(segment, cwd_zone)
+        if written is not None:
+            target, zone = written
+            return _zone_verdict(zone, target, _WRITE_REASON % target)
+        if name is not None and _basename(name) == "cd":
+            # Неразобранный переход обнуляет каталог, а не сохраняет прежний:
+            # после него неизвестно, где мы, и это честнее догадки.
+            cwd_zone = _cd_zone(rest)
     return Verdict(False)
