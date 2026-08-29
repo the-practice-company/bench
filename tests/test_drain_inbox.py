@@ -47,7 +47,7 @@ from pathlib import Path
 from scripts.adopt import drop, init_tree, move, refs, rewrite_refs, tree
 from scripts.adopt import plan as adopt_plan
 from scripts.findings import EXIT_OK, EXIT_VIOLATION
-from scripts.maintain import backfill
+from scripts.maintain import backfill, field_map
 from tests.maintain_fixture import materialise
 
 JOURNAL = "areas/work/journal"
@@ -59,8 +59,8 @@ PLAN = "tmp/drain-plan.md"
 LINKER = "%s/README.md" % JOURNAL
 LINK = "[[inbox/2026-08-26-встреча]]"
 LINK_LINE = "Захват про эту планёрку лежит в %s." % LINK
-MOVED_LINK_LINE = ("Захват про эту планёрку лежит в "
-                   "[[%s/items/2026-08-26-встреча]]." % JOURNAL)
+MOVED_LINK = "[[%s/items/2026-08-26-встреча]]" % JOURNAL
+MOVED_LINK_LINE = "Захват про эту планёрку лежит в %s." % MOVED_LINK
 
 # Четыре захвата — по одному на исход §6. Дата в имени у каждого: §6 её
 # гарантирует, и на ней стоит восстановление `created`.
@@ -339,10 +339,21 @@ class TestFourOutcomesOnOneInbox(unittest.TestCase):
         вовсе, и «переписано 0» выглядело бы успехом."""
         self.assertEqual(self.pointing[RECORD],
                          [(LINKER, self.link_line, "wikilink", LINK)])
+        table = field_map.name("rewrite-refs", (RECORD, RECORD_TARGET),
+                               field_map.REFS)
         self.assertEqual(self.steps["rewrite-record"],
                          ("ссылок переписано: 1\nголых ссылок оставлено: 0\n"
-                          "файлов затронуто: 1\nmarkdown-ссылок не тронуто: 0\n",
+                          "файлов затронуто: 1\nmarkdown-ссылок не тронуто: 0\n"
+                          "таблица: %s\n" % table,
                           EXIT_OK))
+        # Правка ссылок — массовая мутация и здесь, и таблица её называет
+        # поимённо: счётчик «переписано 1» не говорит, что именно.
+        self.assertEqual((self.root / table).read_text(encoding="utf-8"),
+                         "\n".join([
+                             "\t".join(field_map.REF_COLUMNS),
+                             "%s\t%d\t%s\t%s\t%s -> %s"
+                             % (LINKER, self.link_line, LINK, MOVED_LINK,
+                                RECORD, RECORD_TARGET)]) + "\n")
         self.assertEqual(self.text(LINKER).split("\n")[self.link_line - 1],
                          MOVED_LINK_LINE)
 

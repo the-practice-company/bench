@@ -247,19 +247,16 @@ def run_silently(root, collection, field):
 def write_table(root, collection, field, rows):
     """Положить таблицу мутации в `tmp/`. Возвращает путь от корня.
 
-    Первый и единственный производитель формата в пакете: `field_map.name` и
+    Первый потребитель формата в пакете: `field_map.name` и
     `field_map.render` до этой двери не звал никто, и формат массовой
     мутации был описан, проверен и не производился ничем.
 
-    Кого таблица описывает, решает вызывающий. Строка `deferred` в ней
-    законна — это исход, а не пропуск; таблицы нет только там, где не
-    записано ни байта и записать было нечего.
+    Имя, каталог и запись — у `field_map.write`, одни на обе таблицы:
+    вторая копия этих трёх строк разошлась бы с первой на первом же правиле
+    про имя. Здесь остаётся ровно то, что знает только `backfill`, — как
+    зовётся его операция и из чего складываются её аргументы.
     """
-    rel = field_map.name("backfill", (collection, field))
-    path = Path(root) / rel
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(field_map.render(rows), encoding="utf-8")
-    return rel
+    return field_map.write(root, "backfill", (collection, field), rows)
 
 
 _UNESTABLISHED = "множество записей не установлено: %s"

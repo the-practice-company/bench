@@ -74,7 +74,10 @@ stops on its own step 2.
 1. `find-refs` — who points at this path today. References first, the path
    second: the rewriter reads the tree as it stands, and a path that has
    already travelled is a path it can no longer find.
-2. `rewrite-refs` — the references, against the plan.
+2. `rewrite-refs` — the references, against the plan. It is a mass mutation,
+   so it leaves a machine table in `tmp/` naming every rewrite, and every
+   reference it did not rewrite carries a token saying why. A reference it can
+   neither rewrite nor explain fails the run.
 3. `move` — the path itself, against the plan. For a rejected item, `drop`
    instead: the file leaves the tree and stays in the history.
 4. `backfill` for the collection it landed in, if a field is missing there.

@@ -13,12 +13,20 @@ import unittest
 from pathlib import Path
 
 from scripts import check_links
-from scripts.adopt import init_tree, move, rewrite_refs, tree
+from scripts.adopt import init_tree, move, refs, rewrite_refs, tree
 from scripts.findings import EXIT_OK, EXIT_VIOLATION
+from scripts.maintain import field_map
 from tests.foreign import committer, materialise
 from tests.test_read_plan import TOTAL, write_plan
 
 ROOT = Path(__file__).resolve().parent.parent
+
+SHORTFALL = "ссылка ожидалась в таблице и её там нет, объяснения тоже"
+AGREED = "notes -> areas/work/notes"
+
+
+def places(findings):
+    return sorted((f.path, f.line, f.cls, f.detail) for f in findings)
 
 # TOTAL не переименовывает ни одного файла, а голая форма ссылки правится
 # только переименованием: переезд каталога basename не меняет, и ветка
@@ -222,6 +230,162 @@ class TestMarkdownLinks(Prepared):
         self.assertIn("markdown-ссылок не тронуто: 1", report)
         self.assertIn("ссылок переписано: 0", report)
         self.assertIn("(journal/2026-01-04.md)", self.readme())
+
+
+class TestTheTable(Prepared):
+    """Критерий 5, первая половина: машинная таблица массовой мутации.
+
+    Четыре счётчика отвечали на вопрос «сколько», а §20 спрашивает «что и во
+    скольких файлах»: поимённо счётчик не называет ни одной правки, и
+    сходимость до таблицы держал один инвариант «R до = R после».
+    """
+
+    TABLE = "tmp/ref-map-rewrite-refs-notes-areas-work-notes.tsv"
+
+    def rewrite(self):
+        return rewrite_refs.run(self.root, "notes", "areas/work/notes",
+                                self.plan)
+
+    def table(self):
+        return (self.root / self.TABLE).read_text(encoding="utf-8")
+
+    def test_the_table_lands_in_tmp_and_names_every_rewrite(self):
+        self.readme("Встреча [[notes/meeting]], она же ![[notes/meeting#Итоги]].\n")
+        report, code = self.rewrite()
+        self.assertEqual(code, EXIT_OK, report)
+        self.assertEqual(self.table(), "\n".join([
+            "\t".join(field_map.REF_COLUMNS),
+            "README.md\t1\t![[notes/meeting#Итоги]]\t"
+            "![[areas/work/notes/meeting#Итоги]]\t%s" % AGREED,
+            "README.md\t1\t[[notes/meeting]]\t[[areas/work/notes/meeting]]\t%s"
+            % AGREED,
+        ]) + "\n")
+        self.assertIn("таблица: %s" % self.TABLE, report)
+
+    def test_the_name_of_the_table_carries_no_date(self):
+        """Метка времени вернула бы часы и сломала побайтовую
+        воспроизводимость: имя выводится из операции и её аргументов."""
+        self.plant_path_form()
+        self.rewrite()
+        names = sorted(p.name for p in (self.root / "tmp").glob("*-map-*"))
+        self.assertEqual(names, ["ref-map-rewrite-refs-notes-areas-work-notes.tsv"])
+
+    def test_a_run_that_rewrote_nothing_still_leaves_a_table(self):
+        """«Правок ноль» и «мутации не было» обязаны различаться на диске:
+        таблица — запись о состоявшейся мутации, а не о непустой."""
+        self.readme("Ничего про заметки тут нет.\n")
+        report, code = self.rewrite()
+        self.assertEqual(code, EXIT_OK, report)
+        self.assertEqual(self.table(), "\t".join(field_map.REF_COLUMNS) + "\n")
+
+    def test_a_refused_run_leaves_no_table_at_all(self):
+        """Отказ мутацией не является, и таблица про него солгала бы."""
+        report, code = rewrite_refs.run(self.root, "state.md", "core/state.md",
+                                        self.plan)
+        self.assertEqual(code, EXIT_VIOLATION, report)
+        self.assertEqual(sorted((self.root / "tmp").glob("*-map-*")), [])
+
+    def test_two_identical_links_on_one_line_are_one_row_and_one_edit(self):
+        """Правит их `_applied` одной инструкцией — словарём по тексту
+        ссылки, — и различить их между собой нечем: колонки у вхождения нет.
+        Вторая строка таблицы описывала бы ту же правку дважды."""
+        self.readme("[[notes/meeting]] и снова [[notes/meeting]]\n")
+        report, code = self.rewrite()
+        self.assertEqual(code, EXIT_OK, report)
+        self.assertEqual(self.table(), "\n".join([
+            "\t".join(field_map.REF_COLUMNS),
+            "README.md\t1\t[[notes/meeting]]\t[[areas/work/notes/meeting]]\t%s"
+            % AGREED,
+        ]) + "\n")
+        self.assertEqual(self.readme(),
+                         "[[areas/work/notes/meeting]] и снова "
+                         "[[areas/work/notes/meeting]]\n")
+
+
+class TestTheCounterDiff(Prepared):
+    """Критерий 5, вторая половина: дифф ожидаемого и фактического.
+
+    Ожидаемое — то, что назвал резолвер гейта по дереву **до** мутации;
+    фактическое — строки таблицы. Что это доказывает, а что нет, названо
+    вслух: обе половины берут у одного резолвера, что считать ссылкой и куда
+    она ведёт, и независимы ровно в одном — что цикл правки сделал с каждой
+    из названных. Недостача обязана нести токен из закрытого списка.
+    """
+
+    def plant(self):
+        """Три ссылки под источником, и ни одну правка не переписывает —
+        каждую по своей причине: голая (после переезда ведёт туда же),
+        markdown (§13 отдаёт её отдельной мутации), путь в backtick'ах
+        (правятся только wikilink'и)."""
+        self.readme("Встреча: [[meeting]].\n"
+                    "Дневник: [встреча](notes/meeting.md).\n"
+                    "Заметки лежат в `notes/meeting.md`.\n")
+
+    def diff(self, explained=None):
+        hits, _ = refs.find(self.root, "notes")
+        rows, kept = rewrite_refs.plan_rewrites(
+            hits, "notes", "areas/work/notes", AGREED)
+        return rows, rewrite_refs.counter_diff(
+            hits, rows.values(), kept if explained is None else explained)
+
+    def test_two_enumerations_that_agree_say_nothing(self):
+        self.plant_path_form()
+        rows, findings = self.diff()
+        self.assertEqual(sorted(rows), [("README.md", 6, "[[notes/meeting]]")])
+        self.assertEqual(places(findings), [])
+
+    def test_every_reference_the_rewriter_leaves_carries_a_token(self):
+        self.plant()
+        rows, findings = self.diff()
+        self.assertEqual(sorted(rows), [])
+        self.assertEqual(places(findings), [])
+
+    def test_without_the_token_channel_each_of_them_is_named(self):
+        """Фальсификатор третьего аргумента `reconcile` и он же
+        анти-тавтология: ожидаемое, выведенное из цикла правки, знало бы ровно
+        то же, что и таблица, — дифф зеленел бы по построению и не покраснел
+        бы уже никогда. Здесь ожидаемое называет три ссылки, которых цикл не
+        трогал вовсе, и без объяснения каждая — находка."""
+        self.plant()
+        _, findings = self.diff(explained={})
+        self.assertEqual(places(findings), [
+            ("README.md", 1, "unexplained-count", SHORTFALL),
+            ("README.md", 2, "unexplained-count", SHORTFALL),
+            ("README.md", 3, "unexplained-count", SHORTFALL),
+            # Четвёртая — своя у фикстуры: `[[meeting]]` в дневнике, тоже
+            # голая и тоже ведущая под `notes`.
+            ("journal/2026-01-04.md", 5, "unexplained-count", SHORTFALL),
+        ])
+
+    def test_every_token_belongs_to_the_closed_list(self):
+        self.plant()
+        hits, _ = refs.find(self.root, "notes")
+        _, kept = rewrite_refs.plan_rewrites(
+            hits, "notes", "areas/work/notes", AGREED)
+        self.assertEqual(
+            sorted(set(kept.values()) - set(field_map.REF_TOKENS)), [])
+        self.assertEqual(sorted(set(kept.values())),
+                         ["bare-still-resolves", "md-link", "not-a-wikilink"])
+
+
+class TestPathsThatAreNotWikilinks(Prepared):
+    """Наблюдённая поломка, ради которой заведён токен `not-a-wikilink`."""
+
+    def test_a_backtick_path_under_the_source_is_broken_by_the_move_and_named(self):
+        """Путь в backtick'ах резолвится, R его считает, переезд его ломает —
+        а правка wikilink'ов его не трогает. До таблицы отчёт не говорил про
+        него ничего: ни счётчиком, ни строкой, и R уезжала молча."""
+        self.readme("Заметки лежат в `notes/meeting.md`.\n")
+        before = self.R()
+        report, code = rewrite_refs.run(self.root, "notes", "areas/work/notes",
+                                        self.plan)
+        self.assertEqual(code, EXIT_OK, report)
+        self.assertIn("не переписано: README.md:1 `notes/meeting.md` "
+                      "(not-a-wikilink)", report)
+        report, code = move.run(self.root, "notes", "areas/work/notes",
+                                self.plan)
+        self.assertEqual(code, EXIT_OK, report)
+        self.assertEqual(self.R(), before - 1)
 
 
 class TestJournal(Prepared):

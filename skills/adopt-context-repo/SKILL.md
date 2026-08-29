@@ -61,6 +61,12 @@ additive, and without it nothing else can be undone.
    Reserved targets have their own commands — `drop` for `git-history`, `merge`
    for the two files the recipe shares with the tree — while `stay`,
    `foreign-repo` and any target carrying `?` are executed by nothing.
+   `rewrite-refs` is a mass mutation and answers as one: a machine table in
+   `tmp/` naming every rewrite by file, line and text, and a token for every
+   reference it left alone — the bare name that still leads, the markdown link
+   §13 defers to a mutation of its own, the path in backticks or in a
+   permission rule that nothing will rewrite for you. A reference it can
+   neither rewrite nor explain is a finding, and the run exits red.
 7. `check-plan` before the commit of the stage: it reads the tree against the
    commit that recorded it as found and names every path that changed outside
    an agreed line, whoever changed it.

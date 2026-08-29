@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from scripts.adopt import plan as adopt_plan
+from scripts.maintain import field_map
 from tests.foreign import materialise
 
 PLAN = "tmp/adopt-plan.md"
@@ -244,6 +245,24 @@ class TestCoverage(unittest.TestCase):
         self.assertEqual(self._cover(TOP), [
             (PLAN, 1, "uncovered-path",
              "путь не покрыт ни одной строкой: tmp/scratch.md")])
+
+    def test_the_recipes_own_mutation_table_is_not_demanded(self):
+        """Таблица массовой мутации ложится рядом с планом **после** того,
+        как план написан, и авторским путём не является.
+
+        Требовать на неё строку — требовать от автора классифицировать вывод
+        плагина, а от плагина — дописывать себе разрешение в файл согласия.
+        Наблюдалось это не рассуждением: `rewrite-refs`, положив таблицу
+        рядом с планом, отказывался на следующем же ходу цепочки — «план не
+        разобран». Соседа-автора послабление не касается, он остаётся
+        названным (тест выше).
+        """
+        self.assertEqual(self._cover(TOP), [])
+        for rel in (field_map.name("rewrite-refs", ("notes", "areas/work/notes"),
+                                   field_map.REFS),
+                    field_map.name("backfill", ("areas/work/journal", "created"))):
+            (self.root / rel).write_text("path\n", encoding="utf-8")
+        self.assertEqual(self._cover(TOP), [])
 
     def test_an_unmentioned_directory_is_reported_once_at_its_top(self):
         """Отчёт называет самый мелкий непокрытый путь, а не все 733 под ним:

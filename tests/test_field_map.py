@@ -19,6 +19,17 @@ ROWS = (
 )
 
 
+# Строки таблицы ссылок: та же дисциплина TSV, другие колонки. Порядок
+# обратный сортировке намеренно — на отсортированном входе утверждение о
+# сортировке проходит и без сортировки.
+REF_ROWS = (
+    ("README.md", 6, "[[notes/meeting]]", "[[areas/work/notes/meeting]]",
+     "notes -> areas/work/notes"),
+    ("README.md", 2, "[[notes/план]]", "[[areas/work/notes/план]]",
+     "notes -> areas/work/notes"),
+)
+
+
 class TestFormat(unittest.TestCase):
     def test_the_columns_are_these_in_this_order(self):
         self.assertEqual(list(field_map.COLUMNS),
@@ -131,6 +142,121 @@ class TestCounts(unittest.TestCase):
         self.assertEqual(list(field_map.TOKENS),
                          ["undecodable", "unparseable-frontmatter",
                           "not-a-record", "dirty-path"])
+
+
+class TestTheReferenceTable(unittest.TestCase):
+    """Переписанная ссылка — не значение поля, и колонки у неё свои.
+
+    Происхождения (`computed` / `synthetic` / `deferred`) у неё нет вовсе:
+    её не восстанавливало правило, её перенесла согласованная строка плана.
+    Втащить ссылку в чужой словарь ради переиспользования функции значило бы
+    получить таблицу, у которой врёт колонка, — это хуже честного счётчика.
+    Разное здесь — данные (колонки, ключ, словари, токены), одинаковое —
+    проверка: второй рендер с теми же четырьмя отказами разошёлся бы с этим
+    на первом же новом правиле.
+    """
+
+    def test_the_columns_are_these_in_this_order(self):
+        self.assertEqual(list(field_map.REF_COLUMNS),
+                         ["path", "line", "before", "after", "plan"])
+
+    def test_the_table_is_tsv_sorted_by_path_and_line_with_a_header(self):
+        text = field_map.render(REF_ROWS, field_map.REFS)
+        lines = text.rstrip("\n").split("\n")
+        self.assertEqual(lines[0], "\t".join(field_map.REF_COLUMNS))
+        self.assertEqual([l.split("\t")[1] for l in lines[1:]], ["2", "6"])
+        self.assertEqual(
+            lines[1],
+            "README.md\t2\t[[notes/план]]\t[[areas/work/notes/план]]\t"
+            "notes -> areas/work/notes")
+
+    def test_the_name_carries_the_shape_and_never_a_date(self):
+        name = field_map.name("rewrite-refs", ("notes", "areas/work/notes"),
+                              field_map.REFS)
+        self.assertEqual(
+            name, "tmp/ref-map-rewrite-refs-notes-areas-work-notes.tsv")
+        self.assertNotRegex(name, r"\d{4}-\d{2}-\d{2}")
+
+    def test_no_absolute_path_can_enter_it_either(self):
+        with self.assertRaises(ValueError):
+            field_map.render([("/Users/кто-то/a.md", 1, "[[x]]", "[[y]]", "p")],
+                             field_map.REFS)
+
+    def test_the_same_reference_of_the_same_line_twice_is_refused(self):
+        """Ключ строки — путь, номер строки и текст ссылки. Дважды описанная
+        одна правка — две строки, из которых читающий машиной оставит одну,
+        и какую именно, не сказано нигде."""
+        with self.assertRaises(ValueError):
+            field_map.render(
+                [("README.md", 6, "[[notes/meeting]]", "[[a/meeting]]", "p"),
+                 ("README.md", 6, "[[notes/meeting]]", "[[b/meeting]]", "p")],
+                field_map.REFS)
+
+    def test_two_different_links_on_one_line_are_two_rows(self):
+        rows = [("README.md", 6, "[[notes/meeting]]", "[[a/meeting]]", "p"),
+                ("README.md", 6, "![[notes/meeting]]", "![[a/meeting]]", "p")]
+        self.assertEqual(len(field_map.render(rows, field_map.REFS)
+                             .rstrip("\n").split("\n")), 3)
+
+    def test_a_row_of_another_width_is_refused(self):
+        with self.assertRaises(ValueError):
+            field_map.render([("README.md", 6, "[[x]]", "[[y]]")],
+                             field_map.REFS)
+
+    def test_the_closed_list_of_tokens(self):
+        self.assertEqual(list(field_map.REF_TOKENS),
+                         ["bare-still-resolves", "md-link", "not-a-wikilink"])
+
+    def test_the_origins_stay_the_vocabulary_of_the_field_table_alone(self):
+        """`ORIGINS` — словарь колонки `origin`, а колонки такой у ссылок
+        нет. Общий на две таблицы, он бы и заставил врать одну из них."""
+        self.assertEqual(field_map.FIELDS.vocabularies, {4: field_map.ORIGINS})
+        self.assertEqual(field_map.REFS.vocabularies, {})
+
+
+class TestReferenceCounts(unittest.TestCase):
+    """Дифф ссылок: находка встаёт на свою строку, а не на строку 1."""
+
+    def test_matching_units_produce_nothing(self):
+        expected = [("README.md", 6, "[[notes/meeting]]")]
+        rows = [("README.md", 6, "[[notes/meeting]]",
+                 "[[areas/work/notes/meeting]]", "notes -> areas/work/notes")]
+        self.assertEqual(
+            places(field_map.reconcile(expected, rows, {}, field_map.REFS)), [])
+
+    def test_a_shortfall_without_a_token_is_unexplained_count(self):
+        expected = [("README.md", 6, "[[notes/meeting]]")]
+        self.assertEqual(
+            places(field_map.reconcile(expected, [], {}, field_map.REFS)),
+            [("README.md", 6, "unexplained-count",
+              "ссылка ожидалась в таблице и её там нет, объяснения тоже")])
+
+    def test_a_shortfall_with_a_token_is_explained(self):
+        expected = [("README.md", 6, "[[meeting]]")]
+        explained = {("README.md", 6, "[[meeting]]"): "bare-still-resolves"}
+        self.assertEqual(
+            places(field_map.reconcile(expected, [], explained, field_map.REFS)),
+            [])
+
+    def test_a_token_of_the_other_table_does_not_explain_a_reference(self):
+        """Списки закрыты порознь: `undecodable` объясняет непрочитанную
+        запись и не говорит про ссылку ничего."""
+        expected = [("README.md", 6, "[[meeting]]")]
+        explained = {("README.md", 6, "[[meeting]]"): "undecodable"}
+        self.assertEqual(
+            places(field_map.reconcile(expected, [], explained, field_map.REFS)),
+            [("README.md", 6, "unexplained-count",
+              "ссылка ожидалась в таблице и её там нет, объяснения тоже")])
+
+    def test_a_row_for_a_reference_nobody_expected_is_a_finding_too(self):
+        """Вторая половина: правка, которую резолвер ссылкой под источник не
+        называл, — правка авторского текста мимо согласованной строки."""
+        rows = [("README.md", 6, "[[notes/meeting]]",
+                 "[[areas/work/notes/meeting]]", "notes -> areas/work/notes")]
+        self.assertEqual(
+            places(field_map.reconcile([], rows, {}, field_map.REFS)),
+            [("README.md", 6, "unexplained-count",
+              "строка в таблице есть, а такой ссылки не было")])
 
 
 class TestSilentSubstitution(unittest.TestCase):

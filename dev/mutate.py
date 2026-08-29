@@ -1515,6 +1515,72 @@ MUTATIONS = (
         ),
     ),
 
+    # Три мутации того же критерия у второго производителя формата.
+    # `rewrite-refs` волны 4 — массовая мутация по определению §20, и до
+    # таблицы её выходом были четыре счётчика: «сколько», а не «что и во
+    # скольких файлах». Слово «every» в критерии 5 держалось на одном
+    # производителе, и это было записано в roadmap как невыполненное.
+    Mutation(
+        # **Анти-тавтология, и это главная строка второго производителя.**
+        # Ожидаемое перечисляет резолвер гейта (`refs.find` → `occurrences`),
+        # а не цикл правки. Выведенное из цикла, оно знает ровно то же, что
+        # таблица: дифф зеленеет по построению и не краснеет уже никогда —
+        # ни на молча пропущенной ссылке, ни на отрезанном канале токенов.
+        criterion="в5 К5",
+        name="ожидаемое берётся из цикла правки, а не у резолвера",
+        module="tests.test_rewrite_refs",
+        expect="tests.test_rewrite_refs.TestTheCounterDiff"
+               ".test_without_the_token_channel_each_of_them_is_named",
+        steps=(
+            substitution(
+                "scripts/adopt/rewrite_refs.py",
+                "    return field_map.reconcile(expected_refs(hits), rows, "
+                "explained,\n"
+                "                               field_map.REFS)\n",
+                "    derived = {field_map.REFS.unit(row) for row in rows}\n"
+                "    return field_map.reconcile(derived | set(explained), rows,\n"
+                "                               explained, field_map.REFS)\n",
+            ),
+        ),
+    ),
+    Mutation(
+        # Молчаливый пропуск: ссылка, которую правка не переписала и не
+        # назвала токеном. Ровно то, ради чего дифф и заведён, — счётчик
+        # «голых ссылок оставлено» при этом просто уменьшается на единицу и
+        # ни о чём не говорит.
+        criterion="в5 К5",
+        name="пропущенная ссылка остаётся без объясняющего токена",
+        module="tests.test_rewrite_refs",
+        expect="tests.test_rewrite_refs.TestTheCounterDiff"
+               ".test_every_reference_the_rewriter_leaves_carries_a_token",
+        steps=(
+            substitution(
+                "scripts/adopt/rewrite_refs.py",
+                '            explained[unit] = "bare-still-resolves"\n',
+                "",
+            ),
+        ),
+    ),
+    Mutation(
+        # Отчёт называет таблицу, которой на диске нет. Мутация злее, чем
+        # «таблица не пишется»: прогон выглядит состоявшимся, строка «таблица:
+        # tmp/…» на месте, и не сходится только диск.
+        criterion="в5 К5",
+        name="таблица названа в отчёте, но не положена на диск",
+        module="tests.test_rewrite_refs",
+        expect="tests.test_rewrite_refs.TestTheTable"
+               ".test_the_table_lands_in_tmp_and_names_every_rewrite",
+        steps=(
+            substitution(
+                "scripts/adopt/rewrite_refs.py",
+                '    out.append("таблица: %s" % write_table(root, source, target, '
+                "rows.values()))\n",
+                '    out.append("таблица: %s" % field_map.name(\n'
+                '        "rewrite-refs", (source, target), field_map.REFS))\n',
+            ),
+        ),
+    ),
+
     # Инвариант 2 волны: второй прогон по тому же дереву не меняет ни байта.
     # Ни одному критерию выхода не принадлежит, метка поэтому не в форме
     # `вN КM`.
