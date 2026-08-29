@@ -17,8 +17,14 @@
 собственную законную починку вида как правку содержимого и откатывать себя
 на каждом прогоне. Исключение над перечислением остаётся ровно одно — ниже,
 и оно не про содержимое.
+
+Здесь же живёт разбор гранулярности «секция»: и тот, кто чинит форм-секцию
+`CLAUDE.md`, и тот, кто доказывает, что проза рядом уцелела, обязаны читать
+одно определение секции. Два — разошлись бы, и расхождение выглядело бы как
+законная починка, откатывающая себя на каждом прогоне.
 """
 
+import re
 import sys
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -105,3 +111,79 @@ def covers(rel, what):
         return False
     return any(_match(rel, entry.pattern.split("#")[0])
                for entry in SURFACE if entry.what == what)
+
+
+def names(rel, what):
+    """Имена, названные строкой поверхности: секции `CLAUDE.md`, ключи
+    frontmatter README коллекции, ключи слияния настроек.
+
+    Второго такого списка в пакете нет, и это не косметика. Список секций,
+    объявленный отдельно в том, кто чинит, разошёлся бы со списком в том,
+    кто доказывает «содержимое не тронуто», — и расхождение выглядело бы
+    как законная починка, откатывающая себя на каждом прогоне.
+    """
+    if _inside_a_submodule(rel):
+        return ()
+    out = []
+    for entry in SURFACE:
+        if entry.what != what:
+            continue
+        head, _, fragment = entry.pattern.partition("#")
+        if not _match(rel, head):
+            continue
+        _, _, listed = fragment.partition(":")
+        out.extend(name.strip() for name in listed.split(",") if name.strip())
+    return tuple(out)
+
+
+# Секция второго уровня. `###` сюда не попадает: `\s+` требует пробела, а
+# после `##` у вложенного заголовка стоит решётка.
+_HEADING = re.compile(r"^##\s+(.+?)\s*$", re.M)
+
+
+def _span(text, title):
+    """(начало, конец) секции вместе с заголовком, или `None`.
+
+    Границей служит следующий заголовок второго уровня, а не пустая строка:
+    секция формы — это заголовок и всё под ним до соседа, включая вложенные
+    подзаголовки.
+    """
+    matches = list(_HEADING.finditer(text))
+    for index, match in enumerate(matches):
+        if match.group(1) != title:
+            continue
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        return match.start(), end
+    return None
+
+
+def section(text, title):
+    """Секция целиком или пустая строка, если такой секции нет."""
+    span = _span(text, title)
+    return text[span[0]:span[1]] if span else ""
+
+
+def replace_section(text, title, replacement):
+    """Замена секции по индексам, а не по подстроке.
+
+    `str.replace` заменил бы первое вхождение текста секции, а оно не
+    обязано быть той самой секцией: две одинаковые таблицы в одном файле —
+    не выдумка, и вырезало бы тогда чужую.
+    """
+    span = _span(text, title)
+    if span is None:
+        return text
+    return text[:span[0]] + replacement + text[span[1]:]
+
+
+def without_sections(text, titles):
+    """Остаток файла без названных секций — то, что обязано совпасть побайтово.
+
+    Вырезание идёт **с конца**: вырезав первую секцию, спан второй сдвинулся
+    бы на её длину, и из файла ушёл бы кусок соседнего текста.
+    """
+    spans = sorted((span for span in (_span(text, t) for t in titles) if span),
+                   reverse=True)
+    for start, end in spans:
+        text = text[:start] + text[end:]
+    return text
