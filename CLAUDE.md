@@ -117,5 +117,5 @@ TDD: падающий тест раньше кода, всегда.
 | 1 | секции общей спеки | `docs/superpowers/plans/2026-08-08-wave-1-gates-and-package-check.md` |
 | 2 | `docs/superpowers/specs/2026-08-29-wave-2-hooks-design.md` | `docs/superpowers/plans/2026-08-29-wave-2-hooks.md` |
 | 3 | `docs/superpowers/specs/2026-08-29-wave-3-scaffold-and-create-design.md` | `docs/superpowers/plans/2026-08-29-wave-3-scaffold-and-create.md` |
-| 4 | `docs/superpowers/specs/2026-08-29-wave-4-adopt-design.md` | нет |
+| 4 | `docs/superpowers/specs/2026-08-29-wave-4-adopt-design.md` | `docs/superpowers/plans/2026-08-29-wave-4-adopt.md` |
 | 5 | `docs/superpowers/specs/2026-08-29-wave-5-maintain-design.md` | нет |
