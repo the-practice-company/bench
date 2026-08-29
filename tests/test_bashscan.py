@@ -173,6 +173,28 @@ class TestDirectWriteIntoContent(unittest.TestCase):
         self.assertFalse(bashscan.judge("echo 'x > areas/a.md'").blocked)
 
 
+class TestHereDocBodyIsData(unittest.TestCase):
+    """Тело here-doc — данные, а не команды. Строка `mv old.md new.md` внутри
+    документа о том, как делать нельзя, — текст, и блокировать её значит
+    запретить писать документацию про этот самый гейт."""
+
+    def test_body_is_not_scanned_for_commands(self):
+        for line in ("cat <<'EOF' > docs/note.md\nmv old.md new.md — нельзя\nEOF",
+                     "python3 - <<'PY'\nmv = 1\nprint(mv)\nPY"):
+            self.assertFalse(bashscan.judge(line).blocked, line)
+
+    def test_writing_into_content_through_a_heredoc_is_still_blocked(self):
+        """Гасится тело, а не команда: перенаправление на первой строке видно."""
+        self.assertTrue(
+            bashscan.judge("cat <<EOF > areas/a.md\nтекст\nEOF").blocked)
+
+    def test_a_shift_inside_quotes_does_not_swallow_the_rest(self):
+        """`<<` в кавычках — не ограничитель. Иначе погашенным оказался бы
+        хвост команды, и перемещение за ним прошло бы незамеченным."""
+        self.assertTrue(
+            bashscan.judge('echo "x << y"\nmv areas/a.md areas/b.md').blocked)
+
+
 class TestUncatchableIsHonest(unittest.TestCase):
     """Список неперехватываемого — обещание, а не украшение: каждая названная
     в нём форма обязана и правда проходить. Запись «не ловим», которую на самом
@@ -186,6 +208,10 @@ class TestUncatchableIsHonest(unittest.TestCase):
                      "sed -i '' s/x/y/ areas/a.md",
                      "sudo -u root mv areas/a.md areas/b.md",
                      "'mv' areas/a.md areas/b.md",
+                     "M=mv; $M areas/a.md areas/b.md",
+                     "busybox mv areas/a.md areas/b.md",
+                     "rsync --remove-source-files areas/a.md tmp/",
+                     "sh <<EOF\nmv areas/a.md areas/b.md\nEOF",
                      "find areas -name '*.md' -exec mv {} tmp/ \\;"):
             self.assertFalse(bashscan.judge(line).blocked, line)
 
@@ -195,7 +221,8 @@ class TestUncatchableIsHonest(unittest.TestCase):
         словам, чтобы вычеркнутая строка списка не осталась незамеченной."""
         text = " ".join(bashscan.UNCATCHABLE)
         for word in ("python", "eval", "bash -c", "rm", "cp", "tee", "sed -i",
-                     "find -exec", "имя команды в кавычках", "значение опции"):
+                     "find -exec", "имя команды в кавычках", "значение опции",
+                     "here-doc", "переменной", "мультикоманд", "rsync"):
             self.assertIn(word, text)
 
 
