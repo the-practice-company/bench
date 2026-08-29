@@ -1500,7 +1500,11 @@ def _archetype_behaviour(root, collection):
         commits = tree.git_lines(root, "log", "--format=%H", "--", rel)
         if len(commits) > 1:
             edits += 1
-        values = tree.git_lines(root, "log", "-S", "status:", "--format=%H",
+        # `-G`, а не `-S`: `-S` ищет изменение **числа** вхождений строки, и
+        # смена `status: open` на `status: decided` для него не изменение
+        # вовсе — вхождение как было одно, так и осталось. Измерено: на
+        # такой правке `-S` возвращает один коммит, `-G` — два.
+        values = tree.git_lines(root, "log", "-G", "^status:", "--format=%H",
                                 "--", rel)
         if len(values) > 1:
             statuses += 1
