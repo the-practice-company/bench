@@ -10,7 +10,7 @@
 |---|---|
 | `unresolved` 5 | `[[несуществующая заметка]]` в `areas/hiring/note.md`; `scripts/move.py` в `CLAUDE.md` («его нет»); `areas/hiring/items/` и `scripts/rename.py` в `.claude/rules/areas.md`; `[[projects/dup]]` в `areas/hiring/pathlink.md` — путь не существует, откат на basename запрещён |
 | `md-link-to-file` 1 | `[профиль](../../core/me.md)` |
-| `link-to-transient` 1 | `[[tmp/plan]]` из `areas` |
+| `link-to-transient` 1 | `[[tmp/plan]]` из `areas`, цель `tmp/plan.md` |
 | `escapes-root` 3 | абсолютный путь в `CLAUDE.md`, `[[../../../soseddniy-repo/file]]` и глоб `~/vault/**/*.md` в `CLAUDE.md` |
 | `ambiguous` 1 | `[[dup]]` при двух `dup.md` |
 | `dead-allow` 2 | строка без причины и строка, ничего не исключающая |
@@ -23,6 +23,11 @@ areas.md` — файл, заведённый в фикстуру с подпис
 записи лежат прямо в `areas/hiring/`, `items/` не существует. Образец в
 фикстуре есть, класс он поднимает по делу, значит число — 4. Решение записано
 в журнале как DEC-0003.
+
+Про деталь `link-to-transient`: в ней стоит разрешённая цель, а не только текст
+ссылки. Класс судится после резолва — `[[scratch]]`, единственная форма, которую
+пишет Obsidian, зоны в тексте не несёт вовсе, — и без цели в отчёте автору
+нечем понять, почему `[[scratch]]` вдруг ссылка в `tmp/`.
 
 Про `escapes-root`: абсолютный путь — backtick-токен, а токены спека читает
 только в `CLAUDE.md`, `README.md`, `SKILL.md` и `.claude/rules/*.md`. Поэтому
@@ -115,7 +120,8 @@ class TestExactFindings(unittest.TestCase):
                  "[профиль](../../core/me.md)"),
                 ("areas/hiring/note.md", 4, "unresolved", "[[несуществующая заметка]]"),
                 ("areas/hiring/pathlink.md", 6, "unresolved", "[[projects/dup]]"),
-                ("areas/hiring/transient.md", 4, "link-to-transient", "[[tmp/plan]]"),
+                ("areas/hiring/transient.md", 4, "link-to-transient",
+                 "[[tmp/plan]] → tmp/plan.md"),
                 ("sources/transcripts/items/2026-07-14-call.md", 1, "orphan",
                  "на файл никто не сослался"),
             ],

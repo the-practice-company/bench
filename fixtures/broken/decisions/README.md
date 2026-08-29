@@ -1,5 +1,5 @@
 ---
-archetype: конвейер
+archetype: pipeline
 values:
   status: [open, decided, revisited]
 ---

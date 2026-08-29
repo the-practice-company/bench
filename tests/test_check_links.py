@@ -1,11 +1,32 @@
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 from scripts.check_links import extract_links, scan
+from tests.test_fixtures import places
 
 ROOT = Path(__file__).resolve().parent.parent
 BROKEN = ROOT / "fixtures" / "broken"
 GREEN = ROOT / "fixtures" / "green"
+
+
+def _make(tmp, files):
+    """Репозиторий из перечисленных файлов: {относительный путь: текст|байты}.
+
+    Текст пишется в UTF-8, `bytes` — как есть: недекодируемый байт нужен
+    ровно в том виде, в каком он приходит из чужого экспорта.
+    """
+    root = Path(tmp)
+    for rel, content in files.items():
+        target = root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(content, bytes):
+            target.write_bytes(content)
+        else:
+            target.write_text(content, encoding="utf-8")
+    return root
 
 
 class TestExtraction(unittest.TestCase):
@@ -399,3 +420,325 @@ class TestOrphan(unittest.TestCase):
             (root / "sources" / "vendor" / "items" / "x.md").write_text(
                 "контент из игнорируемого поддерева\n", encoding="utf-8")
             self.assertEqual(scan(root).counts(), {})
+
+
+class TestTransientIsAboutTheTarget(unittest.TestCase):
+    """Слепая зона 1: класс судился по тексту ссылки, а не по её цели.
+
+    `[[scratch]]` — единственная форма, которую пишет Obsidian, — зоны
+    в тексте не несёт вовсе (`zone_of("scratch")` это None), поэтому
+    проверка молчала ровно там, где класс и нужен. Спека определяет
+    `link-to-transient` через цель: ссылка из `core`/`areas`/`projects`/
+    `knowledge` в `tmp/` или `inbox/` (секция 13).
+    """
+
+    def test_bare_wikilink_resolving_into_tmp_is_transient(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {"tmp/scratch.md": "черновик\n",
+                               "core/me.md": "см. [[scratch]]\n"})
+            self.assertEqual(
+                places(scan(root)),
+                [("core/me.md", 1, "link-to-transient",
+                  "[[scratch]] → tmp/scratch.md")])
+
+    def test_the_path_form_still_fires(self):
+        """Контроль: форма с зоной в тексте не потеряна."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {"tmp/scratch.md": "черновик\n",
+                               "core/me.md": "см. [[tmp/scratch]]\n"})
+            self.assertEqual(
+                places(scan(root)),
+                [("core/me.md", 1, "link-to-transient",
+                  "[[tmp/scratch]] → tmp/scratch.md")])
+
+    def test_ambiguity_into_a_transient_zone_reports_both_facts(self):
+        """Ссылка резолвится в два, и одно из двух — исчезающее.
+
+        Два разных факта об одной ссылке, и починка у них разная:
+        неоднозначность лечится полным путём, исчезающая цель — отказом
+        ссылаться в `tmp/`. `ambiguous` — предупреждение, само по себе оно
+        гейт не роняет; погасить им ошибку значило бы выпустить ссылку,
+        которая по построению протухнет.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {"projects/plan.md": "план\n",
+                               "tmp/plan.md": "черновик плана\n",
+                               "core/me.md": "см. [[plan]]\n"})
+            self.assertEqual(
+                places(scan(root)),
+                [("core/me.md", 1, "ambiguous",
+                  "[[plan]] → projects/plan.md, tmp/plan.md"),
+                 ("core/me.md", 1, "link-to-transient",
+                  "[[plan]] → tmp/plan.md")])
+
+    def test_naming_a_transient_zone_that_does_not_resolve_stays_transient(self):
+        """Текст называет `tmp/`, файла нет: класс прежний, не `unresolved`."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {"core/me.md": "см. [[tmp/ghost]]\n"})
+            self.assertEqual(
+                places(scan(root)),
+                [("core/me.md", 1, "link-to-transient", "[[tmp/ghost]]")])
+
+    def test_a_link_inside_the_transient_zone_is_not_a_finding(self):
+        """Контроль: класс про источник в долгоживущей зоне, а не про `tmp/`."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {"tmp/a.md": "см. [[b]]\n", "tmp/b.md": "цель\n"})
+            self.assertEqual(scan(root).counts(), {})
+
+
+class TestUndecodableByte(unittest.TestCase):
+    """Слепая зона 2: один байт уносил весь отчёт.
+
+    `check_package` починил это у себя (`errors="replace"`, «один
+    недекодируемый байт уводил файл из-под гейта целиком»), гейт ссылок
+    фикс не получил, и здесь хуже: не тихий пропуск файла, а падение без
+    отчёта и код возврата 1, которого контракт `scripts/findings.py`
+    не знает вовсе (2 или 0).
+    """
+
+    JUNK = b"---\ntype: note\n---\n\xff\xfe binary junk\n[[nowhere]]\n"
+
+    def test_the_rest_of_the_file_is_still_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {"core/me.md": self.JUNK})
+            self.assertEqual(
+                places(scan(root)),
+                [("core/me.md", 5, "unresolved", "[[nowhere]]")])
+
+    def test_the_backtick_perimeter_survives_it_too(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {"CLAUDE.md": b"\xff\xfe \x9f\n"
+                                            b"\xd0\xa1\xd0\xba\xd1\x80\xd0\xb8\xd0\xbf\xd1\x82 "
+                                            b"`scripts/move.py`\n"})
+            self.assertEqual(
+                places(scan(root)),
+                [("CLAUDE.md", 2, "unresolved", "`scripts/move.py`")])
+
+    def test_exit_code_stays_inside_the_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {"core/me.md": self.JUNK})
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "scripts" / "check_links.py"), str(root)],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("unresolved", result.stdout)
+
+
+class TestGitignoreNegation(unittest.TestCase):
+    """Слепая зона 3: `!`-строка выбрасывалась вместо применения.
+
+    Игнорируемое множество оказывалось строго шире того, что репозиторий
+    игнорирует на самом деле, — обратное тому, что обещает докстринг
+    `_ignored`. Файл, который `.gitignore` возвращает в дерево, гейт
+    не читал.
+    """
+
+    def test_a_negated_file_is_inside_the_perimeter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {".gitignore": "build/\n!build/keep.md\n",
+                               "build/keep.md": "[[nowhere]]\n",
+                               "build/drop.md": "[[nowhere]]\n"})
+            self.assertEqual(
+                places(scan(root)),
+                [("build/keep.md", 1, "unresolved", "[[nowhere]]")])
+
+    def test_a_negated_glob_returns_a_whole_shape(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {".gitignore": "build/\n!build/*.md\n",
+                               "build/keep.md": "[[nowhere]]\n"})
+            self.assertEqual(
+                places(scan(root)),
+                [("build/keep.md", 1, "unresolved", "[[nowhere]]")])
+
+    def test_without_the_negation_the_subtree_is_still_silent(self):
+        """Контроль: отрицание не открыло игнорируемое поддерево целиком."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {".gitignore": "build/\n",
+                               "build/keep.md": "[[nowhere]]\n"})
+            self.assertEqual(scan(root).counts(), {})
+
+
+class TestReferenceStyleLinks(unittest.TestCase):
+    """Слепая зона 4: определение ссылки-сноски обходило два класса.
+
+    `_MDLINK` требует `](`, а `[out]: ../../../outside.md` — документированная
+    форма markdown, дающая ту же самую цель. Мимо неё проходили и
+    `escapes-root`, и `md-link-to-file`.
+    """
+
+    def test_a_definition_above_the_root_escapes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {"core/me.md":
+                               "См. [файл][out].\n\n[out]: ../../../outside.md\n"})
+            self.assertEqual(
+                places(scan(root)),
+                [("core/me.md", 3, "escapes-root", "[out]: ../../../outside.md")])
+
+    def test_a_definition_pointing_at_a_local_file_is_the_same_class_as_inline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {"areas/hiring/note.md":
+                               "См. [профиль][me].\n\n[me]: ../../core/me.md\n",
+                               "core/me.md": "я\n"})
+            self.assertEqual(
+                places(scan(root)),
+                [("areas/hiring/note.md", 3, "md-link-to-file",
+                  "[me]: ../../core/me.md")])
+
+    def test_angle_brackets_do_not_hide_the_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {"core/me.md": "[out]: <../../../outside.md>\n"})
+            self.assertEqual(
+                places(scan(root)),
+                [("core/me.md", 1, "escapes-root", "[out]: <../../../outside.md>")])
+
+    def test_a_definition_to_a_url_is_silent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {"core/me.md":
+                               "См. [сайт][s].\n\n[s]: https://example.com \"Пример\"\n"})
+            self.assertEqual(scan(root).counts(), {})
+
+    def test_prose_that_only_looks_like_a_definition_is_not_a_link(self):
+        """Цель определения — один токен, а не фраза: `[1]: см. ниже` не ссылка."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {"core/me.md": "[1]: см. ниже, в разделе про зоны\n"})
+            self.assertEqual(scan(root).counts(), {})
+
+    def test_a_footnote_is_not_a_link_definition(self):
+        """`[^1]: Да` — примечание Obsidian: цели в нём нет, даже однословной."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {"core/me.md": "Текст[^1].\n\n[^1]: Да\n"})
+            self.assertEqual(scan(root).counts(), {})
+
+
+class TestRegistryArchetype(unittest.TestCase):
+    """Слепая зона 5: гейт ждал `archetype: реестр`, которого никто не пишет.
+
+    Закрытый словарь спеки английский — `journal` / `pipeline` / `registry`
+    (секции 9 и 28). Пока гейт сверялся с русским словом, периметр сирот
+    у любой коллекции, созданной рецептом, был пуст, и класс `orphan`
+    на живом выводе не мог сработать никогда.
+    """
+
+    README = "---\narchetype: registry\n---\n# Люди\n"
+
+    def test_registry_items_without_incoming_links_are_orphans(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {"people/README.md": self.README,
+                               "people/items/ivan.md": "---\ntype: person\n---\nИван\n"})
+            self.assertEqual(
+                places(scan(root)),
+                [("people/items/ivan.md", 1, "orphan", "на файл никто не сослался")])
+
+    def test_a_referenced_registry_item_is_not_an_orphan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {"people/README.md": self.README,
+                               "people/items/ivan.md": "---\ntype: person\n---\nИван\n",
+                               "core/hub.md": "[[people/items/ivan]]\n"})
+            self.assertEqual(scan(root).counts(), {})
+
+
+class TestAllowlistMatching(unittest.TestCase):
+    """Слепая зона 6: запись аллоулиста была голой подстрокой.
+
+    Одна буква гасила `unresolved` по всему репозиторию — и считалась
+    использованной, поэтому `dead-allow` тоже молчал. Весь аргумент спеки
+    за `dead-allow` в том, что уцелевшее исключение тихо ослабляет гейт;
+    подстрока позволяла ослабить его везде, выглядя живой.
+    """
+
+    def test_a_one_character_entry_no_longer_swallows_the_repository(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {".link-allow": "a # причина\n",
+                               "core/me.md": "[[nowhere-at-all]] и [[another-ghost]]\n"})
+            self.assertEqual(
+                places(scan(root)),
+                [(".link-allow", 1, "dead-allow",
+                  "правило ничего не исключает, удалите: a"),
+                 ("core/me.md", 1, "unresolved", "[[another-ghost]]"),
+                 ("core/me.md", 1, "unresolved", "[[nowhere-at-all]]")])
+
+    def test_a_prefix_of_the_target_no_longer_matches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {".link-allow": "nowhere # причина\n",
+                               "core/me.md": "[[nowhere-at-all]]\n"})
+            self.assertEqual(
+                places(scan(root)),
+                [(".link-allow", 1, "dead-allow",
+                  "правило ничего не исключает, удалите: nowhere"),
+                 ("core/me.md", 1, "unresolved", "[[nowhere-at-all]]")])
+
+    def test_the_whole_target_still_matches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {".link-allow": "nowhere-at-all # заметку вот-вот напишут\n",
+                               "core/me.md": "[[nowhere-at-all]]\n"})
+            self.assertEqual(scan(root).counts(), {})
+
+    def test_a_glob_entry_covers_a_shape(self):
+        """«Строка на паттерн» спеки: множество называется глобом, а не обрубком."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {".link-allow": "черновики/* # раздел ещё не написан\n",
+                               "core/me.md": "[[черновики/один]] и [[черновики/два]]\n"})
+            self.assertEqual(scan(root).counts(), {})
+
+
+class TestTokenExistenceIsCaseSensitive(unittest.TestCase):
+    """Слепая зона 7: вердикт зависел от регистра файловой системы.
+
+    `(root / token).exists()` на macOS отвечает «да» на `Scripts/Move.py`,
+    на Linux — «нет». Резолв wikilink при этом всегда был регистрозависимым
+    (поиск по словарю), то есть две половины одного гейта расходились между
+    собой. Критерий 2 — про отчёт, не зависящий от места клона; здесь то же
+    самое, только через платформу.
+    """
+
+    def test_a_token_differing_only_in_case_is_unresolved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {"scripts/move.py": "# перенос\n",
+                               "CLAUDE.md": "Скрипт `Scripts/Move.py`.\n"})
+            self.assertEqual(
+                places(scan(root)),
+                [("CLAUDE.md", 1, "unresolved", "`Scripts/Move.py`")])
+
+    def test_the_exact_case_resolves(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {"scripts/move.py": "# перенос\n",
+                               "CLAUDE.md": "Скрипт `scripts/move.py`.\n"})
+            self.assertEqual(scan(root).counts(), {})
+
+    def test_a_directory_token_resolves_by_its_exact_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {"areas/hiring/note.md": "запись\n",
+                               "CLAUDE.md": "Записи в `areas/hiring/`.\n"})
+            self.assertEqual(scan(root).counts(), {})
+
+
+class TestMultiBacktickSpan(unittest.TestCase):
+    """Слепая зона 8: двойной backtick прятал токен от обоих проходов.
+
+    ``` ``путь`` ``` — обычная форма markdown (ею оборачивают текст,
+    в котором сам backtick и встречается). Регулярка «backtick, не-backtick,
+    backtick» видела в ней две пустые вставки, поэтому backtick-проход терял
+    токен целиком, а wikilink-проход, наоборот, переставал считать
+    содержимое кодом и читал пример как живую ссылку.
+    """
+
+    def test_a_double_backtick_token_is_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {"CLAUDE.md": "путь ``/Users/artem/secret.md`` тут\n"})
+            self.assertEqual(
+                places(scan(root)),
+                [("CLAUDE.md", 1, "escapes-root", "`/Users/artem/secret.md`")])
+
+    def test_a_double_backtick_span_still_hides_a_wikilink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {"areas/hiring/note.md": "пример ``[[nowhere]]`` тут\n"})
+            self.assertEqual(scan(root).counts(), {})
+
+    def test_single_backticks_are_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _make(tmp, {"CLAUDE.md":
+                               "Агент ходит `grep`, скрипт — `scripts/move.py`.\n"})
+            self.assertEqual(
+                places(scan(root)),
+                [("CLAUDE.md", 1, "unresolved", "`scripts/move.py`")])

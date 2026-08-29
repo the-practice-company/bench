@@ -9,6 +9,7 @@ import argparse
 import re
 import sys
 import unicodedata
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -19,16 +20,49 @@ from scripts.findings import Finding, Report
 from scripts.frontmatter import FrontmatterError, parse as parse_frontmatter
 
 _FENCE = re.compile(r"```.*?```", re.S)
-_INLINE = re.compile(r"`[^`\n]*`")
+# Ограничитель inline-кода — прогон из N backtick'ов, закрывает его такой же
+# прогон: ``двойным`` оборачивают текст, в котором backtick и встречается.
+# Форма «backtick, не-backtick, backtick» знала только N=1, и на ``пути``
+# расходились оба прохода: backtick-цикл видел две пустые вставки и терял
+# токен целиком, а wikilink-цикл переставал считать содержимое кодом
+# и читал пример как живую ссылку.
+_INLINE = re.compile(r"(?<!`)(`+)([^\n]*?)\1(?!`)")
 _WIKILINK = re.compile(r"!?\[\[([^\]\n]+)\]\]")
 _MDLINK = re.compile(r"\[[^\]\n]*\]\(([^)\n]+)\)")
+# Ссылка-сноска: `[метка]: цель "заголовок"`. Даёт ту же цель, что инлайновая
+# форма, но `](` в ней нет, поэтому мимо `_MDLINK` проходили сразу два класса,
+# `escapes-root` и `md-link-to-file`. Определение занимает строку целиком:
+# в цели нет пробелов, после неё допустим только заголовок в кавычках. Иначе
+# ссылкой считалась бы проза вида `[1]: см. ниже, в разделе про зоны`.
+# `[^метка]:` — примечание Obsidian, а не ссылка: его текст цели не называет
+# вовсе, и однословное примечание иначе становилось бы `md-link-to-file`.
+_MDREF = re.compile(
+    r"^ {0,3}\[(?!\^)([^\]\n]+)\]:[ \t]*(<[^>\n]*>|\S+)"
+    r"(?:[ \t]+(?:\"[^\"\n]*\"|'[^'\n]*'|\([^)\n]*\)))?[ \t]*$")
 
 SCANNED_FOR_TOKENS = ("CLAUDE.md", "README.md", "SKILL.md")
 RULES_PREFIX = ".claude/rules/"
 
 ALLOWLIST_NAME = ".link-allow"
 
-REGISTRY_ARCHETYPE = "реестр"
+# Закрытый словарь архетипов спеки английский: journal / pipeline / registry
+# (секции 9 и 28). Пока здесь стояло русское слово, периметр сирот у любой
+# коллекции, созданной рецептом, был пуст — класс `orphan` на живом выводе
+# не мог сработать ни разу.
+REGISTRY_ARCHETYPE = "registry"
+
+
+def _read(path):
+    """Текст файла; недекодируемый байт заменяется, а не уносит файл из гейта.
+
+    Тот же фикс и по той же причине, что в `check_package._iter_package_files`
+    («один недекодируемый байт уводил файл из-под гейта целиком»): 16
+    unresolved замера приехали из Notion-экспорта, и случайный байт в одном
+    из таких файлов — не экзотика. Здесь было хуже тихого пропуска: чтение
+    роняло весь прогон, автор не получал отчёта вовсе, а код возврата
+    оказывался 1 — контракт `findings.py` такого кода не знает (2 или 0).
+    """
+    return path.read_text(encoding="utf-8", errors="replace")
 
 
 class AllowEntry:
@@ -92,6 +126,16 @@ def extract_links(text):
             out.append(Link(target, lineno, match.group(0), "wikilink"))
         for match in _MDLINK.finditer(line):
             out.append(Link(match.group(1).strip(), lineno, match.group(0), "mdlink"))
+        # Определение ссылки-сноски судится как markdown-ссылка: цель у них
+        # одна и та же, а `[метка]` в тексте — только указатель на эту строку.
+        # В отчёт идёт строка целиком: `[out]` без цели автору ничего не
+        # говорит, чинить нужно именно здесь.
+        match = _MDREF.match(line)
+        if match:
+            target = match.group(2).strip()
+            if target.startswith("<") and target.endswith(">"):
+                target = target[1:-1].strip()
+            out.append(Link(target, lineno, line.strip(), "mdlink"))
     return out
 
 
@@ -141,7 +185,7 @@ def _orphan_perimeter(root, ignored):
         if not _in_perimeter(rel_readme, ignored):
             continue
         try:
-            fields = parse_frontmatter(readme.read_text(encoding="utf-8"))
+            fields = parse_frontmatter(_read(readme))
         except FrontmatterError:
             continue
         if fields.get("archetype") != REGISTRY_ARCHETYPE:
@@ -164,7 +208,11 @@ def classify_mdlink(target):
 
 
 def _transient_violation(source_rel, target):
-    """Ссылка из долгоживущей зоны в исчезающую — отложенная поломка."""
+    """Ссылка из долгоживущей зоны в исчезающую — отложенная поломка.
+
+    `target` — путь цели, а не текст ссылки: у `[[scratch]]` зоны в тексте
+    нет вовсе. Вызывается после резолва, по каждому кандидату.
+    """
     source_zone = zones.zone_of(source_rel)
     target_zone = zones.zone_of(target)
     if source_zone in zones.LONG_LIVED and target_zone in zones.TRANSIENT:
@@ -172,25 +220,96 @@ def _transient_violation(source_rel, target):
     return False
 
 
+class Ignored(tuple):
+    """Префиксы `.gitignore` плюс его же отрицания (`!`).
+
+    Кортеж, потому что `str.startswith` принимает именно кортеж, и оба гейта
+    на этом стоят: `check_package` импортирует отсюда и `_ignored`,
+    и `_in_perimeter`. Отрицания едут рядом, а не вторым возвращаемым
+    значением, — иначе их пришлось бы протаскивать через чужую сигнатуру
+    и периметры двух гейтов снова разошлись бы.
+    """
+
+    negated = ()
+
+    def __new__(cls, prefixes, negated=()):
+        self = super().__new__(cls, tuple(sorted(prefixes)))
+        self.negated = tuple(negated)
+        return self
+
+
 def _ignored(root):
-    """Префиксы, в которые гейт не заходит: .gitignore плюс archive/."""
+    """Префиксы, в которые гейт не заходит: .gitignore плюс archive/.
+
+    `!`-строка возвращает путь в дерево, и периметр обязан её применять:
+    выброшенная, она делала игнорируемое множество строго шире того, что
+    репозиторий игнорирует на самом деле, — ровно наоборот тому, что здесь
+    написано. Одно отличие от git осознанное: git отказывается возвращать
+    файл из исключённого каталога, здесь отрицание сильнее каталога.
+    Сдвиг в сторону «прочитать лишний файл»: лишнее гейт назовёт вслух,
+    а непрочитанное молчит.
+    """
     prefixes = {".git/", "archive/"}
+    negated = []
     ignore = root / ".gitignore"
     if ignore.exists():
-        for line in ignore.read_text(encoding="utf-8").split("\n"):
+        for line in _read(ignore).split("\n"):
             line = line.strip()
-            if line and not line.startswith("#") and not line.startswith("!"):
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("!"):
+                negated.append(line[1:].lstrip("/"))
+            else:
                 prefixes.add(line.rstrip("/") + "/")
-    return tuple(sorted(prefixes))
+    return Ignored(prefixes, negated)
 
 
 def _in_perimeter(rel, ignored):
-    return not rel.startswith(ignored)
+    """Читает ли гейт этот путь. Отрицание `.gitignore` сильнее префикса.
+
+    `getattr`, а не атрибут напрямую: сюда приходит и голый кортеж —
+    из `check_package`, и из мутации «периметр снова слеп к .gitignore».
+    """
+    for pattern in getattr(ignored, "negated", ()):
+        if fnmatchcase(rel, pattern) or rel.startswith(pattern.rstrip("/") + "/"):
+            return True
+    return not rel.startswith(tuple(ignored))
 
 
 def _scanned_for_tokens(rel, name):
     """Периметр backtick-сканирования: четыре строки таблицы, и ни строкой больше."""
     return name in SCANNED_FOR_TOKENS or rel.startswith(RULES_PREFIX)
+
+
+def _exists_exactly(root, token):
+    """Есть ли такой путь — с точностью до регистра и формы Unicode.
+
+    `(root / token).exists()` спрашивает файловую систему, а она на macOS
+    отвечает «да» на `Scripts/Check_Links.py`, на Linux — «нет»: один
+    репозиторий давал два разных вердикта. Резолв wikilink регистр при этом
+    различал всегда (поиск по словарю), то есть две половины одного гейта
+    расходились между собой. Критерий 2 — про отчёт, не зависящий от места
+    клона; платформа — тот же довод одной ступенью выше.
+
+    Сравнение посегментное, по именам из каталога. NFC с обеих сторон:
+    macOS отдаёт имена в NFD, текст файла почти всегда в NFC, и без
+    приведения та же строка разъезжается на ровном месте.
+    """
+    rel = pathlib_rules.normalise(token).rstrip("/")
+    if not rel or rel == ".":
+        return True
+    current = root
+    for part in rel.split("/"):
+        part = unicodedata.normalize("NFC", part)
+        try:
+            names = {unicodedata.normalize("NFC", child.name)
+                     for child in current.iterdir()}
+        except OSError:
+            return False
+        if part not in names:
+            return False
+        current = current / part
+    return True
 
 
 def _classify_token(token, root, allowed):
@@ -216,14 +335,16 @@ def _classify_token(token, root, allowed):
        и спрашивать о существовании множества — ошибка категории. Без этой
        ступени каркас, предписанный секциями 4 и 9, не проходил гейт,
        предписанный секцией 13, — блокер, на который упёрлась волна 3.
-    3. Конкретный путь проверяется как прежде. Ослабления нет:
+    3. Конкретный путь проверяется как прежде — но существование спрашивается
+       у дерева, а не у файловой системы (`_exists_exactly`): иначе вердикт
+       зависел от регистрочувствительности тома. Ослабления нет:
        `areas/hiring/items/` метасимволов не содержит и остаётся находкой.
     """
     if pathlib_rules.escapes_root(token, base=""):
         return "escapes-root"
     if pathlib_rules.is_pattern(token):
         return None
-    if not (root / token).exists() and not allowed(token):
+    if not _exists_exactly(root, token) and not allowed(token):
         return "unresolved"
     return None
 
@@ -240,7 +361,7 @@ def _settings_paths(root, ignored, allowed):
         rel = path.relative_to(root).as_posix()
         if not _in_perimeter(rel, ignored):
             continue
-        text = path.read_text(encoding="utf-8")
+        text = _read(path)
         for lineno, line in enumerate(text.split("\n"), start=1):
             for raw in re.findall(r'"([^"]+)"', line):
                 token = pathlib_rules.unwrap_tool(raw)
@@ -260,11 +381,25 @@ def scan(root, today=None):
     referenced = set()
 
     allow_path = root / ALLOWLIST_NAME
-    allow = parse_allowlist(allow_path.read_text(encoding="utf-8")) if allow_path.exists() else []
+    allow = parse_allowlist(_read(allow_path)) if allow_path.exists() else []
 
     def allowed(target):
+        """Гасит ли аллоулист эту цель.
+
+        Совпадение — с целью целиком, глоб-метасимволы работают
+        (`черновики/*`). Голая подстрока запрещена: запись `a` гасила
+        `unresolved` по всему репозиторию и при этом считалась
+        использованной, поэтому `dead-allow` о ней молчал — исключение
+        ослабляло гейт везде, выглядя живым. Весь аргумент спеки за
+        `dead-allow` в том, что уцелевшее исключение тихо ослабляет
+        проверку; подстрочное совпадение делало это ослабление ещё
+        и ненаблюдаемым. «Строка на паттерн» читается как шаблон,
+        а не как обрывок пути.
+        """
+        target = unicodedata.normalize("NFC", target)
         for entry in allow:
-            if entry.pattern and entry.pattern in target:
+            if entry.pattern and fnmatchcase(
+                    target, unicodedata.normalize("NFC", entry.pattern)):
                 entry.used = True
                 return True
         return False
@@ -273,7 +408,7 @@ def scan(root, today=None):
         rel = path.relative_to(root).as_posix()
         if not _in_perimeter(rel, ignored):
             continue
-        text = path.read_text(encoding="utf-8")
+        text = _read(path)
         for link in extract_links(text):
             target = unicodedata.normalize("NFC", link.target)
 
@@ -287,17 +422,34 @@ def scan(root, today=None):
                     findings.append(Finding(cls, rel, link.line, link.raw))
                 continue
 
-            if _transient_violation(rel, target):
-                findings.append(Finding("link-to-transient", rel, link.line, link.raw))
-                continue
-
             candidates = index.get(target, [])
             for candidate in candidates:
                 referenced.add(candidate)          # относительный путь цели
+
+            # `link-to-transient` — про цель ссылки, а не про её текст.
+            # `[[scratch]]`, единственная форма, которую пишет Obsidian, зоны
+            # в тексте не несёт вовсе, и проверка до резолва молчала ровно
+            # там, где класс и нужен. Текст остаётся вторым источником для
+            # случая, когда зону он называет, а файла нет: `[[tmp/ghost]]` —
+            # по-прежнему отложенная поломка, а не ссылка в никуда.
+            transient = [c for c in candidates if _transient_violation(rel, c)]
+            if not candidates and _transient_violation(rel, target):
+                transient = [target]
+            if transient:
+                detail = link.raw
+                if candidates:
+                    detail = "%s → %s" % (link.raw, ", ".join(sorted(transient)))
+                findings.append(Finding("link-to-transient", rel, link.line, detail))
+
+            # Неоднозначность и исчезающая цель — два разных факта об одной
+            # ссылке, и чинятся они по-разному: первая — полным путём, вторая
+            # — отказом ссылаться в `tmp/`. Поэтому сообщаются оба. Погасить
+            # ошибку предупреждением нельзя: `ambiguous` гейт не роняет,
+            # и ссылка, которая по построению протухнет, ушла бы зелёной.
             if len(candidates) > 1:
                 findings.append(Finding("ambiguous", rel, link.line,
                                         "%s → %s" % (link.raw, ", ".join(sorted(candidates)))))
-            elif not candidates and not allowed(target):
+            elif not candidates and not transient and not allowed(target):
                 findings.append(Finding("unresolved", rel, link.line, link.raw))
 
     # Backtick-токены: пути и команды вперемешку, признак — is_path_token.
@@ -320,10 +472,10 @@ def scan(root, today=None):
             continue
         if not _scanned_for_tokens(rel, path.name):
             continue
-        text = _blank_fences(path.read_text(encoding="utf-8"))
+        text = _blank_fences(_read(path))
         for lineno, line in enumerate(text.split("\n"), start=1):
-            for token in _INLINE.findall(line):
-                token = token.strip("`").strip()
+            for match in _INLINE.finditer(line):
+                token = match.group(2).strip()
                 if not pathlib_rules.is_path_token(token):
                     continue
                 cls = _classify_token(token, root, allowed)
