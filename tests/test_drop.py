@@ -9,6 +9,7 @@ from pathlib import Path
 from scripts.adopt import drop, init_tree, tree
 from scripts.findings import EXIT_OK, EXIT_VIOLATION
 from tests.foreign import committer, materialise
+from tests.maintain_fixture import materialise as materialise_maintain
 from tests.test_read_plan import TOTAL, write_plan
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -146,6 +147,101 @@ class TestWithoutGit(unittest.TestCase):
         self.assertEqual(code, EXIT_VIOLATION)
         self.assertIn("нет коммита", report)
         self.assertTrue((self.root / "archive" / "notion" / "index.md").exists())
+
+
+class TestAuthorisedByFact(unittest.TestCase):
+    """Вторая форма авторизации: вместо строки плана — проверенный факт.
+
+    Форма та же, что у `check-plan`: разрешает не доверие вызывающему, а
+    проверка, которую `drop` делает сам. Причина приезжает строкой, но
+    строка — только имя факта; будь она разрешением, вызывающий писал бы
+    себе разрешения сам.
+
+    Дерево здесь MAINTAIN'овское, а не чужое: единственный сегодняшний факт
+    говорит про коллекцию, а в чужой фикстуре коллекций нет вовсе.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = materialise_maintain(self.tmp.name)
+
+    def test_a_verified_fact_removes_the_folder_and_keeps_the_history(self):
+        report, code = drop.run_authorised(self.root, "projects/stale",
+                                           drop.EMPTY_COLLECTION, "2026-08-29")
+        self.assertEqual(code, EXIT_OK, report)
+        self.assertFalse((self.root / "projects" / "stale").exists())
+        self.assertEqual(
+            tree.git_zlines(self.root, "ls-files", "-z", "--", "projects/stale"),
+            [])
+        self.assertIn("projects/stale/views.base",
+                      tree.git_zlines(self.root, "ls-tree", "-r", "--name-only",
+                                      "-z", "HEAD", "--", "projects/stale"))
+
+    def test_a_reason_outside_the_closed_set_is_refused(self):
+        """Множество причин закрыто. Открытое означало бы, что удалять можно
+        по любому поводу, лишь бы он был назван словами."""
+        report, code = drop.run_authorised(self.root, "projects/stale",
+                                           "надоела", "2026-08-29")
+        self.assertEqual(code, EXIT_VIOLATION)
+        self.assertIn("причина не из закрытого множества", report)
+        self.assertTrue((self.root / "projects" / "stale").is_dir())
+
+    def test_a_collection_with_records_is_refused(self):
+        """Пустота перепроверяется здесь, а не принимается от вызывающего:
+        в непустой коллекции лежит содержимое, и линия ответственности
+        проходит ровно по нему."""
+        report, code = drop.run_authorised(self.root, "projects/deals",
+                                           drop.EMPTY_COLLECTION, "2026-08-29")
+        self.assertEqual(code, EXIT_VIOLATION)
+        self.assertIn("факт не подтвердился", report)
+        self.assertTrue((self.root / "projects" / "deals" / "items"
+                         / "one.md").exists())
+
+    def test_a_collection_inside_the_threshold_is_refused(self):
+        """Порог тоже перепроверяется: `projects/fresh` пуста и тронута вчера.
+        Приняв его флагом, `drop` удалял бы по слову вызывающего."""
+        report, code = drop.run_authorised(self.root, "projects/fresh",
+                                           drop.EMPTY_COLLECTION, "2026-08-29")
+        self.assertEqual(code, EXIT_VIOLATION)
+        self.assertIn("факт не подтвердился", report)
+        self.assertTrue((self.root / "projects" / "fresh").is_dir())
+
+    def test_a_path_that_is_not_a_collection_is_refused(self):
+        """Зона — не коллекция. `inbox` пуст и объявлен неиспользуемым, но
+        видов в нём нет, и факт про пустую коллекцию про него ничего не
+        говорит."""
+        report, code = drop.run_authorised(self.root, "inbox",
+                                           drop.EMPTY_COLLECTION, "2026-08-29")
+        self.assertEqual(code, EXIT_VIOLATION)
+        self.assertIn("факт не подтвердился", report)
+        self.assertTrue((self.root / "inbox").is_dir())
+
+    def test_a_source_outside_the_root_is_refused(self):
+        """Незыблемое №6. Граница спрашивается до факта: снаружи корня факт
+        считался бы по чужому дереву, то есть плагин туда бы уже дотянулся."""
+        neighbour = self.root.parent / "соседний"
+        neighbour.mkdir()
+        (neighbour / "чужое.md").write_text("не наше\n", encoding="utf-8")
+        report, code = drop.run_authorised(self.root, "../соседний",
+                                           drop.EMPTY_COLLECTION, "2026-08-29")
+        self.assertEqual(code, EXIT_VIOLATION)
+        self.assertIn("вне корня", report)
+        self.assertTrue((neighbour / "чужое.md").exists())
+
+    def test_the_second_form_does_not_open_a_command_line_door(self):
+        """`--plan` остаётся единственным входом с командной строки: вторая
+        форма служит `prune`, а не оператору, и флага, включающего удаление
+        без плана, у `drop` нет."""
+        proc = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "adopt" / "drop.py"),
+             str(self.root), "projects/stale", "--reason",
+             drop.EMPTY_COLLECTION],
+            capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 2)
+        self.assertNotIn("--reason", proc.stderr)   # разбор такого флага не знает
+        self.assertIn("--plan", proc.stderr)
+        self.assertTrue((self.root / "projects" / "stale").is_dir())
 
 
 class TestPlanIsMandatory(unittest.TestCase):
