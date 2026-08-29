@@ -21,15 +21,18 @@
 
 ## Состояние плана
 
-**Задачи 1–6 исполнены** — код в дереве, `./check` зелёный, галочки проставлены.
+**Задачи 1–8 исполнены** — код в дереве, `./check` зелёный, галочки проставлены.
 Перечитывать и переисполнять их не нужно: гейт frontmatter больше не считает
 README коллекции записью; восемь зон, восемь README, `CLAUDE.md`, одиннадцать
 `.claude/rules/*.md` и четыре мелких артефакта (`.gitignore`,
 `.twinkle-repo-builder`, `OPEN-THREADS.md`, `settings-fragment.json`) лежат
 в `scaffold/`; инвентарь утверждён поимённо — двадцать четыре файла и десять
 каталогов, — оба гейта на каркасе молчат, и с удалённым `.claude/` тоже.
+`scripts/install_scaffold.py` разворачивает каркас в репозиторий, а критерий 2
+волны утверждён по хешам объектов git: коммит из отчёта установщика равен
+каркасу побайтово, с единственным исключением `.claude/settings.json`.
 
-**Начинать с задачи 7.**
+**Начинать с задачи 9.**
 
 ---
 
@@ -1726,7 +1729,7 @@ git commit -m "wave3: каркас как чистая фикстура — но
   `tests/test_boundary.py` (строка импорта плюс класс на одно определение;
   двенадцать утверждений волны 2 не меняются)
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 ```python
 """Установщик каркаса: копия побайтово, слияние настроек, граница корня."""
@@ -1915,14 +1918,14 @@ class TestScaffoldIsProduct(unittest.TestCase):
             self.assertNotEqual(check_package._product_hash(root), before)
 ```
 
-- [ ] **Step 2: Прогнать и убедиться, что падает**
+- [x] **Step 2: Прогнать и убедиться, что падает**
 
 Run: `python3 -m unittest tests.test_install_scaffold tests.test_scaffold -v`
 Expected: `ModuleNotFoundError: scripts.install_scaffold`, и отдельно
 `test_the_product_hash_covers_the_scaffold` FAIL — хеши равны, потому что
 `scaffold` в `_PRODUCT_DIRS` пока нет.
 
-- [ ] **Step 3: Одно определение границы — предикат переезжает в `scripts/`**
+- [x] **Step 3: Одно определение границы — предикат переезжает в `scripts/`**
 
 Сначала тест, потом переезд. Тест дописывается в `tests/test_boundary.py`,
 а не в `tests/test_install_scaffold.py`: последний на этом шаге не
@@ -2044,7 +2047,7 @@ Expected: зелено; `_boundary_carriers` возвращает ровно
 отдельно (Step 7): переезд с его тестом — законченная зелёная правка, ей
 не нужен ни установщик, ни каркас.
 
-- [ ] **Step 4: Реализация — `scripts/install_scaffold.py`**
+- [x] **Step 4: Реализация — `scripts/install_scaffold.py`**
 
 ```python
 #!/usr/bin/env python3
@@ -2186,7 +2189,7 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-- [ ] **Step 5: Реализация — каркас попадает в снимок продукта**
+- [x] **Step 5: Реализация — каркас попадает в снимок продукта**
 
 В `scripts/check_package.py`:
 
@@ -2200,14 +2203,14 @@ if __name__ == "__main__":
 _PRODUCT_DIRS = ("scripts", ".claude-plugin", "hooks", "skills", "scaffold")
 ```
 
-- [ ] **Step 6: Прогнать — должно пройти**
+- [x] **Step 6: Прогнать — должно пройти**
 
 Run: `./check`
 Expected: код 0. Отдельно `python3 dev/mutate.py` обязан пройти без единого
 «не легла»: переезд модуля тронул путь в мутации в2 К4, и это единственное
 место, где волна 3 достаёт до доказательств волны 2.
 
-- [ ] **Step 7: Коммит**
+- [x] **Step 7: Коммит**
 
 Два коммита, а не один: переезд предиката — правка волны 2, и в истории
 она обязана читаться отдельно от установщика, который её потребовал.
@@ -2238,7 +2241,7 @@ git commit -m "wave3: установщик каркаса — копия поб�
 **Files:**
 - Modify: `tests/test_install_scaffold.py`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 ```python
 def _blob_id(path):
@@ -2318,7 +2321,7 @@ class TestFirstCommit(unittest.TestCase):
         self.assertEqual([p for p in self._tree() if p.endswith("views.base")], [])
 ```
 
-- [ ] **Step 2: Прогнать и убедиться, что падает**
+- [x] **Step 2: Прогнать и убедиться, что падает**
 
 Run: `python3 -m unittest tests.test_install_scaffold -v`
 Expected: FAIL до появления кода Task 7 нет — код уже есть, поэтому здесь
@@ -2331,12 +2334,12 @@ Expected: FAIL до появления кода Task 7 нет — код уже 
 > он падает, если Task 7 сделан неверно, и это единственное состояние,
 > в котором он вправе краснеть.
 
-- [ ] **Step 3: Прогнать — должно пройти**
+- [x] **Step 3: Прогнать — должно пройти**
 
 Run: `./check`
 Expected: код 0.
 
-- [ ] **Step 4: Коммит**
+- [x] **Step 4: Коммит**
 
 ```bash
 git add tests/test_install_scaffold.py

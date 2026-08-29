@@ -8,8 +8,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts import install_scaffold
+from scripts import check_frontmatter, check_links, install_scaffold, zones
 from scripts.findings import EXIT_OK, EXIT_VIOLATION
+from tests.test_fixtures import places
 
 ROOT = Path(__file__).resolve().parent.parent
 SCAFFOLD = ROOT / "scaffold"
@@ -29,6 +30,21 @@ def _new_repo(base, name="instance"):
     _git(root, "config", "user.email", "create@example.invalid")
     _git(root, "config", "user.name", "create")
     return root
+
+
+def _blob_id(path, algorithm):
+    """Идентификатор объекта git для файла, посчитанный локально.
+
+    Формула самого git (`blob <длина>\\0<содержимое>`), поэтому подпроцесс на
+    каждый файл не нужен, а сравнение остаётся сравнением хешей.
+
+    Считается по байтам файла, а не через `git hash-object`: у последнего по
+    умолчанию работают фильтры атрибутов, и включённый `core.autocrlf` дал бы
+    одинаковые хеши при разном содержимом — то есть спрятал бы ровно ту
+    поломку, ради которой это сравнение и заведено.
+    """
+    data = path.read_bytes()
+    return hashlib.new(algorithm, b"blob %d\x00" % len(data) + data).hexdigest()
 
 
 def _tree_hash(root):
@@ -288,3 +304,121 @@ class TestCommandLine(unittest.TestCase):
                  str(root)], capture_output=True, text=True)
             self.assertEqual(again.returncode, EXIT_VIOLATION)
             self.assertIn("CLAUDE.md", again.stderr)
+
+
+class TestFirstCommit(unittest.TestCase):
+    """Критерий 2 волны. Коммит 1 — база рецепта: при обновлении версии
+    `git diff` против него показывает, что автор изменил сам, а что приехало
+    из пакета, и без побайтового равенства это неразличимо.
+
+    Сравнение — по хешам объектов git, а не глазами: визуальный диф не
+    отличает «одинаково» от «похоже».
+
+    Коммит здесь собирается из списка, который вернул сам `install`, — ровно
+    так его соберёт скилл задачи 9. Поэтому утверждается заодно и полнота
+    отчёта: записанный, но не названный файл останется вне коммита и
+    покраснеет в `test_the_working_tree_is_clean_after_the_commit`.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = _new_repo(self.tmp.name)
+        self.written = install_scaffold.install(SCAFFOLD, self.root)
+        _git(self.root, "add", *self.written)
+        _git(self.root, "commit", "-q", "-m", "scaffold")
+        # Алгоритм спрашивается у git, а не предполагается. Репозиторий с
+        # `objectFormat = sha256` дал бы двадцать три несовпадения разом и
+        # обвинил бы в них установщик — красное не по своей причине.
+        self.algorithm = _git(self.root, "rev-parse",
+                              "--show-object-format").stdout.strip()
+
+    def _tree(self):
+        """Пути коммита и идентификаторы их объектов.
+
+        `-z`, а не построчный разбор: git экранирует не-ASCII и кавычки в
+        путях, и построчное чтение потребовало бы второго разборщика этого
+        экранирования — с собственными ошибками.
+        """
+        listing = _git(self.root, "ls-tree", "-r", "-z", "HEAD").stdout
+        out = {}
+        for record in listing.split("\0"):
+            if not record:
+                continue
+            meta, path = record.split("\t", 1)
+            out[path] = meta.split()[2]
+        return out
+
+    def test_the_commit_carries_the_scaffold_blob_for_blob(self):
+        """Расхождение по ключу значит, что файл не доехал; расхождение по
+        значению — что доехал изменённым."""
+        expected = {}
+        for source in sorted(p for p in SCAFFOLD.rglob("*") if p.is_file()):
+            rel = source.relative_to(SCAFFOLD).as_posix()
+            if rel == FRAGMENT:
+                continue
+            expected[rel] = _blob_id(source, self.algorithm)
+        actual = {path: blob for path, blob in self._tree().items()
+                  if path != SETTINGS}
+        self.assertEqual(actual, expected)
+
+    def test_the_only_path_that_is_not_a_copy_is_the_merged_settings(self):
+        """Исключение из побайтового равенства ровно одно и названо поимённо.
+
+        Множество копий строится **без** фрагмента. Сверка с полным составом
+        каркаса признала бы уехавший `settings-fragment.json` законной копией
+        — то есть промолчала бы о единственном файле, которому в инстансе
+        делать нечего.
+        """
+        copied = {p.relative_to(SCAFFOLD).as_posix()
+                  for p in SCAFFOLD.rglob("*") if p.is_file()} - {FRAGMENT}
+        self.assertEqual(set(self._tree()) - copied, {SETTINGS})
+
+    def test_the_merged_settings_carry_the_fragment(self):
+        """Читается объект коммита, а не файл на диске: утверждение всего
+        класса — про коммит, и рабочее дерево здесь не свидетель."""
+        self.assertEqual(
+            json.loads(_git(self.root, "show", "HEAD:" + SETTINGS).stdout),
+            json.loads((SCAFFOLD / FRAGMENT).read_text(encoding="utf-8")))
+
+    def test_the_working_tree_is_clean_after_the_commit(self):
+        """Ничего не осталось вне коммита: иначе «коммит 1 — каркас»
+        неправда, и следующий Stop-хук найдёт незакоммиченное.
+
+        `--porcelain` без `--ignored` — тот же вопрос и в той же форме, в
+        какой его задаёт `hooks/summary.py`: файл, спрятанный от git строкой
+        `.gitignore` каркаса, не увидит и хук.
+        """
+        self.assertEqual(_git(self.root, "status", "--porcelain").stdout, "")
+
+    def test_both_gates_are_green_on_the_first_commit(self):
+        """Красное здесь — дефект пакета, а не репозитория: каркас во всех
+        инстансах один и тот же.
+
+        Не повтор `tests/test_scaffold.py`: там гейты читают каркас, здесь —
+        инстанс, где вместо `settings-fragment.json` лежит слитый
+        `settings.json`, а рядом появился `.git/`. Глоб `settings*.json`
+        разбирает оба имени, и промолчать гейт обязан на обоих.
+        """
+        self.assertEqual(places(check_links.scan(self.root)), [])
+        self.assertEqual(places(check_frontmatter.scan(self.root)), [])
+
+    def test_the_commit_creates_all_eight_zones(self):
+        """Зона заводится всегда, даже пустой: пустая зона наблюдаема, а
+        git пустых каталогов не хранит — держит зону её README, и утверждать
+        надо именно его, иначе зона «есть» из-за любого случайного файла.
+        """
+        missing = sorted({"%s/README.md" % zone for zone in zones.ZONES}
+                         - set(self._tree()))
+        self.assertEqual(missing, [])
+
+    def test_the_commit_creates_no_collection(self):
+        """§17: коллекция без настоящей записи не заводится ни одна.
+
+        Признаков два, как и у каркаса: вид и папка записей. Пустой `items/`
+        в коммит не попадает по построению, но непустой — это уже
+        сочинённая за автора запись, и молчать о ней нельзя.
+        """
+        stray = [path for path in sorted(self._tree())
+                 if path.endswith("views.base") or "/items/" in path]
+        self.assertEqual(stray, [])
