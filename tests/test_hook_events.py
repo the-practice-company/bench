@@ -25,6 +25,22 @@ def make_repo(base):
     return root
 
 
+def commit_all(root):
+    """Довести фикстуру до чистого дерева.
+
+    Свежий `git init` чистым деревом не является: маркер рецепта лежит
+    неотслеженным, и `git status --porcelain` непуст ещё до того, как хук
+    что-нибудь сделал. Проверять на такой фикстуре «запись не пачкает дерево»
+    нечем — она не отличит «не пачкает» от «уже грязно».
+
+    Личность коммиттера передаётся флагами: глобальный `user.email` в среде
+    прогона может быть не настроен, и тогда `git commit` падает не по делу.
+    """
+    subprocess.run(["git", "add", "-A"], cwd=str(root), check=True)
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t",
+                    "commit", "-q", "-m", "фикстура"], cwd=str(root), check=True)
+
+
 def call(event, payload, cwd):
     """Хук всегда прогоняется настоящим подпроцессом.
 
@@ -265,3 +281,220 @@ class TestPreToolUseDegradation(unittest.TestCase):
                                 text=True, cwd=str(self.root), env=environ)
         self.assertEqual(result.returncode, 2)
         self.assertIn("граница", result.stderr)
+
+
+class TestTurnFiles(unittest.TestCase):
+    """Список файлов хода не имеет права делать дерево грязным: незакоммиченное
+    по решению секции 8 означает «здесь работал человек», и `SessionStart`
+    с `Stop` оба стоят на этой разводке."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = make_repo(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def test_recorded_path_survives_between_calls(self):
+        from hooks import turnfiles
+        turnfiles.record(self.root, "s1", "areas/a.md")
+        turnfiles.record(self.root, "s1", "areas/b.md")
+        self.assertEqual(turnfiles.listing(self.root, "s1"),
+                         ["areas/a.md", "areas/b.md"])
+
+    def test_sessions_do_not_mix(self):
+        from hooks import turnfiles
+        turnfiles.record(self.root, "s1", "areas/a.md")
+        self.assertEqual(turnfiles.listing(self.root, "s2"), [])
+
+    def test_recording_does_not_dirty_the_tree(self):
+        from hooks import turnfiles
+        commit_all(self.root)
+        turnfiles.record(self.root, "s1", "areas/a.md")
+        status = subprocess.run(["git", "status", "--porcelain"],
+                                cwd=str(self.root), capture_output=True, text=True)
+        self.assertEqual(status.stdout.strip(), "")
+
+    def test_missing_list_degrades_to_empty_not_to_error(self):
+        """Потеря файла ослабляет Stop до «считать все файлы чужими» —
+        то есть до сообщения вместо блока. Ослабление, а не поломка."""
+        from hooks import turnfiles
+        self.assertEqual(turnfiles.listing(self.root, "не было такой"), [])
+
+    def test_the_same_path_twice_is_listed_once(self):
+        """Ход из Write и двух Edit по одному файлу — обычный ход, а не
+        исключение. Список хода отвечает на вопрос «какие файлы тронуты»,
+        и повтор в нём умножил бы и `git add` чекпоинта, и сообщения `Stop`
+        на число правок."""
+        from hooks import turnfiles
+        turnfiles.record(self.root, "s1", "areas/a.md")
+        turnfiles.record(self.root, "s1", "areas/b.md")
+        turnfiles.record(self.root, "s1", "areas/a.md")
+        self.assertEqual(turnfiles.listing(self.root, "s1"),
+                         ["areas/a.md", "areas/b.md"])
+
+    def test_session_id_with_separators_stays_one_file_inside_git(self):
+        """`session_id` приходит снаружи и в имя файла попадает целиком.
+        Разделитель пути в нём увёл бы запись из `.git/` — то есть за
+        границу, которую держит незыблемое №6."""
+        from hooks import turnfiles
+        turnfiles.record(self.root, "../../s1", "areas/a.md")
+        written = [p.name for p in (self.root / ".git").iterdir()
+                   if p.name.startswith("twinkle-turn")]
+        self.assertEqual(len(written), 1, written)
+        self.assertEqual(turnfiles.listing(self.root, "../../s1"), ["areas/a.md"])
+
+    def test_recording_without_git_reports_instead_of_returning_silently(self):
+        """`.git/` может не быть: маркер рецепта ищется раньше него. Молча
+        не записать — заглушка (незыблемое №4): `Stop` тогда сочтёт чужим всё,
+        что агент только что написал, и не скажет почему."""
+        from hooks import turnfiles
+        import shutil
+        shutil.rmtree(self.root / ".git")
+        self.assertFalse(turnfiles.record(self.root, "s1", "areas/a.md"))
+
+
+class TestPostToolUse(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = make_repo(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def _payload(self, path, **extra):
+        payload = {"hook_event_name": "PostToolUse", "cwd": str(self.root),
+                   "session_id": "s1", "tool_name": "Write",
+                   "tool_input": {"file_path": str(path)}}
+        payload.update(extra)
+        return payload
+
+    def _broken(self, name="broken.md"):
+        target = self.root / "areas" / name
+        target.write_text("[[нет такой цели]]\n", encoding="utf-8")
+        return target
+
+    def test_findings_are_limited_to_the_written_file(self):
+        """Индекс строится по всему дереву, иначе unresolved неотличим от
+        «цель есть, но её не просканировали». В отчёт идёт только записанный."""
+        (self.root / "areas" / "broken.md").write_text(
+            "[[нет такой цели]]\n", encoding="utf-8")
+        (self.root / "areas" / "other.md").write_text(
+            "[[и такой нет]]\n", encoding="utf-8")
+        payload = {"hook_event_name": "PostToolUse", "cwd": str(self.root),
+                   "session_id": "s1", "tool_name": "Write",
+                   "tool_input": {"file_path": str(self.root / "areas" / "broken.md")}}
+        result = call("PostToolUse", payload, self.root)
+        self.assertIn("areas/broken.md", result.stderr)
+        self.assertNotIn("areas/other.md", result.stderr)
+
+    def test_a_link_to_a_file_elsewhere_in_the_tree_resolves(self):
+        """Обратная сторона того же решения, и она несущая.
+
+        Фильтр стоит после разбора, а не вместо него: индекс ссылок строится
+        по всему дереву. Сузить сам разбор до записанного файла — сделать
+        `unresolved` неотличимым от «цель есть, но её не просканировали»,
+        и тогда каждая законная ссылка наружу файла становится находкой.
+        """
+        (self.root / "core" / "me.md").write_text("я\n", encoding="utf-8")
+        target = self.root / "areas" / "uses-core.md"
+        target.write_text("[[me]]\n", encoding="utf-8")
+        result = call("PostToolUse", self._payload(target), self.root)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stderr.strip(), "")
+
+    def test_findings_do_not_block(self):
+        """`PostToolUse` сообщает, а не запрещает: файл уже записан, и код 2
+        после факта был бы театром. Блокирует `Stop`."""
+        result = call("PostToolUse", self._payload(self._broken()), self.root)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("unresolved", result.stderr)
+
+    def test_a_clean_file_says_nothing(self):
+        target = self.root / "areas" / "clean.md"
+        target.write_text("просто текст\n", encoding="utf-8")
+        result = call("PostToolUse", self._payload(target), self.root)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stderr.strip(), "")
+
+    def test_the_written_path_is_recorded_relative_to_the_root(self):
+        """Список хода переживает вызов инструмента, потому что лежит на диске.
+        Записанный путь относителен корню: `Stop` сверяет его с выводом
+        `git status`, а тот абсолютных путей не печатает."""
+        from hooks import turnfiles
+        call("PostToolUse", self._payload(self._broken()), self.root)
+        self.assertEqual(turnfiles.listing(self.root, "s1"), ["areas/broken.md"])
+
+    def test_the_same_file_written_twice_is_recorded_once(self):
+        from hooks import turnfiles
+        target = self._broken()
+        call("PostToolUse", self._payload(target), self.root)
+        call("PostToolUse", self._payload(target), self.root)
+        self.assertEqual(turnfiles.listing(self.root, "s1"), ["areas/broken.md"])
+
+    def test_relative_tool_path_is_resolved_against_the_event_cwd(self):
+        """Рабочий каталог процесса хука не документирован.
+
+        Относительный путь в `tool_input` осмыслен только относительно `cwd`
+        события. Нормализация средствами процесса вернула бы `os.getcwd()`
+        через чёрный ход: подпроцесс здесь запущен снаружи репозитория, и
+        записанным в список хода оказался бы путь, которого в репозитории нет,
+        а находки по файлу не нашлись бы вовсе.
+        """
+        from hooks import turnfiles
+        self._broken()
+        result = subprocess.run(
+            [str(SHIM), "PostToolUse"],
+            input=json.dumps(self._payload("areas/broken.md")),
+            capture_output=True, text=True, cwd=self._tmp.name)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("areas/broken.md", result.stderr)
+        self.assertEqual(turnfiles.listing(self.root, "s1"), ["areas/broken.md"])
+
+    def test_path_outside_the_root_is_named_and_not_recorded(self):
+        """Записать наружный путь в список хода — зарядить чекпоинт `Stop`
+        на `git add` за границей корня (незыблемое №6). Судить о нём нечем:
+        гейты сканируют репозиторий, а файл лежит не в нём."""
+        from hooks import turnfiles
+        outside = Path(self._tmp.name) / "elsewhere.md"
+        outside.write_text("[[нет такой цели]]\n", encoding="utf-8")
+        result = call("PostToolUse", self._payload(outside), self.root)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("вне корня", result.stderr)
+        self.assertEqual(turnfiles.listing(self.root, "s1"), [])
+
+    def test_missing_root_is_visible_and_not_a_block(self):
+        (self.root / ".twinkle-repo-builder").unlink()
+        result = call("PostToolUse", self._payload(self._broken()), self.root)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("корень", result.stderr)
+
+    def test_unparsed_path_is_visible_and_not_a_block(self):
+        payload = {"hook_event_name": "PostToolUse", "cwd": str(self.root),
+                   "session_id": "s1", "tool_name": "Write",
+                   "tool_input": {"неизвестно": 1}}
+        result = call("PostToolUse", payload, self.root)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("путь не разобран", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_a_gate_that_fails_names_itself_and_lets_the_other_run(self):
+        """Наблюдённая поломка, а не гипотеза: `check_links.scan` читает всякий
+        `*.md` как utf-8 и падает `UnicodeDecodeError` на файле в cp1251.
+
+        Один такой файл где угодно в дереве иначе гасил бы `PostToolUse` на
+        каждой записи, а причиной в stderr значился бы код возврата hook.py.
+        Провалившийся гейт называет себя, второй досчитывает.
+        """
+        (self.root / "areas" / "cp1251.md").write_bytes("привет".encode("cp1251"))
+        result = call("PostToolUse", self._payload(self._broken()), self.root)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("check_links", result.stderr)
+        self.assertIn("не выполнился", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_a_repo_without_git_says_the_turn_list_was_not_written(self):
+        """Маркер рецепта ищется раньше `.git`, так что корень может найтись
+        там, где писать список хода некуда. `Stop` тогда сочтёт чужим всё,
+        что агент написал, — и это обязано быть сказано вслух."""
+        import shutil
+        shutil.rmtree(self.root / ".git")
+        result = call("PostToolUse", self._payload(self._broken()), self.root)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("список файлов хода", result.stderr)

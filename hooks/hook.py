@@ -16,8 +16,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from hooks import boundary
-from scripts import zones
+from hooks import boundary, turnfiles
+from scripts import check_frontmatter, check_links, zones
 from scripts.findings import EXIT_OK, EXIT_VIOLATION
 
 
@@ -106,13 +106,14 @@ def _absolute(target, base):
     return target if os.path.isabs(target) else os.path.join(base, target)
 
 
-def on_pre_tool_use(payload):
-    """Запись инструментом: блок за границей и на правке источника, иначе — слово.
+def _resolved_target(payload):
+    """Корень репозитория и абсолютный путь записи, либо `(None, None)`.
 
-    Три исхода различаются не строгостью, а тем, чью территорию затрагивают:
-    граница репозитория и неизменяемость источника — поломки, и на них код 2;
-    переписывание долгоживущей записи — содержимое, а содержимое принадлежит
-    автору (линия ответственности), поэтому предупреждение и код 0.
+    Прелюдия у обеих веток записи — `PreToolUse` и `PostToolUse` — одна, и
+    разъезжаться ей нельзя: обе причины «не смог» утверждаются тестами обеих
+    веток дословно, а две копии одного сообщения однажды разойдутся. Здесь же
+    печатается причина: ни одна ветка не имеет права выйти отсюда молча
+    (незыблемое №4).
     """
     base = _base_of(payload)
     root = boundary.find_root(base) if base else None
@@ -120,7 +121,7 @@ def on_pre_tool_use(payload):
         print("гейт не выполнился: корень репозитория не найден "
               "(маркер %s не найден вверх от %s)" % (boundary.MARKER, base),
               file=sys.stderr)
-        return EXIT_OK
+        return None, None
 
     target = tool_path(payload)
     if target is None:
@@ -130,9 +131,23 @@ def on_pre_tool_use(payload):
         print("гейт не выполнился: путь не разобран в tool_input, получено %r"
               % (sorted(received) if isinstance(received, dict) else received,),
               file=sys.stderr)
+        return None, None
+
+    return root, _absolute(target, base)
+
+
+def on_pre_tool_use(payload):
+    """Запись инструментом: блок за границей и на правке источника, иначе — слово.
+
+    Три исхода различаются не строгостью, а тем, чью территорию затрагивают:
+    граница репозитория и неизменяемость источника — поломки, и на них код 2;
+    переписывание долгоживущей записи — содержимое, а содержимое принадлежит
+    автору (линия ответственности), поэтому предупреждение и код 0.
+    """
+    root, target = _resolved_target(payload)
+    if root is None:
         return EXIT_OK
 
-    target = _absolute(target, base)
     if boundary.outside(target, root):
         print("граница рабочего каталога: %s лежит вне корня %s. Плагин "
               "не пишет наружу никогда" % (target, root), file=sys.stderr)
@@ -171,10 +186,77 @@ def on_pre_tool_use(payload):
     return EXIT_OK
 
 
+def _gate_findings(root, rel):
+    """Находки обоих гейтов, оставленные только по одному файлу.
+
+    Гейты зовутся модулями, а не подпроцессом: три процесса на запись файла
+    против одного импорта, и второй разбор JSON. Индекс ссылок всё равно
+    строится по всему дереву — фильтр стоит **после** разбора, а не вместо
+    него: иначе `unresolved` неотличим от «цель есть, но её не просканировали».
+
+    Сравнение идёт с `Finding.path`, и `rel` собран ровно так же, как его
+    собирают гейты: `relative_to(root).as_posix()`. Любая другая форма пути
+    молча не совпала бы ни с одной находкой, и гейт выглядел бы работающим.
+
+    Упавший гейт называет себя и не уносит с собой второй. Поломка
+    наблюдённая, не гипотеза: `check_links.scan` читает всякий `*.md` как
+    utf-8 и падает `UnicodeDecodeError` на файле в cp1251 — один такой файл
+    где угодно в дереве иначе гасил бы `PostToolUse` на каждой записи, а
+    причиной в stderr значился бы код возврата hook.py.
+    """
+    out = []
+    for gate in (check_links, check_frontmatter):
+        name = gate.__name__.rsplit(".", 1)[-1]
+        try:
+            report = gate.scan(root)
+        except Exception as error:
+            print("гейт не выполнился: %s упал на %s — %s"
+                  % (name, type(error).__name__, error), file=sys.stderr)
+            continue
+        out.extend(f for f in report.findings if f.path == rel)
+    return out
+
+
+def on_post_tool_use(payload):
+    """Запись состоялась: отчёт по записанному файлу и строка в список хода.
+
+    Возвращает 0 всегда. `PostToolUse` сообщает, а не запрещает: файл уже на
+    диске, и код 2 после факта — театр, а не гейт. Красный ход останавливает
+    `Stop`, и это его работа.
+    """
+    root, target = _resolved_target(payload)
+    if root is None:
+        return EXIT_OK
+
+    if boundary.outside(target, root):
+        # Судить не о чем — гейты сканируют репозиторий, а файл лежит не в нём.
+        # Но и в список хода такой путь не попадёт: `Stop` заряжает по этому
+        # списку `git add`, и наружный путь в нём — заряженное нарушение
+        # незыблемого №6. Запретить запись — работа `PreToolUse`, не эта.
+        print("файл %s лежит вне корня %s: гейты по нему не считаются и в "
+              "список файлов хода он не пишется" % (target, root),
+              file=sys.stderr)
+        return EXIT_OK
+
+    rel = Path(os.path.realpath(target)).relative_to(
+        os.path.realpath(str(root))).as_posix()
+
+    if not turnfiles.record(root, payload.get("session_id", ""), rel):
+        print("гейт не выполнился: список файлов хода не записан (нет %s). "
+              "Stop сочтёт правки этого хода чужими и ограничится сообщением"
+              % (Path(root) / ".git"), file=sys.stderr)
+
+    findings = _gate_findings(root, rel)
+    if findings:
+        print("\n".join(f.render() for f in findings), file=sys.stderr)
+    return EXIT_OK
+
+
 # Обработчики регистрируются задачами волны. Пустая таблица — не заглушка:
 # каждое незарегистрированное событие называет себя вслух строкой выше.
 HANDLERS = {
     "PreToolUse": on_pre_tool_use,
+    "PostToolUse": on_post_tool_use,
 }
 
 
