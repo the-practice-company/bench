@@ -61,6 +61,14 @@ triaged gets the reserved target `stay`, which is executed by nothing:
 A line with no cross is executed by nothing. A target carrying `?` is executed
 by nothing. Both are the author's silence, and silence is not agreement.
 
+## Before the first item: `init-tree`
+
+Once per drain, not once per item. `init-tree` makes the tree revertible: it
+commits it as found and writes down the rollback point. Without that point
+`rewrite-refs` refuses outright — and `revert`, which is the way out of a
+drain that went wrong, has nothing to return to. A drain that skips this step
+stops on its own step 2.
+
 ## Order per item
 
 1. `find-refs` — who points at this path today. References first, the path
@@ -102,6 +110,7 @@ deletes it for good.
 ## Commands
 
 ```sh
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/adopt/init_tree.py" .
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/adopt/refs.py" . inbox/2026-08-20-call.md
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/adopt/rewrite_refs.py" . inbox/2026-08-20-call.md areas/work/journal/items/2026-08-20-call.md --plan tmp/drain-plan.md
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/adopt/move.py" . inbox/2026-08-20-call.md areas/work/journal/items/2026-08-20-call.md --plan tmp/drain-plan.md
@@ -114,7 +123,7 @@ Every mutation takes the plan as a required argument and refuses on a line
 that is not there. That is a door closed by argument parsing rather than by
 discipline.
 
-Operations are named here by their command tokens — `find-refs`,
+Operations are named here by their command tokens — `init-tree`, `find-refs`,
 `rewrite-refs`, `move`, `drop`, `backfill`, `revert` — and never by the
 commands they wrap. The package check forbids a destructive example anywhere
 in this directory: an example written into instructions is executed literally,

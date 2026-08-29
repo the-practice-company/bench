@@ -206,6 +206,16 @@ class TestDrain(unittest.TestCase):
         self.assertIn("whole tree", self.text)
         self.assertIn("`stay`", self.text)
 
+    def test_it_names_the_rollback_point_before_the_first_item(self):
+        """Скилл однажды начинался с `find-refs`, и процедура как написана
+        останавливалась на собственном шаге 2: `rewrite-refs` без точки
+        отката отказывает, а ставит её только `init-tree`. Отказ команды
+        закреплён отдельно (`test_drain_inbox`); здесь закреплён текст,
+        потому что выпасть обратно он может независимо."""
+        self.assertIn("`init-tree`", self.text)
+        self.assertLess(self.text.index("`init-tree`"),
+                        self.text.index("## Order per item"))
+
     def test_it_names_the_order_references_before_the_path(self):
         """Цепочка разведена намеренно: переписчик читает дерево как оно
         есть, и путь, который уже уехал, он больше не найдёт. Порядок
