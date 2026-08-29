@@ -32,7 +32,7 @@
 | глоб дальше существования не проверяется, но границу корня не отменяет (`_classify_token`) | `**/items/**`, `**/*.base`, `**/README.md` в backtick'ах законны |
 | `_settings_paths` читает `.claude/settings*.json` и разворачивает `Инструмент(аргумент)` | `settings-fragment.json` **попадает** под этот проход: `**/knowledge/**` и `Edit(./knowledge/*/**)` дают ноль находок, это уже доказано зелёной фикстурой |
 | `check_frontmatter.scan` заходит только туда, где есть `views.base` | каркас без коллекций гейт frontmatter проходит тривиально; правка гейта нужна ради инстанса, а не ради каркаса |
-| `_ignored` превращает строку `.gitignore` в префикс `строка + "/"` | `.DS_Store` и `.obsidian/workspace*.json` периметр не портят; каталоги (`.trash/`) реально снимаются с обхода |
+| `_ignored` собирает из `.gitignore` три вещи: обычную строку — в префикс `строка + "/"`, строку с `!` — в `Ignored.negated`, отказ чтения самого файла — в `Ignored.undecodable`. `_in_perimeter` применяет отрицания **раньше** префикса и, не найдя префикса, сверяет запись `fnmatchcase`'ом как имя файла | все пять строк `.gitignore` каркаса работают: каталоги (`.trash/`, `node_modules/`, `__pycache__/`) снимаются префиксом, а `.DS_Store` и `.obsidian/workspace*.json` — файловой формой, которой префикс не ловил никогда. Отрицаний каркас не везёт: `!` в его `.gitignore` нет ни одного, и заводить их волна 3 не будет |
 | `check_package._iter_package_files` не пропускает `scaffold/` (в `SKIP_AT_ROOT` его нет) | каркас сканируется на `absolute-path` наравне со `scripts/` |
 | `check_links` не запускается на корне пакета ни одним тестом | backtick-токены каркаса судятся только когда корнем гейта назначен сам `scaffold/` |
 | `dev/mutate.py` уже несёт мутацию, подписанную «в3 К1» | таблицу мутаций волна 3 дополняет, а не заводит |
@@ -79,15 +79,18 @@
 читает удалённые в Obsidian заметки и находит в них дохлые ссылки в первом же
 живом инстансе. План кладёт пять строк, а не три; расхождение названо здесь.
 
-**6. Смежная дыра волны 1, которую волна 3 не чинит.**
-`.claude/settings.local.json` — машинно-локальный файл; репозиторий его
-игнорирует, но `_settings_paths` его всё равно читает: `_in_perimeter`
-сравнивает префиксы, а запись `.gitignore` об **одном файле** превращается
-в префикс `…json/`, не совпадающий ни с чем. Докстринг
-`check_package._is_ignored` прямо утверждает обратное («гейт ссылок читает
-только `*.md`»). Следствие: абсолютный путь в личных настройках автора станет
-`escapes-root` в каждом инстансе. Правка принадлежит гейту волны 1, в эту
-волну не входит и вынесена автору.
+**6. Смежная дыра волны 1 — закрыта до начала волны 3, расхождением больше
+не является.** План писался, когда `_in_perimeter` сравнивал только префиксы,
+и запись `.gitignore` об **одном файле** (`.claude/settings.local.json`)
+превращалась в префикс `…json/`, не совпадающий ни с чем: абсолютный путь
+в машинно-локальных настройках автора становился `escapes-root` в каждом
+инстансе. Сейчас `_in_perimeter` проверяет обе формы — поддерево префиксом,
+файл `fnmatchcase`'ом, — а докстринг `check_package._is_ignored`, который
+раньше утверждал обратное («гейт ссылок читает только `*.md`»), переписан
+и называет цену той неправды. Проверено прогоном: дерево с
+`.gitignore`-строкой `.claude/settings.local.json` и абсолютным путём внутри
+самого файла даёт ноль находок, без строки — `escapes-root`. Автору эта
+строка не едет; она стоит здесь, чтобы её не «нашли» третий раз.
 
 **7. Мелочь в §9.** «Меняют его только описание домена, неформализуемые
 запреты и **указатели**» соседствует с решением ниже удалить раздел
@@ -106,6 +109,7 @@
 | `scaffold/.gitignore` | периметр гейтов |
 | `scaffold/.twinkle-repo-builder` | версия рецепта, однополевая |
 | `scaffold/OPEN-THREADS.md` | адрес всего, на что не нашлось ответа |
+| `scripts/boundary.py` | переезжает из `hooks/` целиком: граница рабочего каталога — общий модуль, у неё два потребителя, а определение обязано быть одно |
 | `scripts/install_scaffold.py` | копия каркаса + слияние настроек, одна детерминированная операция |
 | `skills/create-context-repo/SKILL.md` | порядок, три вопроса, два коммита |
 | `skills/create-context-repo/eval.txt` | фразы срабатывания на обоих языках и соседние, по которым не должен |
@@ -936,16 +940,34 @@ class TestPathScopedRules(unittest.TestCase):
         self.assertEqual(actual, {name: [glob] for name, glob in CROSS_CUTTING.items()})
 
     def test_every_rule_ends_with_one_of_the_two_closing_forms(self):
+        """Закрытие — **абзац**, а не строка: текст после последней пустой,
+        склеенный в одну.
+
+        Прочтение «последняя непустая строка» роняло восемь правил из
+        одиннадцати: у areas, collection, core, decisions, knowledge,
+        projects, sources и views закрытие переносится на две строки, и
+        последней оказывалась вторая половина фразы. Чинить это переливкой
+        одиннадцати файлов в одну длинную строку значило бы портить прозу
+        ради теста. Соседний `test_a_named_gate_is_a_gate_that_exists`
+        ищет то же место через `rfind` по всему тексту, то есть уже читает
+        закрытие абзацем: два прочтения одного места — это расхождение,
+        а не строгость.
+
+        `tmp.md` старую форму проходил **случайно** — его фраза уместилась
+        в одну строку. Восстанавливать построчное чтение по этому образцу
+        нельзя: оно зелёное на совпадении длины, а не на форме.
+        """
         wrong = []
         for path in rule_files():
-            lines = [line for line in path.read_text(encoding="utf-8").split("\n")
-                     if line.strip()]
-            last = lines[-1].strip() if lines else ""
-            if last == NOT_GATED:
+            paragraphs = [block for block
+                          in path.read_text(encoding="utf-8").split("\n\n")
+                          if block.strip()]
+            closing = " ".join(paragraphs[-1].split()) if paragraphs else ""
+            if closing == NOT_GATED:
                 continue
-            if last.startswith(HELD) and last[len(HELD):].strip():
+            if closing.startswith(HELD) and closing[len(HELD):].strip():
                 continue
-            wrong.append((path.name, last))
+            wrong.append((path.name, closing))
         self.assertEqual(wrong, [])
 
     def test_a_named_gate_is_a_gate_that_exists(self):
@@ -1629,6 +1651,16 @@ Expected: `test_the_scaffold_is_exactly_these_files` FAIL, если инвент
 | `unresolved` на `` `views.base` `` | коллекций в каркасе нет | писать `**/*.base` либо без backtick'ов |
 | `unresolved` на `` `items/` `` | папки записей в каркасе нет | писать `**/items/**` |
 | `unresolved` на `` `.claude/rules/…` `` | ссылка переживает свой каталог | убрать вовсе |
+| `undecodable` на файле каркаса | файл сохранён не в UTF-8; ссылки в нём не проверил никто, и класс поэтому ошибка, а не отчёт | пересохранить в UTF-8 одним движением |
+| `dead-allow` или `broad-allow` | оба приходят только из `.link-allow`, а каркас его не везёт | это не находка о тексте: краснеет заодно `test_the_scaffold_ships_neither_allowlist_nor_hooks`, и чинить надо инвентарь |
+
+Последние две строки — про классы, которых на момент написания плана не
+существовало вовсе. Обе видны сегодня на битой фикстуре, так что это не
+догадка; в каркасе, каким его пишут задачи 2–5, ни одна из них возникнуть не
+может, и стоят они здесь ровно затем, чтобы отчёт с незнакомым классом не
+читали как поломку гейта. Полный список — `scripts/findings.py`,
+`LINK_CLASSES`; таблица выше не перечисление классов, а перечисление
+вероятных причин.
 
 - [ ] **Step 3: Реализация**
 
@@ -1656,10 +1688,31 @@ git commit -m "wave3: каркас как чистая фикстура — но
 Копия байт в байт нужна не из эстетики: одинаковость инстансов проверяется
 сравнением байтов, а не доверием к генератору.
 
+Установщик пишет в дерево, значит обязан спросить границу рабочего каталога
+(незыблемое №6). Спросить, а не переписать: предикат уже отгружен волной 2 в
+`hooks/boundary.py::outside` — с той же нормализацией, тем же посегментным
+сравнением и тем же примером про соседний каталог, начинающийся на имя
+корня. Второй такой же предикат внутри `scripts/install_scaffold.py` был бы
+копией отсуженного решения, а расходятся копии молча: этот проект держит
+`tests/test_zones.py::TestSingleDefinition` ровно против такой поломки,
+потому что в сопоставимом продукте однажды намерили три разошедшиеся
+таблицы одних и тех же восьми зон. Копия предиката тем же тестом **не**
+ловится — он сторожит таблицу зон, и только её. И дальше становится хуже,
+а не стоит на месте: закрытие волны обещает `scripts/install_scaffold.py`
+волне 4, ADOPT унаследовал бы копию, и копий стало бы три.
+
+Поэтому первым делом предикат переезжает в `scripts/` — туда, где живут
+общие модули и откуда его читают оба потребителя, `hooks/` и `scripts/`,
+— а Step 3 закрывает это тестом на **одно** определение.
+
 **Files:**
+- Move: `hooks/boundary.py` → `scripts/boundary.py`
 - Create: `scripts/install_scaffold.py`
-- Modify: `scripts/check_package.py` (`_PRODUCT_DIRS`)
-- Test: `tests/test_install_scaffold.py`, `tests/test_scaffold.py`
+- Modify: `scripts/check_package.py` (`_PRODUCT_DIRS`), `hooks/hook.py`
+  (строка импорта), `dev/mutate.py` (путь в мутации «в2 К4»)
+- Test: `tests/test_install_scaffold.py`, `tests/test_scaffold.py`,
+  `tests/test_boundary.py` (строка импорта плюс класс на одно определение;
+  двенадцать утверждений волны 2 не меняются)
 
 - [ ] **Step 1: Написать падающий тест**
 
@@ -1857,7 +1910,129 @@ Expected: `ModuleNotFoundError: scripts.install_scaffold`, и отдельно
 `test_the_product_hash_covers_the_scaffold` FAIL — хеши равны, потому что
 `scaffold` в `_PRODUCT_DIRS` пока нет.
 
-- [ ] **Step 3: Реализация — `scripts/install_scaffold.py`**
+- [ ] **Step 3: Одно определение границы — предикат переезжает в `scripts/`**
+
+Сначала тест, потом переезд. Тест дописывается в `tests/test_boundary.py`,
+а не в `tests/test_install_scaffold.py`: последний на этом шаге не
+импортируется вовсе — `scripts.install_scaffold` ещё не написан, — и красный
+шаг вышел бы ошибкой импорта вместо утверждения. К импортам файла
+добавляются `re` и `ROOT = Path(__file__).resolve().parent.parent`.
+
+```python
+# Признак собственной копии предиката границы: нормализация `realpath`
+# **и** посегментное сравнение с корнем — в одном файле. Два сигнала, а не
+# один: `os.path.realpath` сам по себе стоит в `hooks/hook.py` шесть раз и
+# там законен, а срез `parts[:len(` без нормализации — уже другая проверка.
+# Копию выдаёт именно пара.
+#
+# Срез ищется без ведущей точки: копия, которую этот план и вёз, сначала
+# складывала сегменты в локальные `root_parts`/`target_parts` и резала уже
+# их, — `\.parts\[` не нашёл бы её ни разу.
+NORMALISATION = "os.path.realpath"
+SEGMENTS = re.compile(r"parts\[:\s*len\(")
+
+# Каталоги вне пакета: тот же периметр, что у
+# `tests/test_zones.py::TestSingleDefinition`, плюс `dev/` — таблица мутаций
+# цитирует продукт по построению и офендером быть не может.
+_NOT_PACKAGE = {".git", "__pycache__", "tests", "fixtures", "docs", "dev"}
+
+
+def _boundary_carriers(root):
+    """Файлы пакета, несущие собственную реализацию сравнения с корнем."""
+    out = []
+    for path in sorted(Path(root).rglob("*.py")):
+        rel = path.relative_to(root)
+        if any(part in _NOT_PACKAGE for part in rel.parts):
+            continue
+        text = path.read_text(encoding="utf-8")
+        if NORMALISATION in text and SEGMENTS.search(text):
+            out.append(rel.as_posix())
+    return out
+
+
+class TestOneBoundaryDefinition(unittest.TestCase):
+    """Предикат границы определён ровно один раз, и это `scripts/boundary.py`.
+
+    Утверждение прямое, а не эвристика про «похоже на копию»: список
+    несущих файлов сверяется целиком, и второй файл в нём — это провал.
+    Эвристика внутри признака грубая, как и у таблицы зон: копия,
+    написанная через `startswith` по строке, сюда не попадёт. Она и не
+    должна — такая копия не эквивалентна, она просто неверна, и её ловит
+    `TestOutside::test_prefix_match_alone_is_not_enough` этажом выше,
+    в тот же день, когда её позовут.
+    """
+
+    def test_only_one_file_carries_the_comparison(self):
+        self.assertEqual(_boundary_carriers(ROOT), ["scripts/boundary.py"])
+
+    def test_a_second_copy_is_visible_to_this_check(self):
+        """Регрессия на сам детектор: не находящий ничего зелен и бесполезен.
+
+        Посажена не выдумка, а буквально тот `_inside`, который вёз этот
+        план до правки, — с локальными `root_parts`/`target_parts`.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp)
+            (fake / "scripts").mkdir()
+            (fake / "scripts" / "boundary.py").write_bytes(
+                (ROOT / "scripts" / "boundary.py").read_bytes())
+            (fake / "scripts" / "install_scaffold.py").write_text(
+                "import os\n"
+                "from pathlib import Path\n"
+                "\n"
+                "def _inside(root, target):\n"
+                "    root_parts = Path(os.path.realpath(str(root))).parts\n"
+                "    target_parts = Path(os.path.realpath(str(target))).parts\n"
+                "    return target_parts[:len(root_parts)] == root_parts\n",
+                encoding="utf-8")
+            self.assertEqual(_boundary_carriers(fake),
+                             ["scripts/boundary.py",
+                              "scripts/install_scaffold.py"])
+```
+
+Run: `python3 -m unittest tests.test_boundary.TestOneBoundaryDefinition -v`
+Expected: `test_only_one_file_carries_the_comparison` FAIL —
+`AssertionError: ['hooks/boundary.py'] != ['scripts/boundary.py']`. Несущий
+файл уже один, и это важно: краснеет не «копий много», а «единственное
+определение лежит не там, откуда его смогут спросить оба потребителя».
+`test_a_second_copy_is_visible_to_this_check` на этом шаге тоже красный —
+он копирует `scripts/boundary.py`, которого ещё нет.
+
+Переезд — целым модулем, а не одной функцией. `find_root` и `outside` —
+две половины одного вопроса: докстринг `find_root` прямо говорит, что
+возвращает нормализованный путь «он же база для `outside`», и развести их
+по разным каталогам значило бы завести два места, где решают, что такое
+корень. Волне 4 `find_root` нужен из `scripts/` наравне с `outside`:
+ADOPT ищет маркер до того, как что-то писать.
+
+1. `git mv hooks/boundary.py scripts/boundary.py`. Содержимое не меняется
+   ни на байт — переезжает место, а не решение.
+2. `hooks/hook.py`: `from hooks import bashscan, boundary, summary, turnfiles`
+   → `from hooks import bashscan, summary, turnfiles`, а `boundary` уезжает
+   в соседнюю строку `from scripts import ...`. Ни `boundary.find_root`, ни
+   `boundary.outside` в теле не трогаются.
+3. `tests/test_boundary.py`: `from hooks import boundary` →
+   `from scripts import boundary`. Единственная **существующая** строка
+   файла, которая меняется: все двенадцать утверждений волны 2 остаются
+   дословно теми же, и это условие правки, а не пожелание. Дописанное —
+   только класс выше.
+4. `dev/mutate.py`, мутация «граница сравнивается без нормализации» (в2 К4):
+   путь `"hooks/boundary.py"` → `"scripts/boundary.py"`. Без этого шага
+   оснастка отчитается «не легла» — то есть волна 3 сломала бы
+   доказательство критерия волны 2, и отчёт назвал бы это устаревшей
+   таблицей, а не переездом.
+
+Реэкспорта в `hooks/boundary.py` не остаётся. Модуль-перенаправление дал бы
+два импортируемых имени для одного предиката, а вся цена этого шага — в том,
+что имя одно; «переходный» шим переживает переход всегда.
+
+Run: `python3 -m unittest tests.test_boundary tests.test_hook_events tests.test_hook_entry -v`
+Expected: зелено; `_boundary_carriers` возвращает ровно
+`["scripts/boundary.py"]`. Этот шаг закрывается целиком и коммитится
+отдельно (Step 7): переезд с его тестом — законченная зелёная правка, ей
+не нужен ни установщик, ни каркас.
+
+- [ ] **Step 4: Реализация — `scripts/install_scaffold.py`**
 
 ```python
 #!/usr/bin/env python3
@@ -1875,12 +2050,12 @@ Expected: `ModuleNotFoundError: scripts.install_scaffold`, и отдельно
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from scripts import boundary
 from scripts.findings import EXIT_OK, EXIT_VIOLATION
 
 FRAGMENT = ".claude/settings-fragment.json"
@@ -1924,18 +2099,6 @@ def merge_settings(existing, fragment):
     return merged
 
 
-def _inside(root, target):
-    """Цель лежит внутри корня после нормализации.
-
-    Незыблемое №6: плагин не пишет ничего вне корня репозитория. Проверка
-    посимвольная по нормализованному пути, а не по строковому префиксу:
-    `/x/repo-2` начинается с `/x/repo`, но лежит снаружи.
-    """
-    root_parts = Path(os.path.realpath(str(root))).parts
-    target_parts = Path(os.path.realpath(str(target))).parts
-    return target_parts[:len(root_parts)] == root_parts
-
-
 def install(scaffold, root):
     """Копирует каркас в `root`, сливает настройки. Возвращает список путей.
 
@@ -1956,7 +2119,10 @@ def install(scaffold, root):
         if rel == FRAGMENT:
             continue
         target = root / rel
-        if not _inside(root, target):
+        # Незыблемое №6, и спрошено оно у единственного места, которое на
+        # этот вопрос отвечает. Своя проверка здесь была бы вторым
+        # определением границы — см. Step 3.
+        if boundary.outside(target, root):
             raise Refused("путь уходит за корень репозитория: %s" % rel)
         if target.exists():
             raise Refused("файл уже существует, каркас не пишется поверх: %s" % rel)
@@ -2008,7 +2174,7 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-- [ ] **Step 4: Реализация — каркас попадает в снимок продукта**
+- [ ] **Step 5: Реализация — каркас попадает в снимок продукта**
 
 В `scripts/check_package.py`:
 
@@ -2022,14 +2188,25 @@ if __name__ == "__main__":
 _PRODUCT_DIRS = ("scripts", ".claude-plugin", "hooks", "skills", "scaffold")
 ```
 
-- [ ] **Step 5: Прогнать — должно пройти**
+- [ ] **Step 6: Прогнать — должно пройти**
 
 Run: `./check`
-Expected: код 0.
+Expected: код 0. Отдельно `python3 dev/mutate.py` обязан пройти без единого
+«не легла»: переезд модуля тронул путь в мутации в2 К4, и это единственное
+место, где волна 3 достаёт до доказательств волны 2.
 
-- [ ] **Step 6: Коммит**
+- [ ] **Step 7: Коммит**
+
+Два коммита, а не один: переезд предиката — правка волны 2, и в истории
+она обязана читаться отдельно от установщика, который её потребовал.
+Первый коммит самодостаточен и зелен сам по себе — модуль, его потребители,
+его тесты и путь в оснастке мутаций.
 
 ```bash
+git add hooks/boundary.py scripts/boundary.py hooks/hook.py \
+        tests/test_boundary.py dev/mutate.py
+git commit -m "граница рабочего каталога переезжает в scripts: одно определение на пакет"
+
 git add scripts/install_scaffold.py scripts/check_package.py \
         tests/test_install_scaffold.py tests/test_scaffold.py
 git commit -m "wave3: установщик каркаса — копия побайтово и слияние настроек"
@@ -2520,16 +2697,36 @@ git commit -m "wave3: скилл create-context-repo — порядок, три 
         ),
     ),
     Mutation(
+        # Анкер — на поведении, а не на строках Task 1. Мутация снимает
+        # **ветку, исключающую README коллекции из перечисления**, и
+        # опознаёт её по двум коротким приметам: сама сверка (`== declaration`,
+        # без отступа и без имени слева) и её `continue`. Как записана
+        # сверка — `rel == declaration_rel`, `record.resolve() == declaration`
+        # или что-то третье — мутации всё равно, отступ в маркер не входит,
+        # комментарий внутри ветки её не сдвигает.
+        #
+        # Почему не дословный кусок: первая редакция этой строки цитировала
+        # две строки Task 1 вместе с шестнадцатью пробелами отступа — и
+        # устарела до первого прогона, потому что Task 1 переписали. Таблица
+        # мутаций, цитирующая реализацию, гниёт при каждом касании
+        # реализации; `substitution` отчиталась бы «не легла», то есть о
+        # чужой правке, а не о гейте (тот же довод, что у `line_removal`
+        # и `block_replacement` в их докстрингах).
+        #
+        # `line_removal` здесь не годится: снятая одна строка `if` оставляет
+        # голый `continue`, гейт перестаёт проверять записи вовсе и
+        # `test_the_collections_own_readme_is_not_a_record` — он ждёт пустого
+        # списка — становится **зелёным**. Мутация выжила бы, ничего не сказав.
         criterion="в3 К1",
         name="README коллекции снова перечисляется как запись",
         module="tests.test_check_frontmatter",
         expect="tests.test_check_frontmatter.TestCollectionOwnReadme"
                ".test_the_collections_own_readme_is_not_a_record",
         steps=(
-            substitution(
+            block_replacement(
                 "scripts/check_frontmatter.py",
-                "                if record.resolve() == declaration:\n"
-                "                    continue\n",
+                "== declaration",
+                "continue",
                 "",
             ),
         ),
@@ -2541,6 +2738,12 @@ git commit -m "wave3: скилл create-context-repo — порядок, три 
 мутация, которую убивает только тест второй половины критерия 1; посади она
 несуществующий путь, её убил бы любой гейтовый тест, и вторая половина
 осталась бы недоказанной.
+
+Про пятую: попутно краснеет весь `TestCollectionOwnReadme` — сверено
+прогоном на дереве с реализацией Task 1: убит объявленный тест, попутно ещё
+три, и все три про то же самое послабление. Это не «КРАСНОЕ НЕ ТО»:
+объявленный тест в разнице есть, а соседи по классу проверяют границы того
+же исключения и обязаны краснеть вместе с ним.
 
 - [ ] **Step 2: Прогнать оснастку**
 
@@ -2561,9 +2764,11 @@ Expected: все мутации убиты; ноль ВЫЖИЛА, ноль КР
 `scripts/install_scaffold.py` (ADOPT разворачивает недостающую форму тем же
 кодом), `merge_settings`.
 
-В tracker — строка волны и **семь расхождений** из раздела «Расхождения»
+В tracker — строка волны и **шесть расхождений** из раздела «Расхождения»
 этого плана, каждое отдельной строкой в «Правки спеки», с пометкой, какие
-из них правит агент, а какие ждут автора.
+из них правит агент, а какие ждут автора. Строк в разделе семь: шестая
+закрыта до начала волны (периметр уже различает файл и поддерево), и в
+трекер она не едет — там она была бы правкой спеки, которой нет.
 
 - [ ] **Step 5: Коммит**
 
@@ -2597,7 +2802,10 @@ git commit -m "wave3: пять мутаций на критерии выхода
 (§21: каркас новой версии разворачивается в `tmp/` и сравнивается с деревом);
 `scripts/install_scaffold.py` — ADOPT дописывает недостающую форму тем же
 кодом и тем же отказом писать поверх; `merge_settings` — слияние настроек
-без потери чужих ключей.
+без потери чужих ключей; `scripts/boundary.py` — граница рабочего каталога
+и поиск корня, теперь доступные из `scripts/` без импорта из `hooks/`.
+ADOPT спрашивает границу, а не пишет свою: копий было бы три, и
+`TestOneBoundaryDefinition` краснеет на второй.
 
 **Отдаёт волне 5:** порог «файла сверх размера» — наблюдение о дереве, и его
 место в слое спроса MAINTAIN, где обход дерева уже есть. `.gitignore` размера
