@@ -346,6 +346,42 @@ class TestPackageCheck(unittest.TestCase):
                 [("notes.md", 1, "absolute-path", "C:/x"),
                  ("notes.md", 2, "absolute-path", "C:\\x")])
 
+    def test_an_octal_escape_run_is_not_a_unc_server(self):
+        r"""Ветка UNC ищет имя сервера, а сплошные цифры — не имя.
+
+        Проза про octal-escape'ы вывода git (`"areas/\\321\\204.md"`)
+        совпадала с формой `\\сервер\` и красила собственный репозиторий:
+        находка `absolute-path` утверждала, что в строке абсолютный путь,
+        которого там нет.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "hooks" / "note.py").write_text(
+                r'# git отдаёт путь как "areas/\\321\\204.md"' + "\n",
+                encoding="utf-8")
+            self.assertEqual(places(check(root)), [])
+
+    def test_a_real_unc_path_is_still_absolute(self):
+        r"""Цена сужения — ноль живых форм.
+
+        Имя хоста, IP-адрес (точка нецифровая) и запись через удвоенную
+        обратную косую внутри строкового литерала остаются находкой.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "notes.md").write_text(
+                r"Смотри \\server\share\x.py" + "\n"
+                + r"Смотри \\192.168.1.1\share\x.py" + "\n",
+                encoding="utf-8")
+            (root / "conf.py").write_text(
+                r'P = "\\\\server\\share"' + "\n", encoding="utf-8")
+            self.assertEqual(
+                places(check(root)),
+                [("conf.py", 1, "absolute-path", r'P = "\\\\server\\share"'),
+                 ("notes.md", 1, "absolute-path", r"Смотри \\server\share\x.py"),
+                 ("notes.md", 2, "absolute-path",
+                  r"Смотри \\192.168.1.1\share\x.py")])
+
     def test_a_home_of_another_user_is_absolute_too(self):
         """`~user/` — та же машинная зависимость, что и `~/`, и она была зелёной."""
         with tempfile.TemporaryDirectory() as tmp:
