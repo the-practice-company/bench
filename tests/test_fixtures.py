@@ -70,6 +70,7 @@ Obsidian Properties пишет multi-value свойство. Раньше там
 Flow-форма осталась в зелёной фикстуре — проверяются обе.
 """
 
+import ast
 import shutil
 import subprocess
 import sys
@@ -167,6 +168,85 @@ class TestExactFindings(unittest.TestCase):
         self.assertEqual(check_frontmatter.scan(GREEN).counts(), {})
 
 
+# Модули, чей импорт в гейте запрещён целиком. Запрещается импорт, а не
+# отдельный вызов: у каждого из них столько написаний текущего момента, что
+# перечислять их — заводить второй неполный список рядом с этим.
+#
+# Часы по назначению:
+#   datetime  — `datetime.now()`, `date.today()`;
+#   time      — `time.time()`, `time.monotonic()`, `time.localtime()`;
+#   calendar  — часы в один шаг: модуль сам держит `import datetime`, поэтому
+#               `calendar.datetime.date.today()` работает, не называя datetime
+#               ни разу. Признак имени этого не видит вообще;
+#   zoneinfo  — сам момента не читает, но существует только ради datetime.
+#               Стоит здесь растяжкой: его появление в гейте означает, что
+#               время приехало дорогой, которой в этом списке нет.
+#
+# Не часы, но ровно та же поломка — отчёт перестаёт быть побайтово тем же:
+#   random    — сеется на процесс, второй прогон даёт другой отчёт;
+#   uuid      — `uuid1()` кладёт в значение текущее время, `uuid4()` — random
+#               под другим именем.
+#
+# Не часы и не про воспроизводимость:
+#   importlib — динамический импорт обесценивает весь список выше, превращая
+#               запрет в пожелание. Гейту незачем импортировать по строке.
+_CLOCK_MODULES = frozenset({
+    "datetime", "time", "calendar", "zoneinfo",
+    "random", "uuid",
+    "importlib",
+})
+
+# Написания текущего момента через модуль, который запретить нельзя: `os` и
+# `pathlib` держат тут всё, от обхода дерева до чтения файла.
+#
+#   st_atime/st_ctime/st_mtime/st_birthtime и формы `_ns` — отметки времени
+#     файла. Ровно это и посадил аудит: `Path(__file__).stat().st_mtime`
+#     внутри `scan()` пережил подстрочный поиск, не уронив ни одного теста;
+#   stat/lstat — вызов, в который заходят только ради полей выше. Запрет шире
+#     нужного намеренно: половина полей `stat_result` — время, и гейт, которому
+#     вдруг понадобился `st_size`, обязан это обосновать, а не пройти молча;
+#   getmtime/getctime/getatime — те же отметки написанием `os.path`;
+#   times/utime — текущий момент написанием `os`: `os.times()` читает время
+#     процесса, `os.utime(path)` без второго аргумента ставит текущее.
+#
+# `time.monotonic` и родня сюда не входят: назвать их, не назвав `time`,
+# нельзя, а `time` запрещён строкой выше. Дублировать запрет — делать вид, что
+# список полнее, чем он есть.
+_CLOCK_ATTRS = frozenset({
+    "st_atime", "st_ctime", "st_mtime", "st_birthtime",
+    "st_atime_ns", "st_ctime_ns", "st_mtime_ns", "st_birthtime_ns",
+    "stat", "lstat",
+    "getmtime", "getctime", "getatime",
+    "times", "utime",
+})
+
+
+def _clock_reads(tree):
+    """Обращения к часам в разобранном модуле: (строка, написание).
+
+    Читается дерево разбора, а не текст. Подстрочный поиск не различает код и
+    прозу — в `scripts/check_package.py` слова `os.remove` и `git restore`
+    стоят в комментариях, — и не видит переименования: `import time as t`,
+    `from datetime import datetime as dt`. Оба различия для этой проверки
+    решающие.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".")[0] in _CLOCK_MODULES:
+                    yield node.lineno, "import %s" % alias.name
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or "."
+            if module.split(".")[0] in _CLOCK_MODULES:
+                yield node.lineno, "from %s import ..." % module
+            for alias in node.names:
+                if alias.name in _CLOCK_ATTRS:
+                    yield node.lineno, "from %s import %s" % (module, alias.name)
+        elif isinstance(node, ast.Attribute):
+            if node.attr in _CLOCK_ATTRS:
+                yield node.lineno, ".%s" % node.attr
+
+
 class TestDeterminism(unittest.TestCase):
     def test_report_is_identical_from_another_checkout_location(self):
         first = check_links.scan(BROKEN).render()
@@ -198,14 +278,55 @@ class TestDeterminism(unittest.TestCase):
         `--today` существует ради правил, зависящих от даты (волна 5). Пока
         таких правил нет, единственное, что делает отчёт воспроизводимым, —
         отсутствие обращений к часам.
+
+        Проверка читает код разбором, а не поиском подстрок. Прошлая её версия
+        искала пять литералов, и аудит посадил два настоящих чтения часов —
+        `Path(__file__).stat().st_mtime` внутри `scan()` и `import calendar`,
+        — которые пережили её оба, не уронив ни одного теста. Список запретов
+        и причина каждой строки — у `_CLOCK_MODULES` и `_CLOCK_ATTRS`.
+
+        Дефект был не только в узости списка. Мутация, которая эту проверку
+        убивала, сажала `import datetime` — первый же литерал, который
+        проверка искала. Она доказывала, что список содержит собственную
+        запись, а не что гейты обходятся без часов.
+
+        **Чего разбор не видит.** Список остаточного риска — часть проверки,
+        как `bashscan.UNCATCHABLE`: без него молчание проверки читается как
+        доказательство, которым оно не является.
+
+        - **часы через имя, собранное на исполнении**: `getattr(os, "st" +
+          "at")`, `importlib.import_module(name)`, `__import__(name)`. Разбор
+          читает имена как написано. `importlib` поэтому и стоит в запрете
+          модулей — закрыть эту дорогу целиком нечем, но открывать её
+          импортом незачем;
+        - **часы в дочернем процессе**: `check_package.py` запускает и гейты,
+          и `unittest` через `subprocess.run`. Видно вызов, а не то, что
+          делает ребёнок;
+        - **дата из среды**: `os.environ` в гейте есть по делу
+          (`_NESTED_RUN_GUARD`), и разбор не судит, что лежит в переменной;
+        - **часы в модуле вне `scripts/`**. Проверка обходит каталог, а не
+          граф импортов. Сегодня `scripts/` импортирует только из `scripts/`,
+          и замыкание совпадает с каталогом; в день, когда гейт потянет
+          что-нибудь из `hooks/`, часы `hooks/summary.py` приедут внутрь
+          незамеченными.
+
+        **Про `hooks/` проверка намеренно не расширена.** Критерий 2 говорит
+        про отчёт гейта, а сводка хука отчётом гейта не является: она про
+        текущее состояние дерева, читает `git status` и `git log`, и требовать
+        от неё побайтового совпадения между прогонами бессмысленно —
+        совпадать ей не с чем. `hooks/summary.py` уже держит `import datetime`
+        и делает им разбор, а не чтение часов
+        (`datetime.date.fromisoformat`); распространить запрет на `hooks/`
+        значит покраснеть на законном разборе даты и научить чинить это
+        исключением. Дорога от хуков к часам всё равно короче любого запрета
+        имён: они зовут `git`, а тот докладывает настоящие отметки времени, —
+        и запрет на `import datetime` этого не трогает.
         """
         offenders = []
         for path in sorted((ROOT / "scripts").glob("*.py")):
-            text = path.read_text(encoding="utf-8")
-            for marker in ("import datetime", "import time", "datetime.now",
-                           "date.today", "time.time"):
-                if marker in text:
-                    offenders.append("%s: %s" % (path.name, marker))
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            offenders.extend("%s:%d: %s" % (path.name, line, spelling)
+                             for line, spelling in _clock_reads(tree))
         self.assertEqual(offenders, [])
 
     def test_today_is_carried_on_the_report(self):
