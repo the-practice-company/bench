@@ -13,13 +13,23 @@
 
 ## Состояние плана
 
-**Задачи 1–15 исполнены** — код в дереве, `./check` зелёный, 117 тестов,
-галочки проставлены. Перечитывать и переисполнять их не нужно.
+**Задачи 1–15 исполнены** — код в дереве, `./check` зелёный, 117 тестов **на
+тот момент**, галочки проставлены. Перечитывать и переисполнять их не нужно.
+Число тестов с тех пор выросло втрое и здесь не обновляется: это отметка о
+состоянии на закрытии задачи 15, а не счётчик набора.
 
 **Начинать с задачи 16.** Задачи 16–23 закрывают дыры, которые нашла
 состязательная проверка уже после того, как `./check` позеленел: зелёный
 набор не краснел на посаженном нарушении, значит проверка в этих местах
 слепа. Порядок и три решения, ждущие автора, — в разделе «Задачи 16–23».
+
+**Значения `archetype` здесь английские** — `pipeline`, `registry`, `journal`,
+— как в спеке, в коде обоих гейтов и в обеих фикстурах. Русские написания
+(`конвейер`, `реестр`) простояли в этом файле дольше всех: словарь сделали
+английским в спеке и провели в код, а план остался последним документом на
+старом словаре — и `REGISTRY_ARCHETYPE = "реестр"` в задаче 11 не совпадал ни
+с одним значением, которое плагин когда-либо запишет. Слово «конвейерная» о
+зоне — по-прежнему русская проза и значением поля не является.
 
 ---
 
@@ -467,10 +477,10 @@ class TestParse(unittest.TestCase):
         self.assertEqual(parse(text), {"tags": ["найм", "продукт"]})
 
     def test_nested_map_is_how_values_are_declared(self):
-        text = "---\narchetype: конвейер\nvalues:\n  status: [open, decided, revisited]\n---\n"
+        text = "---\narchetype: pipeline\nvalues:\n  status: [open, decided, revisited]\n---\n"
         self.assertEqual(
             parse(text),
-            {"archetype": "конвейер", "values": {"status": ["open", "decided", "revisited"]}},
+            {"archetype": "pipeline", "values": {"status": ["open", "decided", "revisited"]}},
         )
 
     def test_empty_value_is_none_not_empty_string(self):
@@ -1071,7 +1081,7 @@ EOF
 # frontmatter: missing-required, value-outside-vocabulary, unparseable
 cat > fixtures/broken/decisions/README.md <<'EOF'
 ---
-archetype: конвейер
+archetype: pipeline
 values:
   status: [open, decided, revisited]
 ---
@@ -1145,7 +1155,7 @@ EOF
 
 cat > fixtures/green/decisions/README.md <<'EOF'
 ---
-archetype: конвейер
+archetype: pipeline
 values:
   status: [open, decided, revisited]
 ---
@@ -1695,7 +1705,7 @@ git commit -m "wave1: ambiguous и гигиена аллоулиста"
 
 ### Task 11: Гейт ссылок — `orphan` по объявлению
 
-Сирота считается **не везде**, а там, где отсутствие входящей ссылки что-то значит: зона `sources` по конвенции и коллекция, объявившая `archetype: реестр`.
+Сирота считается **не везде**, а там, где отсутствие входящей ссылки что-то значит: зона `sources` по конвенции и коллекция, объявившая `archetype: registry`.
 
 **Files:**
 - Modify: `scripts/check_links.py`
@@ -1728,7 +1738,7 @@ Expected: FAIL — `AssertionError: None != 1`
 ```python
 from scripts.frontmatter import FrontmatterError, parse as parse_frontmatter
 
-REGISTRY_ARCHETYPE = "реестр"
+REGISTRY_ARCHETYPE = "registry"
 
 
 def _orphan_perimeter(root):
@@ -3396,4 +3406,6 @@ git commit -m "wave1: --today наблюдаем, отсутствие часо�
 `superpowers:finishing-a-development-branch`, затем волны 2 и 3 (они
 параллельны) по `docs/roadmap.md`.
 
-**Что волна 1 отдаёт волнам 2 и 3:** `scripts/zones.py` — восемь зон, префиксы, права записи, `DENY_PATTERNS`; `scripts/findings.py` — имена классов, `EXIT_OK`, `EXIT_VIOLATION`, `EXIT_TOOL_FAILED`; `scripts/paths.py` — признак пути и `escapes_root`; CLI обоих гейтов: `python3 scripts/check_links.py <корень> [--today ГГГГ-ММ-ДД]`, код 2 при нарушении.
+**Что волна 1 отдаёт волнам 2 и 3:** `scripts/zones.py` — восемь зон, префиксы, права записи, `DENY_PATTERNS`; `scripts/findings.py` — имена классов, `EXIT_OK`, `EXIT_VIOLATION`; `scripts/paths.py` — признак пути и `escapes_root`; CLI обоих гейтов: `python3 scripts/check_links.py <корень> [--today ГГГГ-ММ-ДД]`, код 2 при нарушении.
+
+`EXIT_TOOL_FAILED` из отдаваемого убран: имя объявлено и не используется нигде, ветка «не смог запуститься» возвращает `EXIT_OK` напрямую. Значения совпадают (`0`), поведение верное, но контракт держит не то имя, которое обещано. Разбор — в `docs/roadmap.md`, «Отдаёт волнам 2 и 3».
