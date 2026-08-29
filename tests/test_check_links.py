@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from scripts import check_links
 from scripts.check_links import extract_links, scan
 from tests.test_fixtures import places
 
@@ -601,8 +602,8 @@ class TestGitignoreNegation(unittest.TestCase):
 
     Игнорируемое множество оказывалось строго шире того, что репозиторий
     игнорирует на самом деле, — обратное тому, что обещает докстринг
-    `_ignored`. Файл, который `.gitignore` возвращает в дерево, гейт
-    не читал.
+    `_gitignore_prefixes`. Файл, который `.gitignore` возвращает в дерево,
+    гейт не читал.
     """
 
     def test_a_negated_file_is_inside_the_perimeter(self):
@@ -970,3 +971,47 @@ class TestGitignoredFileIsOutsideThePerimeter(unittest.TestCase):
             self.assertEqual(
                 places(scan(root)),
                 [("core/me.md", 1, "unresolved", "[[scratch]]")])
+
+
+class TestPerimeterSplit(unittest.TestCase):
+    """Разбор `.gitignore` и периметр гейта — две разные вещи.
+
+    `archive/` вшит в периметр гейта секцией 13 и остаётся там. Инвентарь
+    ADOPT обязан архив видеть, иначе он не может положить его в план — а
+    положить обязан (§18: папки в дереве не остаётся). Сросшиеся, эти два
+    множества дали бы инвентарь, слепой ровно к тому, ради чего заведён.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        (self.root / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
+
+    def test_the_gate_perimeter_still_carries_archive(self):
+        ignored = check_links._ignored(self.root)
+        self.assertIn("archive/", tuple(ignored))
+        self.assertIn("node_modules/", tuple(ignored))
+
+    def test_the_gitignore_perimeter_does_not(self):
+        ignored = check_links._gitignore_prefixes(self.root)
+        self.assertNotIn("archive/", tuple(ignored))
+        self.assertIn("node_modules/", tuple(ignored))
+        self.assertIn(".git/", tuple(ignored))
+
+    def test_the_undecodable_signal_survives_the_split(self):
+        """Нечитаемый `.gitignore` не проглатывается ни одним из двух."""
+        (self.root / ".gitignore").write_bytes(b"\xff\xfe node_modules/\n")
+        self.assertIsNotNone(check_links._ignored(self.root).undecodable)
+        self.assertIsNotNone(check_links._gitignore_prefixes(self.root).undecodable)
+
+    def test_the_negations_ride_through_the_split(self):
+        """Отрицание принадлежит `.gitignore`, а не гейту. Потеряв его на
+        разделении, периметр гейта стал бы строго шире репозиторного — ровно
+        та слепая зона 3, которую чинил `TestGitignoreNegation`."""
+        (self.root / ".gitignore").write_text(
+            "node_modules/\n!node_modules/keep.md\n", encoding="utf-8")
+        self.assertEqual(check_links._gitignore_prefixes(self.root).negated,
+                         ("node_modules/keep.md",))
+        self.assertEqual(check_links._ignored(self.root).negated,
+                         ("node_modules/keep.md",))
