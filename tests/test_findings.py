@@ -45,6 +45,32 @@ class TestFinding(unittest.TestCase):
             EXIT_VIOLATION)
 
 
+class TestAdoptClasses(unittest.TestCase):
+    def test_the_wave_carries_exactly_these_seven(self):
+        from scripts import findings
+        self.assertEqual(list(findings.ADOPT_CLASSES), [
+            "plan-unparseable",
+            "uncovered-path",
+            "overlapping-line",
+            "unagreed-change",
+            "line-state-conflict",
+            "foreign-repo",
+            "created-unrecoverable",
+        ])
+
+    def test_five_are_errors_and_two_are_reports(self):
+        """Отчёт — не смягчение: `foreign-repo` и `created-unrecoverable`
+        сообщают о свойствах чужого дерева, а не о нарушении процедуры.
+        Ошибкой их сделать значило бы объявить чужое дерево виноватым."""
+        from scripts import findings
+        by_severity = {}
+        for cls in findings.ADOPT_CLASSES:
+            by_severity.setdefault(findings.severity(cls), []).append(cls)
+        self.assertEqual(sorted(by_severity), ["error", "report"])
+        self.assertEqual(sorted(by_severity["report"]),
+                         ["created-unrecoverable", "foreign-repo"])
+
+
 class TestReportDeterminism(unittest.TestCase):
     def test_same_findings_in_any_order_render_identically(self):
         a = Finding("unresolved", "areas/b.md", 12, "[[nope]]")

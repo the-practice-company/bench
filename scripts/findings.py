@@ -42,6 +42,16 @@ PACKAGE_CLASSES = (
     "skill-name-mismatch",
 )
 
+ADOPT_CLASSES = (
+    "plan-unparseable",
+    "uncovered-path",
+    "overlapping-line",
+    "unagreed-change",
+    "line-state-conflict",
+    "foreign-repo",
+    "created-unrecoverable",
+)
+
 _SEVERITY = {
     "unresolved": "error",
     "md-link-to-file": "error",
@@ -90,6 +100,20 @@ _SEVERITY = {
     "skill-without-description": "error",
     "skill-without-eval": "error",
     "skill-name-mismatch": "error",
+    # Пять ошибок — про процедуру усыновления: план не разобрался, путь не
+    # покрыт, строки перекрылись, дерево ушло с плана, состояние строки
+    # противоречиво. Каждая означает, что дальше двигаться нельзя.
+    "plan-unparseable": "error",
+    "uncovered-path": "error",
+    "overlapping-line": "error",
+    "unagreed-change": "error",
+    "line-state-conflict": "error",
+    # Два отчёта — про свойства чужого дерева, которых ADOPT не создавал и
+    # чинить не вправе: вложенный репозиторий и невосстановимая дата
+    # создания. Ошибкой их сделать значило бы объявить чужое дерево
+    # виноватым и остановить процедуру на том, что в ней не чинится.
+    "foreign-repo": "report",
+    "created-unrecoverable": "report",
 }
 
 
