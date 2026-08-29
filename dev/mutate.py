@@ -287,12 +287,17 @@ MUTATIONS = (
         expect="tests.test_fixtures.TestExactFindings"
                ".test_every_link_finding_sits_on_its_own_specimen",
         steps=(
+            # Образец переехал вместе с резолвом: волна 4 вынесла обход из
+            # `scan` в `occurrences`, и строка резолва wikilink'а сменила
+            # отступ. Мутация та же — запрещённый откат на basename, — но
+            # искать её надо там, где резолвер теперь живёт.
             substitution(
                 "scripts/check_links.py",
-                "            candidates = index.get(target, [])\n",
-                "            candidates = index.get(target, [])\n"
-                '            if not candidates and "/" in target:\n'
-                '                candidates = index.get(target.rsplit("/", 1)[-1], [])\n',
+                "                candidates = index.get(target, [])\n",
+                "                candidates = index.get(target, [])\n"
+                '                if not candidates and "/" in target:\n'
+                "                    candidates = index.get("
+                'target.rsplit("/", 1)[-1], [])\n',
             ),
         ),
     ),

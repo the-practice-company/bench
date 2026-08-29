@@ -102,6 +102,22 @@ def normalise(target, base=""):
     return posixpath.normpath(joined)
 
 
+def resolve(target, base=""):
+    """Путь цели от корня репозитория. `base` — путь **ссылающегося файла**.
+
+    Отдельным именем, а не строкой внутри `escapes_root`, потому что
+    вопросов к одной и той же строке два: «выводит ли за корень» и «куда
+    именно указывает». Форма `base` у них обязана быть одна: два прочтения
+    (путь файла против его каталога) уже разводились по ошибке, и ревью
+    один раз называло это блокером. Держать переход «файл → каталог» в
+    одном месте дешевле, чем сверять две копии.
+
+    Возвращённое значение может начинаться с `..` или быть абсолютным —
+    это не отказ, а сигнал: судит его вызывающий (см. `normalise`).
+    """
+    return normalise(target, posixpath.dirname(base) if base else base)
+
+
 def escapes_root(target, base=""):
     """Выводит ли ссылка за корень репозитория.
 
@@ -118,5 +134,5 @@ def escapes_root(target, base=""):
         return False
     if target.startswith("/") or target.startswith("~"):
         return True
-    normalised = normalise(target, posixpath.dirname(base) if base else base)
+    normalised = resolve(target, base)
     return normalised == ".." or normalised.startswith("../")

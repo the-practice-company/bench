@@ -1015,3 +1015,100 @@ class TestPerimeterSplit(unittest.TestCase):
                          ("node_modules/keep.md",))
         self.assertEqual(check_links._ignored(self.root).negated,
                          ("node_modules/keep.md",))
+
+
+class TestOccurrences(unittest.TestCase):
+    """Единственный резолвер пакета. Точный список вхождений, а не счёт."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        (self.root / "core").mkdir()
+        (self.root / ".claude").mkdir()
+        (self.root / "CLAUDE.md").write_text(
+            "# Корень\n\nСмотри `core/me.md` и `нет.md`.\n", encoding="utf-8")
+        (self.root / "core" / "me.md").write_text(
+            "Ссылки: [[core/you]], [[нет]], [текст](you.md).\n", encoding="utf-8")
+        (self.root / "core" / "you.md").write_text("пусто\n", encoding="utf-8")
+        (self.root / ".claude" / "settings.json").write_text(
+            '{"permissions": {"deny": ["Edit(./core/me.md)"]}}\n', encoding="utf-8")
+
+    # Список снят пробой на этом же дереве примитивами гейта (`_index`,
+    # `extract_links`, `_exists_exactly`) до написания плана, а не выведен
+    # из головы. Расходится — ищи дефект в `occurrences`, а не в ожидании.
+    def test_the_exact_list_of_occurrences(self):
+        occs, unreadable = check_links.occurrences(self.root)
+        self.assertEqual(unreadable, [])
+        self.assertEqual(
+            [(o.path, o.line, o.kind, o.target, bool(o.candidates)) for o in occs],
+            [(".claude/settings.json", 1, "settings", "./core/me.md", True),
+             ("CLAUDE.md", 3, "token", "core/me.md", True),
+             ("CLAUDE.md", 3, "token", "нет.md", False),
+             ("core/me.md", 1, "mdlink", "you.md", True),
+             ("core/me.md", 1, "wikilink", "core/you", True),
+             ("core/me.md", 1, "wikilink", "нет", False)])
+
+    def test_a_candidate_is_a_repository_relative_path(self):
+        """`Edit(./core/me.md)` и `core/me.md` — одна цель. Пока кандидатом
+        ехал токен как записан, `find-refs`, спрошенный про второе, не
+        находил первое: резолвер один, а формы записи у него две."""
+        occs, _ = check_links.occurrences(self.root)
+        self.assertEqual(
+            {o.kind: o.candidates for o in occs if o.candidates},
+            {"settings": ["core/me.md"],
+             "token": ["core/me.md"],
+             "mdlink": ["core/you.md"],
+             "wikilink": ["core/you.md"]})
+
+    def test_R_counts_three_and_the_markdown_link_is_not_one_of_them(self):
+        """Markdown-ссылка резолвится — и всё равно в R не входит. Это
+        решение, а не побочный эффект: §13 делает её ошибкой всегда."""
+        self.assertEqual(check_links.count_resolvable(self.root), 3)
+
+    def test_the_only_kind_outside_R_is_the_markdown_link(self):
+        """Решение «markdown-ссылка в R не входит никогда» записано
+        исполняемо, а не комментарием: иначе новый вид вхождений попадёт
+        в R или выпадет из него молча."""
+        self.assertEqual(
+            sorted(set(check_links.OCCURRENCE_KINDS)
+                   - set(check_links.RESOLVING_KINDS)),
+            ["mdlink"])
+        occs, _ = check_links.occurrences(self.root)
+        self.assertEqual(sorted({o.kind for o in occs}),
+                         sorted(check_links.OCCURRENCE_KINDS))
+
+    def test_an_ambiguous_link_counts_once(self):
+        """Спор о том, какая цель, — не спор о том, есть ли она. Иначе
+        переезд, меняющий победителя, двигал бы R, ничего не сломав."""
+        (self.root / "other").mkdir()
+        (self.root / "other" / "you.md").write_text("х", encoding="utf-8")
+        (self.root / "core" / "me.md").write_text("[[you]]\n", encoding="utf-8")
+        occs, _ = check_links.occurrences(self.root)
+        wiki = [o for o in occs if o.kind == "wikilink"]
+        self.assertEqual(len(wiki), 1)
+        self.assertEqual(sorted(wiki[0].candidates),
+                         ["core/you.md", "other/you.md"])
+
+    def test_an_undecodable_file_is_returned_and_not_swallowed(self):
+        """Класс `undecodable` — суждение гейта, поэтому здесь только факт.
+        Молча он не теряется: незыблемое №4 запрещает и это."""
+        (self.root / "core" / "bad.md").write_bytes(b"[[\xff\xfe]]\n")
+        occs, unreadable = check_links.occurrences(self.root)
+        self.assertEqual([rel for rel, _, _ in unreadable], ["core/bad.md"])
+        self.assertEqual([o for o in occs if o.path == "core/bad.md"], [])
+
+    def test_the_gate_still_reports_that_file(self):
+        """Вынос обхода не имеет права проглотить находку гейта."""
+        (self.root / "core" / "bad.md").write_bytes(b"[[\xff\xfe]]\n")
+        classes = sorted(f.cls for f in check_links.scan(self.root).findings)
+        self.assertIn("undecodable", classes)
+
+    def test_the_perimeter_is_the_same_one_the_gate_reads(self):
+        """Резолвер не имеет права видеть больше гейта: файл из архива не
+        вхождение и не цель. Расширится периметр — покраснеет здесь."""
+        (self.root / "archive").mkdir()
+        (self.root / "archive" / "old.md").write_text(
+            "[[core/you]]\n", encoding="utf-8")
+        occs, _ = check_links.occurrences(self.root)
+        self.assertEqual([o for o in occs if o.path.startswith("archive/")], [])

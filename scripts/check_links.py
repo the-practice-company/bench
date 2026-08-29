@@ -233,6 +233,149 @@ def _index(root, ignored):
     return index
 
 
+class Occurrence:
+    """Одно вхождение ссылки в периметре гейта и то, что нашёл резолвер.
+
+    `candidates` — существующие пути **от корня репозитория**, в той же
+    форме, в какой их держит `_index`. Форма записи в тексте сюда не
+    протекает: `Edit(./core/me.md)` и `core/me.md` называют одну цель, и
+    потребитель, спросивший про вторую, обязан найти первую. Пусто значит
+    «цели нет», а не «не искали»: не искали — это `unreadable` из
+    `occurrences`.
+    """
+
+    __slots__ = ("path", "line", "raw", "target", "kind", "candidates")
+
+    def __init__(self, path, line, raw, target, kind, candidates):
+        self.path = path
+        self.line = line
+        self.raw = raw
+        self.target = target
+        self.kind = kind
+        self.candidates = list(candidates)
+
+    def key(self):
+        return (self.path, self.line, self.kind, self.target)
+
+    def __repr__(self):
+        return "Occurrence(%r, %d, %r, %r, %r)" % (
+            self.path, self.line, self.kind, self.target, self.candidates)
+
+
+OCCURRENCE_KINDS = ("mdlink", "settings", "token", "wikilink")
+
+# Виды, чьи вхождения считаются в R. Markdown-ссылка на локальный файл не
+# входит никогда: §13 делает её ошибкой всегда, и резолв гейт для неё не
+# ведёт. Следствие названо вслух в спеке волны 4 — переезд её ломает при
+# неизменной R, поэтому `find-refs` показывает такие ссылки числом.
+RESOLVING_KINDS = ("settings", "token", "wikilink")
+
+
+def _token_candidates(root, token):
+    """Кандидат токена: путь от корня, если такой есть в дереве.
+
+    Нормализация здесь не косметика. Токен приходит в той форме, в какой
+    его записал автор (`./core/me.md` в правиле разрешений), а кандидат
+    обязан быть сравним с путём из `_index`, иначе один резолвер отвечает
+    в двух разных системах координат.
+    """
+    if not _exists_exactly(root, token):
+        return []
+    return [pathlib_rules.normalise(token).rstrip("/")]
+
+
+def occurrences(root, ignored=None):
+    """Все вхождения ссылок в периметре гейта, с резолвом. Один на пакет.
+
+    Возвращает `(вхождения, нечитаемые)`; нечитаемые — список
+    `(rel, ошибка, следствие)`. Класс `undecodable` поднимает вызывающий:
+    это суждение гейта, а не свойство вхождения. Молча они не теряются —
+    незыблемое №4 запрещает и это.
+
+    Два потребителя: `scan` судит вхождения классами находок, ADOPT
+    считает по ним R и ищет ссылки на переезжающий путь. Второго резолвера
+    в пакете нет и заводить его нельзя: разошедшиеся копии одного правила
+    уже стоили этому репозиторию критерия выхода.
+
+    Порядок — по `Occurrence.key`, то есть не зависит от обхода дерева:
+    отчёт `find-refs` обязан быть тем же из любого места клона.
+    """
+    root = Path(root)
+    if ignored is None:
+        ignored = _ignored(root)
+    index = _index(root, ignored)
+    out, unreadable = [], []
+
+    for path in sorted(root.rglob("*.md")):
+        rel = path.relative_to(root).as_posix()
+        if not _in_perimeter(rel, ignored):
+            continue
+        try:
+            text = _read(path)
+        except UnicodeDecodeError as error:
+            unreadable.append((rel, error, "ссылки в нём не проверены"))
+            continue
+        for link in extract_links(text):
+            target = unicodedata.normalize("NFC", link.target)
+            if link.kind == "wikilink":
+                candidates = index.get(target, [])
+            else:
+                # `base` — путь ссылающегося файла: та же форма, что у
+                # `escapes_root`, и по той же причине. Иначе `you.md` рядом
+                # с `core/me.md` резолвился бы в `core/me.md/you.md`.
+                resolved = pathlib_rules.resolve(target, rel)
+                escaped = resolved == ".." or resolved.startswith("../")
+                candidates = ([resolved]
+                              if not escaped and _exists_exactly(root, resolved)
+                              else [])
+            out.append(Occurrence(rel, link.line, link.raw, target,
+                                  link.kind, candidates))
+        if not _scanned_for_tokens(rel, path.name):
+            continue
+        for lineno, line in enumerate(_blank_fences(text).split("\n"), start=1):
+            for match in _INLINE.finditer(line):
+                token = match.group(2).strip()
+                if not pathlib_rules.is_path_token(token):
+                    continue
+                out.append(Occurrence(rel, lineno, "`%s`" % token, token,
+                                      "token", _token_candidates(root, token)))
+
+    # `.claude/settings*.json`: в отчёт идёт токен как он записан в файле,
+    # а судится развёрнутый (`Edit(X)` и `Write(X)` на одной строке иначе
+    # дают две неразличимые находки, и автор не понимает, что чинить).
+    for path in sorted(root.glob(".claude/settings*.json")):
+        rel = path.relative_to(root).as_posix()
+        if not _in_perimeter(rel, ignored):
+            continue
+        try:
+            text = _read(path)
+        except UnicodeDecodeError as error:
+            unreadable.append((rel, error, "пути в нём не проверены"))
+            continue
+        for lineno, line in enumerate(text.split("\n"), start=1):
+            for raw in re.findall(r'"([^"]+)"', line):
+                token = pathlib_rules.unwrap_tool(raw)
+                if not pathlib_rules.is_path_token(token):
+                    continue
+                out.append(Occurrence(rel, lineno, raw, token, "settings",
+                                      _token_candidates(root, token)))
+
+    out.sort(key=Occurrence.key)
+    return out, unreadable
+
+
+def count_resolvable(root, ignored=None):
+    """R: число вхождений, для которых резолвер нашёл существующую цель.
+
+    Живёт рядом с индексом, а не в ADOPT: потребителей двое — счёт критерия 2
+    и `find-refs`, — и оба обязаны считать одно и то же. Неоднозначная ссылка
+    считается **одним** вхождением: цель существует, спор идёт о том, какая.
+    Иначе переезд, меняющий победителя, двигал бы R, ничего не сломав.
+    """
+    occs, _ = occurrences(root, ignored)
+    return sum(1 for o in occs if o.kind in RESOLVING_KINDS and o.candidates)
+
+
 def _orphan_perimeter(root, ignored):
     """Пути, где отсутствие входящей ссылки означает что-то определённое.
 
@@ -463,38 +606,9 @@ def _classify_token(token, root, allowed):
     return None
 
 
-def _settings_paths(root, ignored, allowed):
-    """Токены `.claude/settings*.json`, с разворачиванием правил разрешений.
-
-    В отчёт идёт токен как он записан в файле, а судится развёрнутый:
-    иначе `Edit(X)` и `Write(X)` на одной строке дают две неразличимые
-    находки, и автор не понимает, какое из двух правил чинить.
-    """
-    out = []
-    for path in sorted(root.glob(".claude/settings*.json")):
-        rel = path.relative_to(root).as_posix()
-        if not _in_perimeter(rel, ignored):
-            continue
-        try:
-            text = _read(path)
-        except UnicodeDecodeError as error:
-            out.append(_undecodable(rel, error, "пути в нём не проверены"))
-            continue
-        for lineno, line in enumerate(text.split("\n"), start=1):
-            for raw in re.findall(r'"([^"]+)"', line):
-                token = pathlib_rules.unwrap_tool(raw)
-                if not pathlib_rules.is_path_token(token):
-                    continue
-                cls = _classify_token(token, root, allowed)
-                if cls:
-                    out.append(Finding(cls, rel, lineno, raw))
-    return out
-
-
 def scan(root, today=None):
     root = Path(root)
     ignored = _ignored(root)
-    index = _index(root, ignored)
     findings = []
     referenced = set()
 
@@ -541,99 +655,85 @@ def scan(root, today=None):
                 return True
         return False
 
-    for path in sorted(root.rglob("*.md")):
-        rel = path.relative_to(root).as_posix()
-        if not _in_perimeter(rel, ignored):
+    # Обход и резолв — не здесь: `occurrences` один на пакет, и `scan` его
+    # первый потребитель. Второе место, считающее то же самое, значит второй
+    # резолвер, а разошедшиеся копии одного правила уже стоили этому
+    # репозиторию критерия выхода. Судит вхождения по-прежнему этот код —
+    # классами находок, — и ни одна ступень классификации в резолвер не
+    # переехала.
+    occs, unreadable = occurrences(root, ignored)
+
+    # Файл, который не декодируется, называется здесь — и на этом разбор его
+    # ссылок кончается. Чем они были, знать неоткуда, а догадка про
+    # `[[???????]]` — то самое ложное обвинение, ради снятия которого класс
+    # заведён (см. `_read`). Имя ровно одно на файл: два прохода по дереву
+    # были деталью устройства гейта, а не двумя разными фактами для автора,
+    # и после выноса прохода такой файл читается один раз.
+    for rel, error, consequence in unreadable:
+        findings.append(_undecodable(rel, error, consequence))
+
+    for occ in occs:
+        rel = occ.path
+
+        # Backtick-токены и `.claude/settings*.json`: пути и команды
+        # вперемешку, признак — is_path_token, периметр backtick'ов — ровно
+        # четыре строки таблицы «Что проверяется» (собран в `occurrences`).
+        # Судьбу отобранного токена решает _classify_token — одно место на
+        # оба вида: правило про глоб и границу корня второй копии не имеет.
+        # Лестница спрашивается целиком и здесь, а не наполовину в резолвере:
+        # разложить её ступени по двум местам — ровно то расхождение, против
+        # которого она и заведена.
+        if occ.kind in ("token", "settings"):
+            cls = _classify_token(occ.target, root, allowed)
+            if cls:
+                findings.append(Finding(cls, rel, occ.line, occ.raw))
             continue
-        # Файл, который не декодируется, называется здесь — и на этом
-        # разбор его ссылок кончается. Чем они были, знать неоткуда, а
-        # догадка про `[[???????]]` — то самое ложное обвинение, ради
-        # снятия которого класс заведён (см. `_read`).
-        try:
-            text = _read(path)
-        except UnicodeDecodeError as error:
-            findings.append(_undecodable(rel, error, "ссылки в нём не проверены"))
+
+        target = occ.target
+
+        if pathlib_rules.escapes_root(target, base=rel):
+            findings.append(Finding("escapes-root", rel, occ.line, occ.raw))
             continue
-        for link in extract_links(text):
-            target = unicodedata.normalize("NFC", link.target)
 
-            if pathlib_rules.escapes_root(target, base=rel):
-                findings.append(Finding("escapes-root", rel, link.line, link.raw))
-                continue
-
-            if link.kind == "mdlink":
-                cls = classify_mdlink(target)
-                if cls:
-                    findings.append(Finding(cls, rel, link.line, link.raw))
-                continue
-
-            candidates = index.get(target, [])
-            for candidate in candidates:
-                referenced.add(candidate)          # относительный путь цели
-
-            # `link-to-transient` — про цель ссылки, а не про её текст.
-            # `[[scratch]]`, единственная форма, которую пишет Obsidian, зоны
-            # в тексте не несёт вовсе, и проверка до резолва молчала ровно
-            # там, где класс и нужен. Текст остаётся вторым источником для
-            # случая, когда зону он называет, а файла нет: `[[tmp/ghost]]` —
-            # по-прежнему отложенная поломка, а не ссылка в никуда.
-            transient = [c for c in candidates if _transient_violation(rel, c)]
-            if not candidates and _transient_violation(rel, target):
-                transient = [target]
-            if transient:
-                detail = link.raw
-                if candidates:
-                    detail = "%s → %s" % (link.raw, ", ".join(sorted(transient)))
-                findings.append(Finding("link-to-transient", rel, link.line, detail))
-
-            # Неоднозначность и исчезающая цель — два разных факта об одной
-            # ссылке, и чинятся они по-разному: первая — полным путём, вторая
-            # — отказом ссылаться в `tmp/`. Поэтому сообщаются оба. Погасить
-            # ошибку предупреждением нельзя: `ambiguous` гейт не роняет,
-            # и ссылка, которая по построению протухнет, ушла бы зелёной.
-            if len(candidates) > 1:
-                findings.append(Finding("ambiguous", rel, link.line,
-                                        "%s → %s" % (link.raw, ", ".join(sorted(candidates)))))
-            elif not candidates and not transient and not allowed(target):
-                findings.append(Finding("unresolved", rel, link.line, link.raw))
-
-    # Backtick-токены: пути и команды вперемешку, признак — is_path_token.
-    # Периметр — ровно четыре строки таблицы «Что проверяется»: CLAUDE.md,
-    # README.md, SKILL.md и .claude/rules/*.md. Ни одного класса за него
-    # не выносится, включая escapes-root: расширение сканирования ради
-    # ожидаемого счёта — нарушение спеки (DEC-0003), образец переезжает
-    # в периметр, а не периметр к образцу. Wikilink и markdown-ссылка
-    # разбираются выше, в любом .md, — это первые две строки той же таблицы.
-    # Fenced-блоки вырезаются тем же способом, что и в extract_links: пример
-    # внутри ``` — документация, а не живой токен (секция 13, «Перед разбором
-    # вырезаются блоки кода и inline-код»); inline backtick-код здесь не
-    # вырезается — это и есть источник токенов этого прохода.
-    # Судьбу отобранного токена решает _classify_token — то же самое место,
-    # что и для settings*.json: правило про глоб и границу корня одно на оба
-    # цикла, второй копии быть не должно.
-    for path in sorted(root.rglob("*.md")):
-        rel = path.relative_to(root).as_posix()
-        if not _in_perimeter(rel, ignored):
+        if occ.kind == "mdlink":
+            cls = classify_mdlink(target)
+            if cls:
+                findings.append(Finding(cls, rel, occ.line, occ.raw))
             continue
-        if not _scanned_for_tokens(rel, path.name):
-            continue
-        # Молча, без второй находки: этот же файл прошёл через цикл выше,
-        # и `undecodable` на нём уже стоит. Два прохода по одному дереву —
-        # деталь устройства гейта, а не два разных факта для автора.
-        try:
-            text = _blank_fences(_read(path))
-        except UnicodeDecodeError:
-            continue
-        for lineno, line in enumerate(text.split("\n"), start=1):
-            for match in _INLINE.finditer(line):
-                token = match.group(2).strip()
-                if not pathlib_rules.is_path_token(token):
-                    continue
-                cls = _classify_token(token, root, allowed)
-                if cls:
-                    findings.append(Finding(cls, rel, lineno, "`%s`" % token))
 
-    findings.extend(_settings_paths(root, ignored, allowed))
+        # Ниже — только wikilink'и, и `referenced` пополняется только ими.
+        # Цели markdown-ссылок и токенов в него не попадали никогда: первая
+        # по §13 ошибка всегда, второй в периметре сирот не бывает. Сдвинуть
+        # это значило бы тихо погасить `orphan` выносом обхода.
+        candidates = occ.candidates
+        for candidate in candidates:
+            referenced.add(candidate)          # относительный путь цели
+
+        # `link-to-transient` — про цель ссылки, а не про её текст.
+        # `[[scratch]]`, единственная форма, которую пишет Obsidian, зоны
+        # в тексте не несёт вовсе, и проверка до резолва молчала ровно
+        # там, где класс и нужен. Текст остаётся вторым источником для
+        # случая, когда зону он называет, а файла нет: `[[tmp/ghost]]` —
+        # по-прежнему отложенная поломка, а не ссылка в никуда.
+        transient = [c for c in candidates if _transient_violation(rel, c)]
+        if not candidates and _transient_violation(rel, target):
+            transient = [target]
+        if transient:
+            detail = occ.raw
+            if candidates:
+                detail = "%s → %s" % (occ.raw, ", ".join(sorted(transient)))
+            findings.append(Finding("link-to-transient", rel, occ.line, detail))
+
+        # Неоднозначность и исчезающая цель — два разных факта об одной
+        # ссылке, и чинятся они по-разному: первая — полным путём, вторая
+        # — отказом ссылаться в `tmp/`. Поэтому сообщаются оба. Погасить
+        # ошибку предупреждением нельзя: `ambiguous` гейт не роняет,
+        # и ссылка, которая по построению протухнет, ушла бы зелёной.
+        if len(candidates) > 1:
+            findings.append(Finding("ambiguous", rel, occ.line,
+                                    "%s → %s" % (occ.raw, ", ".join(sorted(candidates)))))
+        elif not candidates and not transient and not allowed(target):
+            findings.append(Finding("unresolved", rel, occ.line, occ.raw))
 
     # Мёртвые записи аллоулиста оцениваются последними: только к этому
     # моменту все места, поднимающие unresolved (wikilink-цикл, backtick-
