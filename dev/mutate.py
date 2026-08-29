@@ -209,6 +209,25 @@ def copied_file(src, dst):
     return step
 
 
+def stripped_exec_bit(path):
+    """Снятие права на запуск. Единственная мутация, не меняющая ни байта.
+
+    Содержимое файла остаётся тем же, меняется режим, — и потому сверка
+    байтов в `_unchanged` обязана смотреть ещё и на режим, иначе эта мутация
+    отчитается «не легла», хотя легла и сработала.
+    """
+    def step(root):
+        target = root / path
+        if not target.exists():
+            raise NotApplied("нет файла %s" % path)
+        mode = target.stat().st_mode
+        if not mode & 0o111:
+            raise NotApplied("%s и так не исполняется" % path)
+        target.chmod(mode & ~0o111)
+        return (path,)
+    return step
+
+
 # Ветки буквы диска и UNC снимаются по маркеру внутри самой ветки, а не
 # дословным куском файла вместе с комментариями. Дословный образец здесь уже
 # отвалился: комментарий над веткой UNC переписали, объясняя новую дыру, и
@@ -552,6 +571,122 @@ MUTATIONS = (
             copied_file("scripts/zones.py", "hooks/zones.py"),
         ),
     ),
+
+    # Волна 2. Пять критериев — пять мутаций, по одной на каждый.
+    Mutation(
+        # **Косвенная, и это сказано вслух.** Критерий говорит о свойстве
+        # *тестов* — «хук прогоняется настоящим подпроцессом», — а мутация
+        # правит продукт. Прямо опровергнуть свойство тестов правкой продукта
+        # нельзя вообще: тест, зовущий `hook.main()` напрямую, останется
+        # зелёным при любой мутации шима, потому что шим у него не участвует.
+        #
+        # Снятый бит исполнения — ближайшее честное приближение: он ломает
+        # ровно те тесты, которые действительно запускают `hook.sh`, и не
+        # трогает ни одного, который зовёт логику. Объявлен поэтому не
+        # `test_shim_is_executable` (тот читает права файла и покраснел бы
+        # даже у набора, целиком зовущего логику напрямую), а обычный тест
+        # поведения: он падает `PermissionError` внутри `subprocess.run` —
+        # то есть предъявляет сам факт запуска.
+        #
+        # Чего мутация не доказывает: что подпроцессом прогоняется **каждый**
+        # хук. Она доказывает это про те тесты, что покраснели, и молчит про
+        # те, что остались зелёными по другой причине.
+        criterion="в2 К1",
+        name="шим лишается бита исполнения",
+        module="tests.test_hook_entry",
+        expect="tests.test_hook_entry.TestEntryContract"
+               ".test_unknown_event_is_not_a_violation",
+        steps=(
+            stripped_exec_bit("hooks/hook.sh"),
+        ),
+    ),
+    Mutation(
+        # Код возврата остаётся 2, исчезает только строка причины: набор,
+        # проверяющий один `returncode`, останется зелёным. Ровно это и
+        # утверждает критерий — что утверждаются **оба**.
+        criterion="в2 К2",
+        name="блок за границей теряет текст причины",
+        module="tests.test_hook_events",
+        expect="tests.test_hook_events.TestPreToolUseWrite"
+               ".test_write_outside_root_is_blocked_and_names_the_boundary",
+        steps=(
+            substitution(
+                "hooks/hook.py",
+                '    if boundary.outside(target, root):\n'
+                '        print("граница рабочего каталога: %s лежит вне корня %s. Плагин "\n'
+                '              "не пишет наружу никогда" % (target, root), file=sys.stderr)\n'
+                "        return EXIT_VIOLATION\n",
+                "    if boundary.outside(target, root):\n"
+                "        return EXIT_VIOLATION\n",
+            ),
+        ),
+    ),
+    Mutation(
+        # План предлагал глушить stderr шима через `2>/dev/null`. Такую
+        # мутацию убивает `TestNoSilencing.test_shim_never_silences` —
+        # подстрочный поиск трёх запрещённых литералов в файле, — и
+        # доказывала бы она ровно одно: что поиск читает файл. Про поведение
+        # «не смог» она не сказала бы ничего.
+        #
+        # Здесь снимается сама строка причины в ветке отсутствующего
+        # интерпретатора. Код 0 на месте, `TestNoSilencing` остаётся зелёным
+        # (запрещённых литералов в файле не появилось), краснеет только тест
+        # поведения — и краснеет на второй половине критерия, на видимой
+        # строке, а не на коде возврата.
+        criterion="в2 К3",
+        name="«не смог» теряет строку про интерпретатор",
+        module="tests.test_hook_entry",
+        expect="tests.test_hook_entry.TestEntryContract"
+               ".test_missing_interpreter_is_visible_and_not_a_violation",
+        steps=(
+            line_removal("hooks/hook.sh", "гейт не выполнился: интерпретатор"),
+        ),
+    ),
+    Mutation(
+        # Нормализация снимается, посегментное сравнение остаётся: критерий
+        # говорит «resolves outside … **after normalisation**», и мутация
+        # сажает ровно это, а не заодно и сравнение по префиксу строки.
+        #
+        # Модуль — `tests.test_boundary`, и это выбор, а не умолчание. На
+        # уровне хука та же мутация краснеет наизнанку: `tempfile` на macOS
+        # отдаёт `/var/...`, `find_root` нормализует корень в `/private/var/...`,
+        # и ненормализованное сравнение объявляет наружными **законные**
+        # записи. Проверено: `test_symlink_out_of_root_is_blocked` остаётся
+        # зелёным, а падают семь тестов про запись внутрь. Это «КРАСНОЕ НЕ ТО»
+        # — набор покраснел, но по обратной причине. Вторую половину критерия
+        # («код 2, названа граница») держит мутация в2 К2, на уровне хука.
+        criterion="в2 К4",
+        name="граница сравнивается без нормализации",
+        module="tests.test_boundary",
+        expect="tests.test_boundary.TestOutside.test_dotdot_above_root_is_outside",
+        steps=(
+            substitution(
+                "hooks/boundary.py",
+                "    resolved = Path(os.path.realpath(str(path)))\n"
+                "    base = Path(os.path.realpath(str(root)))\n",
+                "    resolved = Path(path)\n"
+                "    base = Path(root)\n",
+            ),
+        ),
+    ),
+    Mutation(
+        # `False` вместо чтения поля, а не `True`: сдача по умолчанию сделала
+        # бы `Stop` неблокирующим всегда, и покраснело бы полмодуля — сказав
+        # про блокировку, а не про флаг. С `False` блок остаётся на месте
+        # везде, кроме второго захода, — краснеет ровно тот тест, который про
+        # `stop_hook_active` и есть.
+        criterion="в2 К5",
+        name="stop_hook_active перестаёт читаться",
+        module="tests.test_hook_events",
+        expect="tests.test_hook_events.TestStop.test_stop_hook_active_gives_up_out_loud",
+        steps=(
+            substitution(
+                "hooks/hook.py",
+                '    active = payload.get("stop_hook_active")\n',
+                "    active = False\n",
+            ),
+        ),
+    ),
 )
 
 
@@ -662,18 +797,26 @@ def _baseline(session, module, tmp):
 
 
 def _unchanged(session, copy, touched):
-    """Правда ли, что мутация не изменила ни одного байта.
+    """Правда ли, что мутация не изменила ни байта содержимого и ни бита режима.
 
     Замена строки на саму себя проходит проверку применимости и дальше
     «выживает» — то есть врёт про слепую проверку там, где проверять было
     нечего. Мутация без единого изменённого байта — устаревшая строка
     таблицы, а не находка о гейте.
+
+    Режим сверяется наравне с содержимым, потому что бит исполнения — тоже
+    свойство продукта: `hook.sh` без него не запускается ни одним тестом.
+    Одной сверки байтов хватало ровно до появления такой мутации, и без
+    второй половины она отчиталась бы «не легла».
     """
     for rel in touched:
         before = session.snapshot / rel
         if not before.exists():
             return False
-        if before.read_bytes() != (copy / rel).read_bytes():
+        after = copy / rel
+        if before.read_bytes() != after.read_bytes():
+            return False
+        if (before.stat().st_mode & 0o777) != (after.stat().st_mode & 0o777):
             return False
     return True
 
@@ -687,8 +830,21 @@ def _smoke(session, copy, touched, tmp):
     этим и объявлялся убитым. Такая мутация — дефект строки таблицы, а не
     доказательство, что гейт видит.
 
+    Оболочка проверяется наравне с питоном. Шим — тоже продукт, и мутация,
+    сломавшая его разбор, объявлялась бы убитой по той же причине, по какой
+    объявлялся убитым сломанный импорт: `sh` печатает свою ошибку и выходит
+    ненулевым, а тесты, ждущие нуля, краснеют. Различить это по разнице
+    нельзя — только разбором.
+
     Возвращает причину поломки или None.
     """
+    shells = [rel for rel in touched if rel.endswith(".sh")]
+    for rel in shells:
+        result = subprocess.run(["/bin/sh", "-n", str(copy / rel)],
+                                capture_output=True, text=True)
+        if result.returncode != 0:
+            return "%s не разбирается оболочкой: %s" % (rel, _last_line(result.stderr))
+
     sources = [rel for rel in touched if rel.endswith(".py")]
     if not sources:
         return None
