@@ -542,6 +542,30 @@ class TestPackageCheck(unittest.TestCase):
                 "См. /Users/someone/else/x\n", encoding="utf-8")
             self.assertEqual(places(check(root)), [])
 
+    def test_a_development_instrument_is_not_package_content(self):
+        """`dev/` — оснастка разработки, и в пакет она не уезжает.
+
+        Довод тот же, по которому со скана сняты `tests/` и `docs/`:
+        абсолютный путь внутри инструмента, который не отгружается, машинной
+        зависимостью пакета не становится. Каталог завели позже, чем список
+        пропуска, и живая оснастка мутаций красила собственный `./check`
+        тремя находками — двумя прозаическими и вызовом POSIX-шелла.
+
+        Утверждаются оба направления разом: в `dev/` строка молчит, в
+        `scripts/` та же самая краснеет. Без второй половины тест не
+        отличает «`dev/` снят со скана» от «детектор сломан целиком».
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            line = 'subprocess.run(["/bin/sh", "-n", str(copy)])'
+            (root / "dev").mkdir()
+            (root / "dev" / "mutate.py").write_text(line + "\n", encoding="utf-8")
+            (root / "scripts").mkdir()
+            (root / "scripts" / "mutate.py").write_text(line + "\n", encoding="utf-8")
+            self.assertEqual(
+                places(check(root)),
+                [("scripts/mutate.py", 1, "absolute-path", line)])
+
     def test_the_only_skipped_zones_are_the_ones_the_table_names(self):
         """Имена зон в периметре берутся из `scripts/zones.py`, а не литералами.
 
