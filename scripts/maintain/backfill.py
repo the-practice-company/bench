@@ -32,7 +32,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from scripts import check_frontmatter
 from scripts.adopt import dates
 from scripts.adopt.dates import UNKNOWN
-from scripts.findings import EXIT_OK, EXIT_VIOLATION
+from scripts.basefile import parse_base
+from scripts.check_links import _ignored, _read, _undecodable
+from scripts.findings import EXIT_VIOLATION, Finding, Report
 from scripts.frontmatter import FrontmatterError, parse as parse_frontmatter
 from scripts.maintain import field_map
 
@@ -260,6 +262,90 @@ def write_table(root, collection, field, rows):
     return rel
 
 
+_UNESTABLISHED = "множество записей не установлено: %s"
+
+
+def expected_records(root, collection, field):
+    """(записи коллекции без поля, находки). `None` — множество не установлено.
+
+    Перечисление берётся у гейта frontmatter — из папок `file.inFolder(...)`
+    вида, `check_frontmatter.record_paths`, — а **не** у обхода `plan`.
+    Что именно это доказывает, сказано здесь дословно, чтобы не считалось
+    доказанным большее:
+
+    - половины **не независимы** в том, что говорит frontmatter: обе читают
+      один и тот же файл одним и тем же парсером, решая «ключа нет»;
+    - независимы они ровно в одном — **какие пути вообще записи**. Обход
+      знает `**/items/*.md`, вид называет свои папки, и совпадать эти два
+      ответа обязаны. Расхождение — строка, записанная по пути, который гейт
+      записью не считает, и запись, которую обход не заметил, — единственное,
+      что дифф ловит.
+
+    Запись, которую не прочитать, входит в ожидаемое: стоит ли у неё поле —
+    неизвестно, и выкинуть её отсюда значило бы решить за неё молча.
+    Объяснить её обязан токен из `skipped` — тот самый закрытый список.
+
+    Вид, которого нет, не читается или не назвал ни одной папки, даёт не ноль
+    ожидаемых, а отказ: «ожидаемых ноль» и «ожидаемое не установлено» —
+    разные утверждения, и тихий ноль здесь сделал бы сюрпризом каждую строку
+    таблицы разом. Класс — `unexplained-count`, а не `undecodable`: сказать
+    надо не про кодировку файла, а про то, что сверки счётчиков не было.
+    """
+    root = Path(root)
+    base_path = root / collection / "views.base"
+    rel_base = "%s/views.base" % collection
+
+    def refused(why):
+        return None, [Finding("unexplained-count", rel_base, 1,
+                              _UNESTABLISHED % why)]
+
+    if not base_path.is_file():
+        return refused("вида у коллекции нет")
+    try:
+        base = parse_base(_read(base_path))
+    except UnicodeDecodeError:
+        return refused("вид не читается как UTF-8")
+    if not base.folders:
+        return refused("вид не назвал ни одной папки")
+
+    findings = []
+    ignored = _ignored(root)
+    # Периметр, собранный не из того текста, — чужой периметр молча, а вместе
+    # с ним и чужое множество записей. Гейт frontmatter называет этот отказ
+    # своим последствием, дифф называет своим.
+    if ignored.undecodable is not None:
+        findings.append(_undecodable(
+            ".gitignore", ignored.undecodable,
+            "множество записей коллекции собрано без него"))
+
+    expected = set()
+    for rel in check_frontmatter.record_paths(root, base_path, base, ignored):
+        try:
+            fields = parse_frontmatter((root / rel).read_text(encoding="utf-8"))
+        except (UnicodeDecodeError, FrontmatterError):
+            expected.add(rel)
+            continue
+        if field not in fields:
+            expected.add(rel)
+    return sorted(expected), findings
+
+
+def counter_diff(root, collection, field, rows, skipped):
+    """Дифф ожидаемого и фактического — находками, а не текстом.
+
+    `skipped` едет сюда как есть: это и есть канал объяснённой недостачи,
+    третий аргумент `reconcile`, и второго такого механизма не заводится.
+
+    Множество не установлено — сверки не происходит вовсе. Свести таблицу с
+    пустым множеством значило бы объявить сюрпризом каждую её строку:
+    находка была бы у каждой записи, и ни одна не про то, что случилось.
+    """
+    expected, findings = expected_records(root, collection, field)
+    if expected is None:
+        return findings
+    return findings + field_map.reconcile(expected, rows, skipped)
+
+
 def main(argv=None):
     """Дверь для скилла `extend-structure`: заполнить одно поле в одной
     коллекции.
@@ -273,6 +359,10 @@ def main(argv=None):
     Отложенное в обычном режиме кодом не красится: команда сделала ровно то,
     что ей позволено, и назвала остаток. Красный код здесь означал бы, что
     значение, принадлежащее автору, — поломка.
+
+    Красит код **дифф счётчиков**, и это не то же самое: он говорит не про
+    значение, а про то, что таблица и множество записей коллекции разошлись,
+    то есть про мутацию, накрывшую не то, что собиралась.
     """
     parser = argparse.ArgumentParser(
         description="fill in a missing field: computed, synthetic or deferred")
@@ -297,7 +387,14 @@ def main(argv=None):
     # каждой записи и таблица вышла бы пустой. `run` и `run_silently` считают
     # их заново сами: решение о том, что писать, остаётся в одном месте, а
     # `plan` ничего не пишет и повторного чтения дереву не стоит.
-    rows, _ = plan(root, args.collection, args.field)
+    rows, skipped = plan(root, args.collection, args.field)
+
+    # Ожидаемое — тоже **до** мутации, и по той же причине, только злее:
+    # посчитанное после, оно пусто (поле уже стоит у каждой записи), и каждая
+    # строка таблицы стала бы строкой без ожидаемой записи. Сошедшийся прогон
+    # покраснел бы целиком, а разошедшийся — незаметно.
+    diff = counter_diff(root, args.collection, args.field, rows, skipped)
+
     if args.silently:
         written, text = run_silently(root, args.collection, args.field)
         sys.stdout.write(text)
@@ -308,7 +405,15 @@ def main(argv=None):
         sys.stdout.write(text)
     sys.stdout.write("таблица: %s\n"
                      % write_table(root, args.collection, args.field, rows))
-    return EXIT_OK
+
+    # Дифф печатается после таблицы и красит код: расхождение счётчиков —
+    # ошибка по таблице классов, и мутация, о которой нельзя сказать, что она
+    # накрыла ровно записи коллекции, зелёной не уезжает.
+    report = Report(diff)
+    rendered = report.render()
+    if rendered:
+        sys.stdout.write(rendered + "\n")
+    return report.exit_code()
 
 
 if __name__ == "__main__":

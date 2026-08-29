@@ -121,6 +121,52 @@ def _declaration(root, readme, findings):
     return declaration.get("archetype"), vocabulary
 
 
+def record_paths(root, base_path, base, ignored):
+    """Пути записей коллекции: множество, из которого гейт выводит контракт.
+
+    Вынесено из `scan` не ради красоты. Дифф счётчиков массовой мутации
+    сверяет обход `backfill` (`**/items/*.md`) именно с этим множеством, и
+    второе определение «что здесь запись» превратило бы сверку в сверку двух
+    копий одного обхода — то есть в тавтологию, которая не краснеет никогда.
+
+    Секция 14 дословно: «frontmatter не делает его записью — он лежит
+    уровнем выше записей и в виды не попадает». Не попадает, пока вид
+    фильтрует `items/`; у коллекции папок (`projects`) фильтр берёт зону
+    целиком, и `rglob` сметает README самой коллекции. Гейт требовал у него
+    `type`, `created` и `status` — в каждом инстансе, на файле, который
+    положил сам рецепт.
+
+    Послабление привязано к своему виду, а не к соседству с любым
+    `views.base`: `projects/<имя>/README.md` — запись (секция 4, единственное
+    такое место), и заведи проект свою коллекцию — широкое прочтение сняло бы
+    его карточку с проверки вовсе.
+
+    Сравнение в том же относительном виде, в каком идут и периметр, и отчёт:
+    путь записи строится от `root / folder`, объявления — от
+    `base_path.parent`, но обе стороны — чистые склейки от одного `root`, так
+    что расходиться им негде.
+
+    Повторы не схлопываются: папка, названная видом дважды, даёт путь дважды,
+    и сжать это здесь значило бы заодно с выносом функции сменить поведение
+    гейта. Кому нужно множество — тот и берёт множество.
+    """
+    root = Path(root)
+    declaration_rel = (base_path.parent / "README.md").relative_to(root).as_posix()
+    out = []
+    for folder in base.folders:
+        records_dir = root / folder
+        if not records_dir.exists():
+            continue
+        for record in sorted(records_dir.rglob("*.md")):
+            rel = record.relative_to(root).as_posix()
+            if rel == declaration_rel:
+                continue
+            if not _in_perimeter(rel, ignored):
+                continue
+            out.append(rel)
+    return out
+
+
 def scan(root, today=None):
     root = Path(root)
     # Периметр — тот же и оттуда же, что у гейта ссылок: `check_package`
@@ -158,50 +204,26 @@ def scan(root, today=None):
         readme = collection / "README.md"
         archetype, vocabulary = _declaration(root, readme, findings)
 
-        # Секция 14 дословно: «frontmatter не делает его записью — он лежит
-        # уровнем выше записей и в виды не попадает». Не попадает, пока вид
-        # фильтрует `items/`; у коллекции папок (`projects`) фильтр берёт
-        # зону целиком, и `rglob` сметает README самой коллекции. Гейт
-        # требовал у него `type`, `created` и `status` — в каждом инстансе,
-        # на файле, который положил сам рецепт.
-        #
-        # Послабление привязано к своему виду, а не к соседству с любым
-        # `views.base`: `projects/<имя>/README.md` — запись (секция 4,
-        # единственное такое место), и заведи проект свою коллекцию —
-        # широкое прочтение сняло бы его карточку с проверки вовсе.
-        #
-        # Сравнение в том же относительном виде, в каком идут и периметр,
-        # и отчёт: путь записи строится от `root / folder`, объявления —
-        # от `base_path.parent`, но обе стороны — чистые склейки от одного
-        # `root`, так что расходиться им негде.
-        declaration_rel = readme.relative_to(root).as_posix()
-
-        for folder in base.folders:
-            records_dir = root / folder
-            if not records_dir.exists():
+        # Какие пути коллекции считаются записями — в `record_paths`, и
+        # определение это в пакете одно: дифф счётчиков массовой мутации
+        # сверяет с ним обход `backfill`.
+        for rel in record_paths(root, base_path, base, ignored):
+            # Замещающий знак в **значении** поля — то же ложное
+            # обвинение, что и в тексте ссылки: `type: заметка` в cp1251
+            # превращался в `type: ???????`, и гейт объявлял вне словаря
+            # значение, которого автор не писал. Незыблемое №4: файл
+            # уходит в отчёт целиком, а не подменяется по знаку.
+            try:
+                fields = parse_frontmatter(_read(root / rel))
+            except FrontmatterError as error:
+                findings.append(Finding("unparseable", rel, error.line, str(error)))
                 continue
-            for record in sorted(records_dir.rglob("*.md")):
-                rel = record.relative_to(root).as_posix()
-                if rel == declaration_rel:
-                    continue
-                if not _in_perimeter(rel, ignored):
-                    continue
-                # Замещающий знак в **значении** поля — то же ложное
-                # обвинение, что и в тексте ссылки: `type: заметка` в cp1251
-                # превращался в `type: ???????`, и гейт объявлял вне словаря
-                # значение, которого автор не писал. Незыблемое №4: файл
-                # уходит в отчёт целиком, а не подменяется по знаку.
-                try:
-                    fields = parse_frontmatter(_read(record))
-                except FrontmatterError as error:
-                    findings.append(Finding("unparseable", rel, error.line, str(error)))
-                    continue
-                except UnicodeDecodeError as error:
-                    findings.append(_undecodable(rel, error,
-                                                 "поля записи не проверены"))
-                    continue
-                findings.extend(
-                    check_record(rel, fields, base, vocabulary, archetype))
+            except UnicodeDecodeError as error:
+                findings.append(_undecodable(rel, error,
+                                             "поля записи не проверены"))
+                continue
+            findings.extend(
+                check_record(rel, fields, base, vocabulary, archetype))
     return Report(findings, today=today)
 
 

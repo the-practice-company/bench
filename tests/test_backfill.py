@@ -21,10 +21,21 @@ from tests.maintain_fixture import materialise
 JOURNAL = "areas/work/journal"
 DEALS = "projects/deals"
 PEOPLE = "core/people"
+REVIEWS = "areas/work/reviews"
 
 DATED = "areas/work/journal/items/2026-08-25.md"
 LATE = "areas/work/journal/items/late-entry.md"
 TWO = "projects/deals/items/two.md"
+
+# Запись в папке, которую вид обзоров называет наравне с `items`, а обход
+# backfill (`**/items/*.md`) не видит вовсе.
+DRAFT = "areas/work/reviews/drafts/2026-06-09-набросок.md"
+# Запись в `items`, которую периметр `.gitignore` выносит из множества
+# записей: обход её пишет, гейт записью не считает.
+HIDDEN = "areas/work/journal/items/черновик.md"
+
+SHORTFALL = "запись ожидалась в таблице и её там нет, объяснения тоже"
+SURPLUS = "строка в таблице есть, а запись не ожидалась"
 
 
 def places(findings):
@@ -345,6 +356,133 @@ class TestTheSelfCheckAcceptsIt(Fixture):
                          {(row[0], row[1]) for row in rows if row[4] != "deferred"})
 
 
+class TestTheCounterDiff(Fixture):
+    """Критерий 5, вторая половина: дифф ожидаемого и фактического.
+
+    Ожидаемое перечисляется **видом коллекции** — теми же папками
+    `file.inFolder(...)`, из которых строит своё множество записей гейт
+    frontmatter, — а не обходом `plan`. Что именно это доказывает, названо
+    вслух, чтобы не считалось доказанным большее: обе половины читают один и
+    тот же файл одним и тем же парсером, решая «ключа нет», и про
+    frontmatter они не независимы никак. Независимы они ровно в одном —
+    **какие пути вообще записи**, — и ловится здесь расхождение именно этих
+    двух перечислений, в обе стороны.
+    """
+
+    def diff(self, collection, field):
+        rows, skipped = backfill.plan(self.root, collection, field)
+        return rows, backfill.counter_diff(
+            self.root, collection, field, rows, skipped)
+
+    def plant_draft(self):
+        (self.root / DRAFT).write_text(
+            "---\ntype: обзор\n---\nНабросок к обзору.\n", encoding="utf-8")
+
+    def plant_hidden(self):
+        (self.root / HIDDEN).write_text(
+            "---\ntype: планёрка\n---\nЕщё не решили, оставлять ли.\n",
+            encoding="utf-8")
+        gitignore = self.root / ".gitignore"
+        gitignore.write_text(
+            gitignore.read_text(encoding="utf-8") + "%s\n" % HIDDEN,
+            encoding="utf-8")
+
+    def test_two_enumerations_that_agree_say_nothing(self):
+        rows, findings = self.diff(JOURNAL, "created")
+        self.assertEqual([row[0] for row in rows], [DATED, LATE])
+        self.assertEqual(places(findings), [])
+
+    def test_a_record_the_view_names_and_the_walk_misses_is_unexplained(self):
+        """Вид обзоров называет две папки, `items` и `drafts`; обход backfill
+        знает только `**/items/*.md`. Запись в `drafts` — запись для гейта и
+        невидимка для обхода, и без диффа она проходит бесплатно."""
+        self.plant_draft()
+        rows, findings = self.diff(REVIEWS, "created")
+        self.assertEqual(rows, [])
+        self.assertEqual(places(findings),
+                         [(DRAFT, 1, "unexplained-count", SHORTFALL)])
+
+    def test_a_row_for_a_path_the_view_does_not_count_as_a_record_is_unexplained(self):
+        """Обратная половина. Запись лежит в `items`, но вне периметра
+        `.gitignore` — гейт её записью не считает, а обход в неё пишет.
+        Строка мимо множества записей открывает заодно и гейт содержимого:
+        она оправдывает появление поля в `content_diff`."""
+        self.plant_hidden()
+        rows, findings = self.diff(JOURNAL, "created")
+        self.assertEqual([row[0] for row in rows], [DATED, LATE, HIDDEN])
+        self.assertEqual(places(findings),
+                         [(HIDDEN, 1, "unexplained-count", SURPLUS)])
+
+    def test_a_shortfall_carrying_a_token_of_the_closed_list_is_explained(self):
+        """Третий аргумент `reconcile` — не украшение: непрочитанная запись
+        для вида запись, а для обхода пропуск с токеном. Фальсификатор —
+        дифф, которому `skipped` не передали.
+
+        Все три непрочитанных вида здесь нарочно: у `битого` и `кривого`
+        ожидаемое не может решить даже, стоит ли поле, — и запись входит в
+        ожидаемое именно поэтому, а не выпадает из него молча."""
+        broken = "areas/work/journal/items/битое.md"
+        crooked = "areas/work/journal/items/кривое.md"
+        raw = "areas/work/journal/items/сырое.md"
+        (self.items(JOURNAL) / "сырое.md").write_text(
+            "Просто текст, frontmatter'а нет.\n", encoding="utf-8")
+        (self.items(JOURNAL) / "кривое.md").write_text(
+            "---\ntype: a\ntype: b\n---\nтело\n", encoding="utf-8")
+        (self.items(JOURNAL) / "битое.md").write_bytes(
+            b"---\ntype: \xff\xfe\n---\n")
+        rows, skipped = backfill.plan(self.root, JOURNAL, "created")
+        self.assertEqual(skipped, {broken: "undecodable",
+                                   crooked: "unparseable-frontmatter",
+                                   raw: "not-a-record"})
+        self.assertEqual(places(backfill.counter_diff(
+            self.root, JOURNAL, "created", rows, skipped)), [])
+        self.assertEqual(places(backfill.counter_diff(
+            self.root, JOURNAL, "created", rows, {})), [
+            (broken, 1, "unexplained-count", SHORTFALL),
+            (crooked, 1, "unexplained-count", SHORTFALL),
+            (raw, 1, "unexplained-count", SHORTFALL)])
+
+    def test_a_collection_without_a_view_does_not_quietly_expect_zero(self):
+        """Незыблемое №4: «ожидаемых ноль» и «ожидаемое не установлено» —
+        разные утверждения. Тихий ноль сделал бы сюрпризом каждую строку
+        таблицы разом и назвал бы поломкой сошедшийся прогон."""
+        (self.root / JOURNAL / "views.base").unlink()
+        rows, findings = self.diff(JOURNAL, "created")
+        self.assertEqual([row[0] for row in rows], [DATED, LATE])
+        self.assertEqual(places(findings), [
+            ("areas/work/journal/views.base", 1, "unexplained-count",
+             "множество записей не установлено: вида у коллекции нет")])
+
+    def test_a_view_naming_no_folder_is_named_too(self):
+        (self.root / JOURNAL / "views.base").write_text(
+            "views:\n  - type: table\n", encoding="utf-8")
+        _, findings = self.diff(JOURNAL, "created")
+        self.assertEqual(places(findings), [
+            ("areas/work/journal/views.base", 1, "unexplained-count",
+             "множество записей не установлено: вид не назвал ни одной папки")])
+
+    def test_a_view_that_does_not_decode_is_not_read_as_an_empty_one(self):
+        """Тот же довод, что у гейта frontmatter на нечитаемом виде: вид,
+        который не прочитан, не называет ни одной своей папки."""
+        (self.root / JOURNAL / "views.base").write_bytes(
+            b'filters:\n  - file.inFolder("\xff\xfe")\n')
+        _, findings = self.diff(JOURNAL, "created")
+        self.assertEqual(places(findings), [
+            ("areas/work/journal/views.base", 1, "unexplained-count",
+             "множество записей не установлено: вид не читается как UTF-8")])
+
+    def test_an_unreadable_gitignore_is_named_rather_than_narrowed_silently(self):
+        """Периметр, собранный не из того текста, — чужой периметр молча, и
+        множество записей вместе с ним. Гейт frontmatter называет этот отказ
+        своим последствием, дифф обязан назвать своим."""
+        (self.root / ".gitignore").write_bytes(b"# \xff\n")
+        _, findings = self.diff(JOURNAL, "created")
+        self.assertEqual(places(findings), [
+            (".gitignore", 1, "undecodable",
+             "не читается как UTF-8: байт 0xff в позиции 2, "
+             "множество записей коллекции собрано без него")])
+
+
 class TestCommandLine(Fixture):
     """Входная точка и таблица, которую она кладёт.
 
@@ -427,6 +565,27 @@ class TestCommandLine(Fixture):
     def test_the_collection_and_the_field_are_both_required(self):
         with self.assertRaises(SystemExit):
             self.run_cli(JOURNAL)
+
+    def test_the_counter_diff_reaches_stdout_and_paints_the_code(self):
+        """Вторая половина критерия 5, у которой до этой двери не было
+        производителя вовсе: `reconcile` звал один только набор тестов, а
+        по незыблемому №2 правило без исполняемой проверки не существует."""
+        (self.root / DRAFT).write_text(
+            "---\ntype: обзор\n---\nНабросок к обзору.\n", encoding="utf-8")
+        report, code = self.run_cli(REVIEWS, "created")
+        self.assertEqual(code, 2)
+        self.assertEqual(report, "".join([
+            "таблица: tmp/field-map-backfill-areas-work-reviews-created.tsv\n",
+            "%s:1 unexplained-count %s\n" % (DRAFT, SHORTFALL),
+        ]))
+
+    def test_the_expected_set_is_taken_before_the_mutation(self):
+        """Фальсификатор порядка: посчитанное **после** записи ожидание
+        пусто — поле уже стоит у каждой записи, — и каждая строка таблицы
+        стала бы сюрпризом. Сошедшийся прогон покраснел бы целиком."""
+        report, code = self.run_cli(JOURNAL, "created")
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report, "таблица: %s\n" % self.TABLE)
 
 
 if __name__ == "__main__":
