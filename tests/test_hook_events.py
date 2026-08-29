@@ -475,23 +475,43 @@ class TestPostToolUse(unittest.TestCase):
         self.assertNotIn("Traceback", result.stderr)
 
     def test_a_gate_that_fails_names_itself_and_lets_the_other_run(self):
-        """Наблюдённая поломка, а не гипотеза: `check_links.scan` обходит
-        `*.md` и читает каждое совпадение как файл, а каталог с таким именем
-        даёт `IsADirectoryError`. Заводится он одним движением мыши в Obsidian.
+        """Утверждение здесь — контракт, а не способ его нарушить.
 
-        Прежним образцом здесь был файл в cp1251; он перестал ломать гейт
-        в `cc3c7ea`, где чтение стало `errors="replace"`. Проверка ветки
-        осталась — сама ветка никуда не делась.
+        Гейт, который не смог выполниться, называет себя видимой строкой,
+        обработчик возвращает 0, и второй гейт досчитывает своё: «не смог» —
+        это не «запретил» и не «разрешил», и различие несёт текст. Один
+        сломанный гейт иначе гасил бы `PostToolUse` на каждой записи, а
+        причиной в stderr значился бы код возврата hook.py.
 
-        Один такой каталог где угодно в дереве иначе гасил бы `PostToolUse`
-        на каждой записи, а причиной в stderr значился бы код возврата
-        hook.py. Провалившийся гейт называет себя, второй досчитывает.
+        Ломает прогон каталог с именем на `.md`: `check_links.scan` обходит
+        `*.md` и читает каждое совпадение как файл, получая
+        `IsADirectoryError`. Такой каталог заводится одним движением мыши
+        в Obsidian.
+
+        Провокацию выбирали не из вкуса, и «упростить» её обратно нельзя:
+
+        - файл в cp1251 стоял здесь раньше и перестал что-либо ломать
+          в `cc3c7ea`, где чтение стало `errors="replace"`. Это сделано
+          нарочно: одного нечитаемого байта хватало, чтобы гейт не выдал
+          отчёта вовсе;
+        - режим `000` роняет чтение `PermissionError`, но под root биты
+          режима не значат ничего, а под root ходят половина образов CI.
+
+        Каталог лежит в `projects/`, а коллекция вида — в `areas/`, и это
+        не случайность: у гейтов разные периметры, `check_frontmatter`
+        обходит только папки своего `views.base`. Положи каталог в `areas/` —
+        упадут оба, и утверждать «второй досчитал» станет нечем.
         """
-        (self.root / "areas" / "каталог.md").mkdir()
+        (self.root / "projects" / "каталог.md").mkdir()
+        (self.root / "areas" / "views.base").write_text(
+            'filters:\n  and:\n    - file.inFolder("areas")\n'
+            '    - status != "closed"\n', encoding="utf-8")
         result = call("PostToolUse", self._payload(self._broken()), self.root)
         self.assertEqual(result.returncode, 0)
+        self.assertIn("гейт не выполнился", result.stderr)
         self.assertIn("check_links", result.stderr)
-        self.assertIn("не выполнился", result.stderr)
+        self.assertIn("IsADirectoryError", result.stderr)
+        self.assertIn("areas/broken.md:1 missing-required", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
 
     def test_a_repo_without_git_says_the_turn_list_was_not_written(self):
