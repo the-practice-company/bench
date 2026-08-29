@@ -1,0 +1,23 @@
+# triggers
+почини форму в репозитории
+приведи контекстный репозиторий в порядок
+прогони обслуживание репозитория
+что объявлено и не наполнено в этом репозитории
+покажи спрос по зонам и коллекциям
+верни правила рецепта к эталону
+maintain this context repository
+fix the form of this repository
+run the upkeep pass over the repo
+show what is declared and unused here
+tidy the recipe files back to the scaffold
+check the shape of this context repo
+
+# non-triggers
+create a context repository from scratch
+создай контекстный репозиторий, каталог пустой
+adopt this folder of notes
+усынови чужое дерево заметок
+add a collection to this repository
+разбери inbox
+drain the inbox
+maintain the production database

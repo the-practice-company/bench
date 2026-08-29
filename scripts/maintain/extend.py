@@ -10,12 +10,14 @@
 Второй копии формы в пакете нет.
 """
 
+import argparse
 import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
+from scripts import paths as path_rules
 from scripts.basefile import parse_base
 from scripts.findings import EXIT_OK, EXIT_VIOLATION, Finding, Report
 from scripts.maintain import form_collection
@@ -219,3 +221,83 @@ def add_view(root, collection, name):
         return "отказ: в %s нет списка видов\n" % collection, EXIT_VIOLATION
     base_path.write_text(updated, encoding="utf-8")
     return "добавлен вид: %s\n" % name, EXIT_OK
+
+
+def _record_from_file(root, rel):
+    """(текст, имя, отказ). Ровно один из трёх последних не None.
+
+    Непрочитанный вход — **не** пустая запись. Свести их в один исход
+    значило бы дописать в открытые нити вопрос «какая первая запись ляжет
+    сюда» автору, который эту запись уже написал; незыблемое №4 запрещает
+    ровно такую подмену невосстановимого молчанием.
+
+    Путь считается от корня, а не от рабочего каталога: команду зовут из
+    скилла, у которого корень — аргумент, и два прочтения одного аргумента
+    расходились бы ровно тогда, когда корень не совпал с рабочим каталогом.
+    """
+    if path_rules.escapes_root(rel):
+        return None, None, "отказ: путь записи вне корня репозитория: %s" % rel
+    path = Path(root) / rel
+    try:
+        return path.read_text(encoding="utf-8"), path.name, None
+    except (OSError, UnicodeDecodeError) as error:
+        return None, None, "отказ: файл первой записи не прочитан: %s (%s)" % (
+            rel, type(error).__name__)
+
+
+def _add_collection_from_args(root, args):
+    text, name = args.record_text, args.record_name
+    if args.record_file is not None:
+        text, from_file, refusal = _record_from_file(root, args.record_file)
+        if refusal:
+            return refusal + "\n", EXIT_VIOLATION
+        name = name or from_file
+    # Имя записи не выводится ниоткуда: придумать его — сочинить содержимое.
+    # Отказ называет **эту** причину и вопроса в нити не пишет: спрашивать
+    # про запись, которая уже передана текстом, не о чем.
+    if text is not None and not name:
+        return "отказ: имя записи не названо: --record-name\n", EXIT_VIOLATION
+    return add_collection(root, args.collection, args.archetype,
+                          record_name=name, record_text=text)
+
+
+def main(argv=None):
+    """Три команды одной дверью. Умолчания подкоманды нет: опечатка в имени
+    команды стала бы записью в дерево, которой никто не просил."""
+    parser = argparse.ArgumentParser(
+        description="add a collection, an area or a view — record first, unit second")
+    parser.add_argument("root")
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    collection = commands.add_parser("add-collection")
+    collection.add_argument("collection")
+    collection.add_argument("--archetype", required=True,
+                            choices=list(form_collection.ARCHETYPES))
+    collection.add_argument("--record-name",
+                            help="имя файла первой записи; по умолчанию — имя файла, из которого она взята")
+    source = collection.add_mutually_exclusive_group()
+    source.add_argument("--record-file", help="путь первой записи от корня репозитория")
+    source.add_argument("--record-text", help="текст первой записи целиком")
+
+    area = commands.add_parser("add-area")
+    area.add_argument("name")
+    area.add_argument("--purpose", default="",
+                      help="фраза назначения; без неё направление не заводится")
+
+    view = commands.add_parser("add-view")
+    view.add_argument("collection")
+    view.add_argument("name")
+
+    args = parser.parse_args(argv)
+    if args.command == "add-collection":
+        report, code = _add_collection_from_args(args.root, args)
+    elif args.command == "add-area":
+        report, code = add_area(args.root, args.name, args.purpose)
+    else:
+        report, code = add_view(args.root, args.collection, args.name)
+    sys.stdout.write(report)
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

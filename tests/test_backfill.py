@@ -6,6 +6,8 @@
 самосогласованность.
 """
 
+import contextlib
+import io
 import os
 import tempfile
 import unittest
@@ -341,6 +343,90 @@ class TestTheSelfCheckAcceptsIt(Fixture):
             appeared.update((rel, key) for key in now if key not in fields)
         self.assertEqual(appeared,
                          {(row[0], row[1]) for row in rows if row[4] != "deferred"})
+
+
+class TestCommandLine(Fixture):
+    """Входная точка и таблица, которую она кладёт.
+
+    До неё `field_map.name` и `field_map.render` не звал в пакете никто:
+    формат массовой мутации был описан, проверен тестами и не производился
+    ничем. Дверь — это же и первый его потребитель.
+    """
+
+    TABLE = "tmp/field-map-backfill-areas-work-journal-created.tsv"
+
+    def run_cli(self, *argv):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            code = backfill.main([str(self.root)] + [str(a) for a in argv])
+        return out.getvalue(), code
+
+    def test_the_table_lands_in_tmp_and_carries_every_row(self):
+        report, code = self.run_cli(JOURNAL, "created")
+        self.assertEqual(code, 0, report)
+        self.assertEqual(
+            (self.root / self.TABLE).read_text(encoding="utf-8"),
+            "\n".join([
+                "\t".join(field_map.COLUMNS),
+                "%s\tcreated\t\t2026-08-25\tcomputed\tfilename-date" % DATED,
+                "%s\tcreated\t\t2026-08-25\tcomputed\tgit-first-commit" % LATE,
+            ]) + "\n")
+        self.assertIn(self.TABLE, report)
+
+    def test_the_name_of_the_table_carries_no_date(self):
+        """Метка времени в имени вернула бы часы и сломала побайтовую
+        воспроизводимость: имя выводится из операции и её аргументов."""
+        self.run_cli(JOURNAL, "created")
+        names = sorted(p.name for p in (self.root / "tmp").glob("field-map-*"))
+        self.assertEqual(names, ["field-map-backfill-areas-work-journal-created.tsv"])
+
+    def test_the_second_run_leaves_the_same_table_byte_for_byte(self):
+        """Идемпотентность: второй прогон нечего дописывать, и таблица
+        второго прогона пуста — поле уже стоит у каждой записи."""
+        self.run_cli(JOURNAL, "created")
+        first = (self.root / self.TABLE).read_bytes()
+        self.run_cli(JOURNAL, "created")
+        self.assertEqual((self.root / self.TABLE).read_text(encoding="utf-8"),
+                         "\t".join(field_map.COLUMNS) + "\n")
+        self.assertNotEqual(first, (self.root / self.TABLE).read_bytes())
+
+    def test_a_deferred_field_is_reported_and_nothing_is_written(self):
+        before = self.snapshot(DEALS)
+        report, code = self.run_cli(DEALS, "status")
+        self.assertEqual(code, 0, report)
+        self.assert_untouched(before)
+        self.assertIn("projects/deals/items/two.md status", report)
+
+    def test_the_silent_mode_refuses_out_loud_and_leaves_no_table(self):
+        """Таблица — запись о состоявшейся мутации. Положить её там, где не
+        записано ни байта, значило бы задокументировать то, чего не было."""
+        (self.items(JOURNAL) / "новая.md").write_text(
+            "---\ntype: планёрка\n---\nЕщё не в git.\n", encoding="utf-8")
+        before = self.snapshot(JOURNAL)
+        report, code = self.run_cli(JOURNAL, "created", "--silently")
+        self.assertEqual(code, 2)
+        self.assert_untouched(before)
+        self.assertIn("не выполнен молча", report)
+        self.assertFalse((self.root / self.TABLE).exists())
+
+    def test_the_silent_mode_fills_a_fully_computable_collection(self):
+        report, code = self.run_cli(JOURNAL, "created", "--silently")
+        self.assertEqual(code, 0, report)
+        self.assertEqual(self.field(LATE, "created"), "2026-08-25")
+        self.assertTrue((self.root / self.TABLE).exists())
+
+    def test_a_collection_that_is_not_there_is_a_refusal_and_not_zero_rows(self):
+        """Опечатка в имени коллекции давала «сделано, строк ноль»: записей
+        нет, потому что нет папки. Тихий ноль здесь — то же ложное
+        утверждение, что и молчаливая подстановка, только про весь прогон."""
+        report, code = self.run_cli("projects/дилы", "created")
+        self.assertEqual(code, 2)
+        self.assertIn("projects/дилы", report)
+        self.assertFalse(sorted((self.root / "tmp").glob("field-map-*")))
+
+    def test_the_collection_and_the_field_are_both_required(self):
+        with self.assertRaises(SystemExit):
+            self.run_cli(JOURNAL)
 
 
 if __name__ == "__main__":

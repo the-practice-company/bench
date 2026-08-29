@@ -22,6 +22,7 @@
 токеном из закрытого списка `field_map.TOKENS`.
 """
 
+import argparse
 import re
 import sys
 from pathlib import Path
@@ -31,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from scripts import check_frontmatter
 from scripts.adopt import dates
 from scripts.adopt.dates import UNKNOWN
+from scripts.findings import EXIT_OK, EXIT_VIOLATION
 from scripts.frontmatter import FrontmatterError, parse as parse_frontmatter
 from scripts.maintain import field_map
 
@@ -238,3 +240,76 @@ def run_silently(root, collection, field):
     lines.extend(_line(row[0], row[1], row[4]) for row in unclear)
     lines.extend(_line(rel, field, token) for rel, token in sorted(skipped.items()))
     return [], "\n".join(lines) + "\n"
+
+
+def write_table(root, collection, field, rows):
+    """Положить таблицу мутации в `tmp/`. Возвращает путь от корня.
+
+    Первый и единственный производитель формата в пакете: `field_map.name` и
+    `field_map.render` до этой двери не звал никто, и формат массовой
+    мутации был описан, проверен и не производился ничем.
+
+    Кого таблица описывает, решает вызывающий. Строка `deferred` в ней
+    законна — это исход, а не пропуск; таблицы нет только там, где не
+    записано ни байта и записать было нечего.
+    """
+    rel = field_map.name("backfill", (collection, field))
+    path = Path(root) / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(field_map.render(rows), encoding="utf-8")
+    return rel
+
+
+def main(argv=None):
+    """Дверь для скилла `extend-structure`: заполнить одно поле в одной
+    коллекции.
+
+    `--silently` — то, что вправе сделать режим без присмотра: пишет только
+    полностью вычислимое, а на первой невычислимой записи не пишет ничего и
+    отвечает отказом. Отказ — код 2, а не тишина с нулём: «поле не
+    заполнено» обязано доехать до вызвавшего, иначе молчаливой становится
+    сама несделанная работа.
+
+    Отложенное в обычном режиме кодом не красится: команда сделала ровно то,
+    что ей позволено, и назвала остаток. Красный код здесь означал бы, что
+    значение, принадлежащее автору, — поломка.
+    """
+    parser = argparse.ArgumentParser(
+        description="fill in a missing field: computed, synthetic or deferred")
+    parser.add_argument("root")
+    parser.add_argument("collection")
+    parser.add_argument("field")
+    parser.add_argument("--silently", action="store_true",
+                        help="писать, только если вычислимо всё; иначе не писать ничего")
+    args = parser.parse_args(argv)
+    root = Path(args.root)
+
+    # Опечатка в имени коллекции доезжала до конца зелёной: записей нет,
+    # потому что нет папки, — и отчёт «строк ноль» неотличим от коллекции,
+    # где поле уже стоит у каждой записи. Молчаливым тут становится весь
+    # прогон, а не одно значение.
+    if not (root / args.collection / "items").is_dir():
+        sys.stdout.write("отказ: у коллекции нет папки items: %s\n"
+                         % args.collection)
+        return EXIT_VIOLATION
+
+    # Строки считаются здесь, до мутации, потому что после неё поле стоит у
+    # каждой записи и таблица вышла бы пустой. `run` и `run_silently` считают
+    # их заново сами: решение о том, что писать, остаётся в одном месте, а
+    # `plan` ничего не пишет и повторного чтения дереву не стоит.
+    rows, _ = plan(root, args.collection, args.field)
+    if args.silently:
+        written, text = run_silently(root, args.collection, args.field)
+        sys.stdout.write(text)
+        if not written:
+            return EXIT_VIOLATION
+    else:
+        _, text = run(root, args.collection, args.field)
+        sys.stdout.write(text)
+    sys.stdout.write("таблица: %s\n"
+                     % write_table(root, args.collection, args.field, rows))
+    return EXIT_OK
+
+
+if __name__ == "__main__":
+    sys.exit(main())

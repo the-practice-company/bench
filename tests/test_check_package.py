@@ -48,9 +48,14 @@ def _minimal_package(root):
 
 
 def _adopt_skill(root, line, name="adopt-context-repo"):
-    """Скилл усыновления, инструкция — ровно на пятой строке SKILL.md."""
+    """Скилл усыновления, инструкция — ровно на пятой строке SKILL.md.
+
+    `exist_ok`: тем же помощником сажается образец и в `skills/drain-inbox`,
+    который у минимального пакета уже есть. Второй такой же помощник ради
+    одного флага был бы второй формой скилла в наборе.
+    """
     skill = root / "skills" / name
-    skill.mkdir(parents=True)
+    skill.mkdir(parents=True, exist_ok=True)
     (skill / "SKILL.md").write_text(
         "---\nname: %s\ndescription: x\n---\n%s\n" % (name, line), encoding="utf-8")
     (skill / "eval.txt").write_text("прими репозиторий\nadopt this repo\n",
@@ -1209,6 +1214,103 @@ class TestPackageCheck(unittest.TestCase):
                   "не читается как UTF-8: байт 0xe9 в позиции 38, "
                   "манифест скилла не проверен")])
             self.assertEqual(report.exit_code(), 2)
+
+
+class TestMutatingSkillPerimeter(unittest.TestCase):
+    """Периметр `destructive-example` — все скиллы, мутирующие дерево.
+
+    Волна 4 держала класс над одним усыновлением. Волна 5 отгружает ещё три
+    скилла, и два из них удаляют: `maintain-context-repo` сносит пустую
+    коллекцию, перешедшую порог, `drain-inbox` — разобранный элемент. Довод,
+    ради которого класс заведён («разрушающий пример в инструкции рано или
+    поздно исполнят буквально»), относится к ним ровно так же.
+    """
+
+    # Скиллы, которые дерево только читают. Список здесь, а не в продукте:
+    # продукт называет периметр, а тест сверяет, что отгруженное дерево
+    # скиллов этим периметром разобрано целиком.
+    READ_ONLY = ("create-context-repo",)
+
+    def test_the_perimeter_is_this_closed_set(self):
+        """Закрытое множество, как `TOOL_NAMES`: новый мутирующий скилл
+        дописывается сюда правкой, и правка видна."""
+        self.assertEqual(sorted(check_package.MUTATING_SKILLS),
+                         ["adopt", "drain-inbox", "extend-structure",
+                          "maintain-context-repo"])
+
+    def test_every_shipped_skill_is_on_one_of_the_two_sides(self):
+        """Тест спрашивает дерево, а не константу.
+
+        Периметр, сверенный только с литералом рядом, остаётся зелёным и
+        тогда, когда в `skills/` приехал четвёртый мутирующий скилл, о
+        котором константа не знает. Здесь красным становится **любой** новый
+        каталог скилла: его придётся отнести к одной из двух сторон.
+        """
+        shipped = sorted(p.name for p in (ROOT / "skills").iterdir() if p.is_dir())
+        inside = [name for name in shipped
+                  if check_package._is_mutating_skill("skills/%s/SKILL.md" % name)]
+        outside = [name for name in shipped if name not in inside]
+        self.assertEqual(sorted(outside), sorted(self.READ_ONLY))
+        self.assertEqual(inside, sorted(set(shipped) - set(self.READ_ONLY)))
+
+    def test_every_name_of_the_perimeter_names_a_shipped_skill(self):
+        """Опечатка в имени снимает скилл с класса молча: файла с таким
+        именем в `skills/` нет, а `_is_mutating_skill` про это не знает."""
+        shipped = [p.name for p in (ROOT / "skills").iterdir() if p.is_dir()]
+        for name in check_package.MUTATING_SKILLS:
+            self.assertTrue(
+                [d for d in shipped if d == name or d.startswith(name + "-")],
+                name)
+
+    def test_each_of_them_is_inside_the_perimeter(self):
+        for name in check_package.MUTATING_SKILLS:
+            self.assertTrue(
+                check_package._is_mutating_skill("skills/%s/SKILL.md" % name), name)
+
+    def test_a_prefix_match_is_enough_for_adopt(self):
+        """`skills/adopt/` и `skills/adopt-context-repo/` — оба усыновление.
+        Требование дефиса однажды выключало класс целиком."""
+        for rel in ("skills/adopt/SKILL.md", "skills/adopt-context-repo/SKILL.md"):
+            self.assertTrue(check_package._is_mutating_skill(rel), rel)
+
+    def test_a_nested_file_of_a_mutating_skill_is_inside_too(self):
+        self.assertTrue(
+            check_package._is_mutating_skill("skills/drain-inbox/refs/notes.md"))
+
+    def test_a_read_only_skill_is_outside(self):
+        self.assertFalse(
+            check_package._is_mutating_skill("skills/create-context-repo/SKILL.md"))
+
+    def test_a_directory_outside_skills_is_outside(self):
+        self.assertFalse(check_package._is_mutating_skill("docs/drain-inbox/x.md"))
+
+    def test_a_file_named_after_a_skill_does_not_join_the_perimeter(self):
+        """Скилл с заметкой `maintain-context-repo.md` внутри мутирующим
+        не становится: имя файла из проверки исключено."""
+        self.assertFalse(
+            check_package._is_mutating_skill("skills/other/maintain-context-repo.md"))
+
+    def test_a_destructive_example_reddens_in_every_mutating_skill(self):
+        """Периметр расширен — значит посаженный образец краснеет в каждом
+        из четырёх, а не только в усыновлении."""
+        for name in ("adopt-context-repo", "maintain-context-repo",
+                     "extend-structure", "drain-inbox"):
+            with self.subTest(skill=name), tempfile.TemporaryDirectory() as tmp:
+                root = _minimal_package(Path(tmp))
+                line = "Сделай: rm -rf projects/stale"
+                rel = _adopt_skill(root, line, name=name)
+                self.assertEqual(
+                    places(check(root)),
+                    [(rel, 5, "destructive-example", line)])
+
+    def test_the_same_example_stays_silent_in_a_read_only_skill(self):
+        """Обе стороны размена в одном тесте: расширение периметра не
+        означает, что класс поехал на все скиллы подряд."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            _adopt_skill(root, "Сделай: rm -rf projects/stale",
+                         name="create-context-repo")
+            self.assertEqual(places(check(root)), [])
 
 
 class TestGateNotReadOnlyMechanism(unittest.TestCase):

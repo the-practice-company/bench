@@ -472,8 +472,19 @@ def _eval_defect(text):
     return "в eval.txt только комментарии: срабатывание не проверяется"
 
 
-def _is_adopt_file(rel):
-    """Файл внутри скилла усыновления, на любой глубине вложенности.
+# Скиллы, мутирующие дерево. Правило `destructive-example` заведено потому,
+# что разрушающий пример в инструкции рано или поздно исполнят буквально, —
+# и это верно для скилла, удаляющего пустую коллекцию и разобранный элемент
+# inbox, не меньше, чем для усыновления. Множество закрытое, как `TOOL_NAMES`:
+# новый мутирующий скилл дописывается сюда правкой, и правка видна.
+# `tests/test_check_package.py::TestMutatingSkillPerimeter` роняет набор, если
+# в `skills/` приехал каталог, не отнесённый ни к одной из двух сторон.
+MUTATING_SKILLS = ("adopt", "drain-inbox", "extend-structure",
+                   "maintain-context-repo")
+
+
+def _is_mutating_skill(rel):
+    """Файл внутри мутирующего скилла, на любой глубине вложенности.
 
     `rel.startswith("skills/adopt-")` требовал дефиса: каталог
     `skills/adopt/` — самое естественное имя для этого скилла — выключал
@@ -483,8 +494,8 @@ def _is_adopt_file(rel):
     parts = rel.split("/")
     if parts[0] != "skills":
         return False
-    return any(part == "adopt" or part.startswith("adopt-")
-               for part in parts[1:-1])
+    return any(part == name or part.startswith(name + "-")
+               for part in parts[1:-1] for name in MUTATING_SKILLS)
 
 
 def check(root):
@@ -604,9 +615,9 @@ def check(root):
                     and "${CLAUDE_PLUGIN_ROOT}" not in line:
                 findings.append(Finding("relative-path-in-skill", rel, lineno,
                                         line.strip()[:80]))
-            # ADOPT мутирует чужое дерево; разрушающий пример в его инструкциях
-            # рано или поздно исполнят буквально.
-            if _is_adopt_file(rel) and DESTRUCTIVE.search(line):
+            # Мутирующий скилл трогает чужое дерево; разрушающий пример в его
+            # инструкциях рано или поздно исполнят буквально.
+            if _is_mutating_skill(rel) and DESTRUCTIVE.search(line):
                 findings.append(Finding("destructive-example", rel, lineno,
                                         line.strip()[:80]))
 

@@ -1,0 +1,23 @@
+# triggers
+разбери inbox
+разложи входящие по зонам
+в инбоксе накопилось, разбери
+опустоши inbox репозитория
+что делать с этими захватами в inbox
+разбери входящие заметки и разложи их
+drain the inbox
+sort the inbox of this repository
+triage the captures in inbox
+the inbox has piled up, go through it
+empty the inbox zone
+what do we do with these inbox items
+
+# non-triggers
+create a context repository from scratch
+создай контекстный репозиторий с нуля
+adopt this folder of notes
+усынови чужое дерево заметок
+maintain the repository and fix the form
+почини форму в репозитории
+add a collection to this repository
+clear my email inbox

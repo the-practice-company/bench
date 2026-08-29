@@ -1,5 +1,7 @@
 """Критерий 3: единица не заводится без содержимого. Три команды."""
 
+import contextlib
+import io
 import tempfile
 import unittest
 from pathlib import Path
@@ -310,6 +312,126 @@ class TestAddView(unittest.TestCase):
         """Проверяется только статически разрешимый случай. Движка фильтров
         Obsidian Bases пакет не строит и не собирается."""
         self.assertFalse(hasattr(extend, "evaluate_filter"))
+
+
+class TestCommandLine(unittest.TestCase):
+    """Входная точка: три команды скилла `extend-structure`.
+
+    До неё модуль был функциями без двери: скилл — инструкция агенту, а
+    инструкция «позови функцию Python» не исполняется ничем. Отдельная
+    проверка нужна ровно потому, что разбор аргументов — это и есть то место,
+    где первая запись теряется молча.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = materialise(self.tmp.name)
+
+    def run_cli(self, *argv):
+        """Отчёт и код возврата. `stderr` глушится вместе с `stdout`: разбор
+        аргументов печатает туда свои отказы, и в выводе набора они
+        выглядели бы упавшим тестом."""
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            code = extend.main([str(self.root)] + [str(a) for a in argv])
+        return out.getvalue(), code
+
+    def test_add_collection_takes_the_first_record_from_a_file(self):
+        (self.root / "tmp" / "first.md").write_text(RECORD, encoding="utf-8")
+        report, code = self.run_cli("add-collection", "projects/leads",
+                                    "--archetype", "pipeline",
+                                    "--record-file", "tmp/first.md")
+        self.assertEqual(code, EXIT_OK, report)
+        self.assertEqual(
+            (self.root / "projects" / "leads" / "items" / "first.md")
+            .read_text(encoding="utf-8"), RECORD)
+
+    def test_add_collection_without_a_record_creates_nothing_and_asks(self):
+        """Критерий 3 через дверь, которой пользуется скилл: без первой
+        записи не появляется ни файла, а вопрос уходит в открытые нити."""
+        report, code = self.run_cli("add-collection", "projects/leads",
+                                    "--archetype", "pipeline")
+        self.assertEqual(code, EXIT_VIOLATION)
+        self.assertFalse((self.root / "projects" / "leads").exists())
+        self.assertIn("projects/leads",
+                      (self.root / "OPEN-THREADS.md").read_text(encoding="utf-8"))
+        self.assertIn("отказ", report)
+
+    def test_a_record_file_that_is_not_there_is_a_named_refusal(self):
+        """Непрочитанный вход — не пустая запись. Свести их значило бы
+        спросить автора о том, что он уже написал."""
+        report, code = self.run_cli("add-collection", "projects/leads",
+                                    "--archetype", "pipeline",
+                                    "--record-file", "tmp/нет-такого.md")
+        self.assertEqual(code, EXIT_VIOLATION)
+        self.assertIn("не прочитан", report)
+        self.assertFalse((self.root / "projects" / "leads").exists())
+
+    def test_a_record_file_outside_the_root_is_refused(self):
+        """Незыблемое №6 тем же примитивом волны 1, а не вторым прочтением
+        пути."""
+        report, code = self.run_cli("add-collection", "projects/leads",
+                                    "--archetype", "pipeline",
+                                    "--record-file", "../соседний.md")
+        self.assertEqual(code, EXIT_VIOLATION)
+        self.assertIn("вне корня", report)
+
+    def test_the_record_name_defaults_to_the_name_of_the_file_it_came_from(self):
+        (self.root / "tmp" / "2026-08-30-встреча.md").write_text(
+            RECORD, encoding="utf-8")
+        report, code = self.run_cli("add-collection", "projects/leads",
+                                    "--archetype", "pipeline",
+                                    "--record-file", "tmp/2026-08-30-встреча.md")
+        self.assertEqual(code, EXIT_OK, report)
+        self.assertTrue((self.root / "projects" / "leads" / "items"
+                         / "2026-08-30-встреча.md").exists())
+
+    def test_a_record_given_as_text_without_a_name_is_refused(self):
+        """Имя записи не выводится ниоткуда, и придумать его — сочинить
+        содержимое. Отказ называет причину, а не спрашивает про запись."""
+        report, code = self.run_cli("add-collection", "projects/leads",
+                                    "--archetype", "pipeline",
+                                    "--record-text", RECORD)
+        self.assertEqual(code, EXIT_VIOLATION)
+        self.assertIn("имя записи", report)
+        self.assertFalse((self.root / "projects" / "leads").exists())
+
+    def test_the_two_sources_of_the_record_are_mutually_exclusive(self):
+        with self.assertRaises(SystemExit):
+            self.run_cli("add-collection", "projects/leads",
+                         "--archetype", "pipeline",
+                         "--record-text", RECORD, "--record-file", "tmp/first.md")
+
+    def test_add_area_writes_the_folder_and_the_row(self):
+        report, code = self.run_cli("add-area", "sales",
+                                    "--purpose", "Продажи и воронка")
+        self.assertEqual(code, EXIT_OK, report)
+        self.assertIn("- [[areas/sales/README|sales]] — Продажи и воронка",
+                      (self.root / "areas" / "README.md").read_text(encoding="utf-8"))
+
+    def test_add_area_without_a_purpose_creates_nothing_and_asks(self):
+        report, code = self.run_cli("add-area", "sales")
+        self.assertEqual(code, EXIT_VIOLATION)
+        self.assertFalse((self.root / "areas" / "sales").exists())
+        self.assertIn("sales",
+                      (self.root / "OPEN-THREADS.md").read_text(encoding="utf-8"))
+
+    def test_add_view_lands_in_the_base_file(self):
+        report, code = self.run_cli("add-view", "core/people", "Все люди")
+        self.assertEqual(code, EXIT_OK, report)
+        self.assertIn("name: Все люди",
+                      (self.root / PEOPLE).read_text(encoding="utf-8"))
+
+    def test_add_view_on_an_empty_folder_is_refused_through_the_door_too(self):
+        report, code = self.run_cli("add-view", "projects/stale", "Хоть что-то")
+        self.assertEqual(code, EXIT_VIOLATION)
+        self.assertIn("нулём записей", report)
+
+    def test_an_unknown_command_does_not_default_to_one_that_writes(self):
+        """Умолчание подкоманды сделало бы опечатку записью в дерево."""
+        with self.assertRaises(SystemExit):
+            self.run_cli()
 
 
 if __name__ == "__main__":
