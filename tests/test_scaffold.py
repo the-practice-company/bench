@@ -253,3 +253,150 @@ class TestGeneratedClaudeMd(unittest.TestCase):
         self.assertEqual([lineno for lineno, line
                           in enumerate(self.text.split("\n"), start=1)
                           if _CYRILLIC.search(line)], [])
+
+
+RULES = SCAFFOLD / ".claude" / "rules"
+
+# Три сквозных правила и их глобы — дословно из секции 9. Восемь зонных
+# выводятся из zones.ZONES: второй таблицы зон в пакете быть не должно.
+CROSS_CUTTING = {
+    "collection.md": "**/items/**",
+    "views.md": "**/*.base",
+    "readme.md": "**/README.md",
+}
+
+HELD = "Held by gates: "
+NOT_GATED = "Not gated — this is a convention."
+
+# Механизмы, которые правило вправе назвать. Закрытый список: правило,
+# ссылающееся на несуществующий гейт, — это та самая гниль, которую ловит
+# гейт №1, только этажом выше.
+KNOWN_MECHANISMS = ("link gate", "frontmatter gate", "write hook",
+                    "end-of-turn hook", "deny rule")
+
+# Закрытые словари рецепта. Rule-файл вправе сослаться на README коллекции,
+# но не переписать словарь к себе.
+VOCABULARIES = (("open", "decided", "revisited"), ("active", "paused", "done"))
+
+
+def rule_files():
+    return sorted(RULES.glob("*.md"))
+
+
+class TestPathScopedRules(unittest.TestCase):
+    def test_there_are_exactly_eleven_and_these_are_they(self):
+        expected = sorted(["%s.md" % zone for zone in zones.ZONES]
+                          + list(CROSS_CUTTING))
+        self.assertEqual([p.name for p in rule_files()], expected)
+
+    def test_every_rule_declares_a_description_and_paths(self):
+        empty = []
+        for path in rule_files():
+            fields = parse_frontmatter(path.read_text(encoding="utf-8"))
+            if not str(fields.get("description") or "").strip():
+                empty.append(path.name)
+            if not fields.get("paths"):
+                empty.append(path.name + ":paths")
+        self.assertEqual(empty, [])
+
+    def test_zone_rules_scope_themselves_to_their_zone(self):
+        actual = {}
+        for zone in zones.ZONES:
+            fields = parse_frontmatter(
+                (RULES / ("%s.md" % zone)).read_text(encoding="utf-8"))
+            actual[zone] = fields["paths"]
+        self.assertEqual(actual, {z: ["%s/**" % z] for z in zones.ZONES})
+
+    def test_cross_cutting_rules_scope_themselves_by_shape(self):
+        actual = {}
+        for name, glob in CROSS_CUTTING.items():
+            fields = parse_frontmatter((RULES / name).read_text(encoding="utf-8"))
+            actual[name] = fields["paths"]
+        self.assertEqual(actual,
+                         {name: [glob] for name, glob in CROSS_CUTTING.items()})
+
+    def test_every_rule_ends_with_one_of_the_two_closing_forms(self):
+        """Закрытие — **абзац**, а не строка: текст после последней пустой,
+        склеенный в одну.
+
+        Прочтение «последняя непустая строка» роняло восемь правил из
+        одиннадцати: у areas, collection, core, decisions, knowledge,
+        projects, sources и views закрытие переносится на две строки, и
+        последней оказывалась вторая половина фразы. Чинить это переливкой
+        одиннадцати файлов в одну длинную строку значило бы портить прозу
+        ради теста. Соседний `test_a_named_gate_is_a_gate_that_exists`
+        ищет то же место через `rfind` по всему тексту, то есть уже читает
+        закрытие абзацем: два прочтения одного места — это расхождение,
+        а не строгость.
+
+        `tmp.md` старую форму проходил **случайно** — его фраза уместилась
+        в одну строку. Восстанавливать построчное чтение по этому образцу
+        нельзя: оно зелёное на совпадении длины, а не на форме.
+        """
+        wrong = []
+        for path in rule_files():
+            paragraphs = [block for block
+                          in path.read_text(encoding="utf-8").split("\n\n")
+                          if block.strip()]
+            closing = " ".join(paragraphs[-1].split()) if paragraphs else ""
+            if closing == NOT_GATED:
+                continue
+            if closing.startswith(HELD) and closing[len(HELD):].strip():
+                continue
+            wrong.append((path.name, closing))
+        self.assertEqual(wrong, [])
+
+    def test_a_named_gate_is_a_gate_that_exists(self):
+        unknown = []
+        for path in rule_files():
+            text = path.read_text(encoding="utf-8")
+            index = text.rfind(HELD)
+            if index < 0:
+                continue
+            closing = text[index + len(HELD):]
+            if not any(name in closing for name in KNOWN_MECHANISMS):
+                unknown.append((path.name, closing.strip()[:60]))
+        self.assertEqual(unknown, [])
+
+    def test_both_closing_forms_are_actually_used(self):
+        """Форма «не гейтится» существует не на бумаге: конвенций две —
+        разбор inbox и жанр README, и обе названы конвенциями в спеке."""
+        ungated = [p.name for p in rule_files()
+                   if NOT_GATED in p.read_text(encoding="utf-8")]
+        self.assertEqual(ungated, ["inbox.md", "readme.md"])
+
+    def test_no_rule_reproduces_a_collection_vocabulary(self):
+        offenders = []
+        for path in rule_files():
+            words = set(re.findall(r"[a-z]+",
+                                   path.read_text(encoding="utf-8").lower()))
+            for vocabulary in VOCABULARIES:
+                present = [value for value in vocabulary if value in words]
+                if len(present) > 1:
+                    offenders.append((path.name, present))
+        self.assertEqual(offenders, [])
+
+    def test_no_rule_outgrows_its_budget(self):
+        """Около тридцати строк на файл. Правило, доросшее до README,
+        перестаёт быть правилом и начинает расходиться с ним."""
+        oversized = [(p.name, len(p.read_text(encoding="utf-8").split("\n")))
+                     for p in rule_files()
+                     if len(p.read_text(encoding="utf-8").split("\n")) > 40]
+        self.assertEqual(oversized, [])
+
+    def test_every_rule_is_english(self):
+        """Секция 25, третий раз тем же признаком.
+
+        У README зон и у CLAUDE.md эта проверка есть, у одиннадцати правил
+        её в плане не было — а они как раз тот артефакт, который пишется
+        по одному файлу за раз и в котором сорваться на русский легче
+        всего. Правило без исполняемой проверки не существует (незыблемое
+        №2), и здесь это ровно тот случай.
+        """
+        offenders = []
+        for path in rule_files():
+            for lineno, line in enumerate(
+                    path.read_text(encoding="utf-8").split("\n"), start=1):
+                if _CYRILLIC.search(line):
+                    offenders.append((path.name, lineno))
+        self.assertEqual(offenders, [])

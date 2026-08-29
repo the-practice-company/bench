@@ -19,6 +19,16 @@
 **Общая спека:** секции 1–5, 8–10, 17, 21, 22, 25
 **Критерии выхода:** `docs/roadmap.md`, «Волна 3»
 
+## Состояние плана
+
+**Задачи 1–4 исполнены** — код в дереве, `./check` зелёный, галочки проставлены.
+Перечитывать и переисполнять их не нужно: гейт frontmatter больше не считает
+README коллекции записью; восемь зон, восемь README, `CLAUDE.md` и одиннадцать
+`.claude/rules/*.md` лежат в `scaffold/`; оба гейта на каркасе молчат, и с
+удалённым `.claude/` тоже.
+
+**Начинать с задачи 5.**
+
 ---
 
 ## Что уже проверено и не переоткрывается
@@ -138,7 +148,7 @@
 - Modify: `scripts/check_frontmatter.py`
 - Test: `tests/test_check_frontmatter.py`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 Дописать в `tests/test_check_frontmatter.py`:
 
@@ -235,7 +245,7 @@ class TestCollectionOwnReadme(unittest.TestCase):
         )
 ```
 
-- [ ] **Step 2: Прогнать и убедиться, что падает**
+- [x] **Step 2: Прогнать и убедиться, что падает**
 
 Run: `python3 -m unittest tests.test_check_frontmatter -v`
 Expected: `test_the_collections_own_readme_is_not_a_record` FAIL — вместо
@@ -244,7 +254,7 @@ Expected: `test_the_collections_own_readme_is_not_a_record` FAIL — вмест�
 `поле status читает вид`. Два остальных теста проходят и остаются
 сторожами послабления.
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 В `scripts/check_frontmatter.py`, внутри `scan`, после вычисления `readme`:
 
@@ -273,7 +283,7 @@ Expected: `test_the_collections_own_readme_is_not_a_record` FAIL — вмест�
 собирается от `base_path.parent`, а `record` — от `root / folder`, и на
 симлинке или ином написании корня один и тот же файл дал бы два разных пути.
 
-- [ ] **Step 4: Прогнать — должно пройти**
+- [x] **Step 4: Прогнать — должно пройти**
 
 Run: `python3 -m unittest tests.test_check_frontmatter tests.test_fixtures -v`
 Expected: зелено; счёт находок на битой фикстуре не изменился
@@ -281,7 +291,7 @@ Expected: зелено; счёт находок на битой фикстуре
 там фильтр идёт по `decisions/items`, и README коллекции в перечисление
 не попадал никогда.
 
-- [ ] **Step 5: Коммит**
+- [x] **Step 5: Коммит**
 
 ```bash
 git add scripts/check_frontmatter.py tests/test_check_frontmatter.py
@@ -302,7 +312,7 @@ README, коллекции, exemplar, порог**. Сочинять здесь 
 - Create: `scaffold/{core,areas,projects,knowledge,inbox,sources,tmp,decisions}/README.md`
 - Test: `tests/test_scaffold.py`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 ```python
 """Каркас рецепта: инвентарь, содержание артефактов, оба гейта.
@@ -431,13 +441,13 @@ class TestDecisionsVocabulary(unittest.TestCase):
             self.assertIn(condition, text)
 ```
 
-- [ ] **Step 2: Прогнать и убедиться, что падает**
+- [x] **Step 2: Прогнать и убедиться, что падает**
 
 Run: `python3 -m unittest tests.test_scaffold -v`
 Expected: все FAIL — каталога `scaffold/` не существует, первым падает
 `test_every_zone_has_a_directory_and_a_readme`.
 
-- [ ] **Step 3: Реализация — `scaffold/core/README.md`**
+- [x] **Step 3: Реализация — `scaffold/core/README.md`**
 
 ```markdown
 # core
@@ -465,7 +475,7 @@ documents. A collection of principles once the question "which principles
 apply to X" appears.
 ```
 
-- [ ] **Step 4: Реализация — `scaffold/areas/README.md`**
+- [x] **Step 4: Реализация — `scaffold/areas/README.md`**
 
 ```markdown
 # areas
@@ -495,7 +505,7 @@ inside a direction once its records are of one kind and a question "which of
 them X" appears.
 ```
 
-- [ ] **Step 5: Реализация — `scaffold/projects/README.md`**
+- [x] **Step 5: Реализация — `scaffold/projects/README.md`**
 
 ```markdown
 ---
@@ -536,7 +546,7 @@ read by the agent as current.
 **By threshold.** A "done" view once the first project reaches that status.
 ```
 
-- [ ] **Step 6: Реализация — `scaffold/knowledge/README.md`**
+- [x] **Step 6: Реализация — `scaffold/knowledge/README.md`**
 
 ```markdown
 # knowledge
@@ -563,7 +573,7 @@ that failed to start.
 **By threshold.** A new base is added by connecting a submodule.
 ```
 
-- [ ] **Step 7: Реализация — `scaffold/inbox/README.md`**
+- [x] **Step 7: Реализация — `scaffold/inbox/README.md`**
 
 ```markdown
 # inbox
@@ -592,7 +602,7 @@ not a failure mode: the value of the zone is that capture costs no decision.
 tiresome.
 ```
 
-- [ ] **Step 8: Реализация — `scaffold/sources/README.md`**
+- [x] **Step 8: Реализация — `scaffold/sources/README.md`**
 
 ```markdown
 # sources
@@ -622,7 +632,7 @@ canonical one. A source that nobody has linked to is unprocessed material.
 collection of companion records once sources need filtering.
 ```
 
-- [ ] **Step 9: Реализация — `scaffold/tmp/README.md`**
+- [x] **Step 9: Реализация — `scaffold/tmp/README.md`**
 
 ```markdown
 # tmp
@@ -648,7 +658,7 @@ and lost.
 **By threshold.** None.
 ```
 
-- [ ] **Step 10: Реализация — `scaffold/decisions/README.md`**
+- [x] **Step 10: Реализация — `scaffold/decisions/README.md`**
 
 ```markdown
 ---
@@ -690,7 +700,7 @@ there is no third place where they are written down.
 review trigger. A field for grouping once there are enough records to group.
 ```
 
-- [ ] **Step 11: Прогнать — должно пройти**
+- [x] **Step 11: Прогнать — должно пройти**
 
 Run: `python3 -m unittest tests.test_scaffold -v`
 Expected: зелено.
@@ -706,7 +716,7 @@ Expected: зелено.
   не существует — токен в backtick'ах дал бы `unresolved`. Правится каркас,
   не гейт: периметр за образцом не переезжает.
 
-- [ ] **Step 12: Коммит**
+- [x] **Step 12: Коммит**
 
 ```bash
 git add scaffold/core/README.md scaffold/areas/README.md \
@@ -728,7 +738,7 @@ git commit -m "wave3: восемь зон и восемь README по табли
 - Create: `scaffold/CLAUDE.md`
 - Modify: `tests/test_scaffold.py`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 ```python
 # Права записи в карте — единственное исключение из теста «какая проверка
@@ -800,12 +810,12 @@ class TestGeneratedClaudeMd(unittest.TestCase):
         self.assertIn("could hold it", self.text)
 ```
 
-- [ ] **Step 2: Прогнать и убедиться, что падает**
+- [x] **Step 2: Прогнать и убедиться, что падает**
 
 Run: `python3 -m unittest tests.test_scaffold.TestGeneratedClaudeMd -v`
 Expected: все FAIL с `FileNotFoundError` — `scaffold/CLAUDE.md` нет.
 
-- [ ] **Step 3: Реализация — `scaffold/CLAUDE.md`**
+- [x] **Step 3: Реализация — `scaffold/CLAUDE.md`**
 
 ```markdown
 # Context repository
@@ -849,12 +859,12 @@ This file is English by convention. The conversation and the content of the
 repository are in the author's language.
 ```
 
-- [ ] **Step 4: Прогнать — должно пройти**
+- [x] **Step 4: Прогнать — должно пройти**
 
 Run: `python3 -m unittest tests.test_scaffold -v`
 Expected: зелено.
 
-- [ ] **Step 5: Коммит**
+- [x] **Step 5: Коммит**
 
 ```bash
 git add scaffold/CLAUDE.md tests/test_scaffold.py
@@ -877,7 +887,7 @@ Rule-файл **никогда не воспроизводит** `archetype` и 
 - Create: `scaffold/.claude/rules/*.md` (11 файлов)
 - Modify: `tests/test_scaffold.py`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 ```python
 RULES = SCAFFOLD / ".claude" / "rules"
@@ -1008,13 +1018,13 @@ class TestPathScopedRules(unittest.TestCase):
         self.assertEqual(oversized, [])
 ```
 
-- [ ] **Step 2: Прогнать и убедиться, что падает**
+- [x] **Step 2: Прогнать и убедиться, что падает**
 
 Run: `python3 -m unittest tests.test_scaffold.TestPathScopedRules -v`
 Expected: все FAIL — `test_there_are_exactly_eleven_and_these_are_they`
 сравнивает пустой список с одиннадцатью именами.
 
-- [ ] **Step 3: Реализация — восемь правил зон**
+- [x] **Step 3: Реализация — восемь правил зон**
 
 `scaffold/.claude/rules/core.md`:
 
@@ -1237,7 +1247,7 @@ Held by gates: frontmatter gate — the starter fields on every record and the
 status value from the vocabulary the zone README declares.
 ```
 
-- [ ] **Step 4: Реализация — три сквозных правила**
+- [x] **Step 4: Реализация — три сквозных правила**
 
 `scaffold/.claude/rules/collection.md`:
 
@@ -1334,12 +1344,12 @@ and nothing announces the difference.
 Not gated — this is a convention.
 ```
 
-- [ ] **Step 5: Прогнать — должно пройти**
+- [x] **Step 5: Прогнать — должно пройти**
 
 Run: `python3 -m unittest tests.test_scaffold -v`
 Expected: зелено.
 
-- [ ] **Step 6: Коммит**
+- [x] **Step 6: Коммит**
 
 ```bash
 git add scaffold/.claude/rules tests/test_scaffold.py
