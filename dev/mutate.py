@@ -8,27 +8,62 @@
 Дыры починены, но каждая мутация была разовым куском shell в переписке. Волн
 впереди ещё четыре, и каждой нужно то же доказательство — отсюда таблица ниже.
 
-Три исхода, названные по-разному намеренно:
+**Оснастка однажды имела ровно тот дефект, который ловит.** Вердикт считался
+кодом возврата: `0` — выжила, иначе убита. Из этого следовали три подлога.
 
-- **убита** — набор покраснел. Проверка в этом месте видит.
-- **ВЫЖИЛА** — набор остался зелёным. Это находка: критерий держится на честном
-  слове. Ослаблять мутацию, чтобы она «прошла», запрещено — чинится проверка.
-- **не легла** — искомого текста в файле уже нет. Это другая поломка: устарела
-  таблица здесь, а не гейт. Смешать её с выжившей значит спрятать обе.
+Первый: набор мог быть красным ещё *до* мутации. В момент аудита посторонний
+файл нёс строку, ронявшую `test_our_own_package_is_green`, — и все восемь
+мутаций критерия 3 заверялись тестом, который к ним не относится вовсе.
+Состояние было преходящим и невидимым. Отсюда **база**: тот же модуль сперва
+гоняется на неизменённой копии, набор упавших запоминается, и мутация судится
+по **разнице**, а не по коду возврата.
+
+Второй: мутация, ломающая продукт целиком, тоже давала ненулевой код.
+Посаженный `import nonexistent_module_xyz` объявлялся убитым — «покраснел»
+неотличим от «покраснел, потому что нечего стало импортировать». Отсюда
+**дымовая проверка**: тронутые файлы обязаны разбираться и импортироваться,
+иначе это дефект мутации, а не убийство.
+
+Третий: печаталось «первым упал X», где X — первый по алфавиту, а не по делу.
+Отсюда **объявленный тест**: каждая мутация называет тест, который обязан
+упасть именно от неё. «Убита» значит «проверка, которая заявляла это место,
+его увидела», а не «что-то покраснело».
+
+Пять исходов, названные по-разному намеренно:
+
+- **убита** — объявленный тест появился в разнице. Проверка в этом месте видит.
+- **ВЫЖИЛА** — разница пуста. Это находка: критерий держится на честном слове.
+  Ослаблять мутацию, чтобы она «прошла», запрещено — чинится проверка.
+- **КРАСНОЕ НЕ ТО** — разница есть, объявленного теста в ней нет. Тоже находка:
+  место закрыто не тем тестом, который на него ссылается, — или объявление
+  устарело. Считать это убийством значит вернуть подлог номер три.
+- **не легла** — образца замены в файле нет, либо замена ничего не изменила.
+  Это другая поломка: устарела таблица здесь, а не гейт. Смешать её с
+  выжившей значит спрятать обе — пустая замена «выживает» тривиально.
+- **СЛОМАЛА ПРОДУКТ** — тронутый файл перестал разбираться или импортироваться.
+  Дефект мутации; чинить надо строку таблицы, а не гейт.
 
 Рабочее дерево не трогается: мутация живёт в одноразовой копии под
-`tempfile.TemporaryDirectory()` и умирает вместе с ней.
+`tempfile.TemporaryDirectory()` и умирает вместе с ней. Слепок дерева снимается
+**один раз** на прогон, и база с мутациями считаются от одного и того же
+слепка: иначе правка в рабочем каталоге посреди прогона разъезжает базу с
+мутантом и разница врёт.
 
-В `./check` инструмент не включается: семнадцать копий дерева и семнадцать
-прогонов тестового модуля в них — десятки секунд, а `./check` обязан оставаться
-достаточно дешёвым, чтобы его гоняли постоянно. Запускается руками:
+В `./check` инструмент не включается: слепок дерева и прогон тестового модуля
+на каждую мутацию — десятки секунд, а `./check` обязан оставаться достаточно
+дешёвым, чтобы его гоняли постоянно. Запускается руками:
 
     python3 dev/mutate.py
 
-Код возврата: 0 — все мутации убиты, 2 — есть выжившая, 1 — таблица устарела.
+Код возврата: 0 — все мутации убиты; 2 — есть выжившая или покрасневшая не тем
+тестом (находка о проверке); 1 — есть не легшая или сломавшая продукт (дефект
+таблицы здесь).
 """
 
 import collections
+import json
+import os
+import py_compile
 import shutil
 import subprocess
 import sys
@@ -42,7 +77,12 @@ from scripts import zones
 
 KILLED = "убита"
 SURVIVED = "ВЫЖИЛА"
+ELSEWHERE = "КРАСНОЕ НЕ ТО"
 NOT_APPLIED = "не легла"
+BROKEN = "СЛОМАЛА ПРОДУКТ"
+
+# Порядок печати сводки: сперва то, ради чего инструмент существует.
+OUTCOMES = (KILLED, SURVIVED, ELSEWHERE, NOT_APPLIED, BROKEN)
 
 
 class NotApplied(Exception):
@@ -54,13 +94,28 @@ class NotApplied(Exception):
     """
 
 
-def _short(text):
+def _short(text, width=70):
     """Первая непустая строка образца, обрезанная до читаемого размера."""
     for line in text.split("\n"):
         line = line.strip()
         if line:
-            return line[:60]
-    return text[:60]
+            return line[:width]
+    return text[:width]
+
+
+def _last_line(text, width=70):
+    """Последняя непустая строка — у трассировки и у PyCompileError там суть.
+
+    Первая строка обеих несёт путь во временный каталог: он меняется от
+    прогона к прогону и в отчёте бесполезен.
+    """
+    lines = [line.strip() for line in text.strip().split("\n") if line.strip()]
+    return lines[-1][:width] if lines else "без причины"
+
+
+def _tail(test_id):
+    """`Класс.метод` из полного идентификатора: модуль и так известен."""
+    return ".".join(test_id.split(".")[-2:])
 
 
 def substitution(path, find, replace):
@@ -69,6 +124,9 @@ def substitution(path, find, replace):
     Единственность — часть проверки применимости: два вхождения означают, что
     образец перестал указывать на конкретное место, и мутация уже не та,
     которая описана в таблице.
+
+    Возвращает тронутые пути: по ним считается дымовая проверка и сверка
+    байтов со слепком.
     """
     def step(root):
         target = root / path
@@ -80,6 +138,59 @@ def substitution(path, find, replace):
             raise NotApplied("в %s вхождений %d, а не одно: %s"
                              % (path, hits, _short(find)))
         target.write_text(text.replace(find, replace), encoding="utf-8")
+        return (path,)
+    return step
+
+
+def line_removal(path, marker):
+    """Удаление единственной строки, содержащей `marker`.
+
+    Форма для веток регулярного выражения. Дословный образец на них не
+    держится: комментарий рядом переписывают при каждой найденной дыре, и
+    мутация «не ложится» из-за прозы, а не из-за кода. Маркер — кусок самой
+    ветки, короткий и не встречающийся больше нигде в файле.
+    """
+    def step(root):
+        target = root / path
+        if not target.exists():
+            raise NotApplied("нет файла %s" % path)
+        lines = target.read_text(encoding="utf-8").split("\n")
+        hits = [number for number, line in enumerate(lines) if marker in line]
+        if len(hits) != 1:
+            raise NotApplied("в %s строк с «%s» %d, а не одна"
+                             % (path, _short(marker), len(hits)))
+        del lines[hits[0]]
+        target.write_text("\n".join(lines), encoding="utf-8")
+        return (path,)
+    return step
+
+
+def block_replacement(path, opening, closing, replacement):
+    """Замена блока от строки с `opening` до первой строки, равной `closing`.
+
+    Форма для растущих списков. Дословный образец куска списка ложится, пока
+    список не переписали, — и «не легла» тогда сообщает о чужой работе, а не
+    о мутации. Границы блока переживают и дописанные элементы, и вставленные
+    внутрь комментарии.
+    """
+    def step(root):
+        target = root / path
+        if not target.exists():
+            raise NotApplied("нет файла %s" % path)
+        lines = target.read_text(encoding="utf-8").split("\n")
+        starts = [number for number, line in enumerate(lines) if opening in line]
+        if len(starts) != 1:
+            raise NotApplied("в %s строк с «%s» %d, а не одна"
+                             % (path, _short(opening), len(starts)))
+        start = starts[0]
+        ends = [number for number in range(start + 1, len(lines))
+                if lines[number].strip() == closing]
+        if not ends:
+            raise NotApplied("в %s после «%s» нет закрывающей «%s»"
+                             % (path, _short(opening), closing))
+        lines[start:ends[0] + 1] = replacement.split("\n")
+        target.write_text("\n".join(lines), encoding="utf-8")
+        return (path,)
     return step
 
 
@@ -94,25 +205,25 @@ def copied_file(src, dst):
             raise NotApplied("%s уже существует, мутация ничего не меняет" % dst)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
+        return (dst,)
     return step
 
 
-# Комментарии Windows и UNC вырезаются вместе с ветками: отдельно они не
-# осмысленны, а ведущий перевод строки убирает за собой пустую строку внутри
-# вызова re.compile.
-_WINDOWS_AND_UNC_BRANCHES = r'''
-    # Буква диска Windows: заглавная латинская буква, двоеточие и
-    # разделитель пути. Однобуквенность и отсутствие слова слева разводят
-    # её с `http` + двоеточие, где перед двоеточием стоит `p`. Двух
-    # ограничений на этом не хватило: скан пошёл по всем текстовым файлам,
-    # и ветка начала ловить схему URI из одной буквы (`s:` + две косые) и
-    # тернарник минифицированного JS (`?b:` и регулярка следом). Отсюда
-    # ещё два: вторая косая подряд — признак схемы, а не диска; строчная
-    # буква перед двоеточием в тексте кода — переменная или ключ, а не
-    # диск, который пишут заглавной.
-    + r"|(?<![\w.])[A-Z]:(?:/(?!/)|\\)"
-    # UNC \\сервер\ресурс
-    + r"|(?<![\w.])\\\\[A-Za-z0-9._-]+\\"'''
+# Ветки буквы диска и UNC снимаются по маркеру внутри самой ветки, а не
+# дословным куском файла вместе с комментариями. Дословный образец здесь уже
+# отвалился: комментарий над веткой UNC переписали, объясняя новую дыру, и
+# мутация отчиталась «не легла» — то есть о чужой правке прозы, а не о гейте.
+# Комментарии остаются на месте: на поведение они не влияют, а мутация обязана
+# менять поведение.
+_WINDOWS_DRIVE_BRANCH = "[A-Z]:(?:"
+_UNC_BRANCH = r"(?<![\w.])\\\\"
+
+# Пять префиксов вместо всего списка: ровно тот объём, с которым проверка
+# однажды и жила. Блок заменяется целиком, потому что список дописывают —
+# за один прогон он вырос на три корня контейнеров.
+_FIVE_PREFIXES = '_ABSOLUTE_PREFIXES = (\n' + (
+    '    "/" + "Users/", "/" + "home/", "/" + "opt/", "/" + "etc/", "/" + "root/",\n'
+) + ')'
 
 # Имена зон для мутации SKIP_DIRS берутся из scripts.zones, а не переписываются
 # сюда литералами. Переписанные, они и были копией таблицы зон — тем самым
@@ -121,16 +232,27 @@ _WINDOWS_AND_UNC_BRANCHES = r'''
 # не имеет права его нарушать.
 _ZONES_AS_LITERALS = ", ".join('"%s"' % name for name in zones.ZONES)
 
-Mutation = collections.namedtuple("Mutation", "criterion name module steps")
+# `expect` — тест, который обязан упасть **именно от этой мутации**. Не
+# «какой-нибудь»: unittest гоняет по алфавиту, и без объявления в отчёт
+# попадал первый по имени, а не по делу. Мутация «absolute-path: пять
+# префиксов» так рекламировала `test_a_bash_shebang_is_still_caught`, тогда
+# как по существу её ловит `test_every_absolute_form_is_caught`.
+Mutation = collections.namedtuple("Mutation", "criterion name module expect steps")
 
-# Критерии — по номерам раздела «Волна 1» в docs/roadmap.md. Соответствие
-# «критерий → мутации → тестовый модуль» продублировано прозой в
+# `criterion` — метка раздела в docs/roadmap.md, а не всегда номер волны 1:
+# одна мутация доказывает критерий волны 3 и подписана так честно.
+# Соответствие «критерий → мутации → тестовый модуль» продублировано прозой в
 # docs/criteria-coverage.md; таблицы обязаны сходиться.
 MUTATIONS = (
+    # Критерий 1 волны 1 держится на трёх мутациях, а не на четырёх, как
+    # считала таблица до аудита: «глоб снова считается конкретным путём»
+    # ниже переподписана волной 3 — она не трогает битую фикстуру вовсе.
     Mutation(
-        criterion=1,
+        criterion="в1 К1",
         name="dead-allow: две причины схлопнуты в одну",
         module="tests.test_fixtures",
+        expect="tests.test_fixtures.TestExactFindings"
+               ".test_every_link_finding_sits_on_its_own_specimen",
         steps=(
             substitution(
                 "scripts/check_links.py",
@@ -140,9 +262,11 @@ MUTATIONS = (
         ),
     ),
     Mutation(
-        criterion=1,
+        criterion="в1 К1",
         name="wikilink: запрещённый откат на basename",
         module="tests.test_fixtures",
+        expect="tests.test_fixtures.TestExactFindings"
+               ".test_every_link_finding_sits_on_its_own_specimen",
         steps=(
             substitution(
                 "scripts/check_links.py",
@@ -154,9 +278,19 @@ MUTATIONS = (
         ),
     ),
     Mutation(
-        criterion=1,
+        # Подписана волной 3 после аудита. Раньше стояла под критерием 1
+        # волны 1 — «каждый гейт находит на битой фикстуре ровно то, что
+        # утверждает тест», — и это была неправда: битая фикстура от неё не
+        # меняется вовсе, 14 находок до и 14 после. Меняется **зелёная**:
+        # `.claude/settings.json` каркаса набирает три `unresolved`. Ровно
+        # это и есть критерий 1 волны 3 — «каркас проходит оба гейта с нулём
+        # находок». Оставить прежнюю подпись значило приписать критерию 1
+        # волны 1 доказательство, которого у него нет.
+        criterion="в3 К1",
         name="глоб снова считается конкретным путём",
         module="tests.test_fixtures",
+        expect="tests.test_fixtures.TestExactFindings"
+               ".test_green_sample_is_silent_on_both_gates",
         steps=(
             substitution(
                 "scripts/paths.py",
@@ -167,9 +301,11 @@ MUTATIONS = (
         ),
     ),
     Mutation(
-        criterion=1,
+        criterion="в1 К1",
         name="шаблон уходит из-под проверки корня",
         module="tests.test_fixtures",
+        expect="tests.test_fixtures.TestExactFindings"
+               ".test_every_link_finding_sits_on_its_own_specimen",
         steps=(
             substitution(
                 "scripts/check_links.py",
@@ -185,9 +321,15 @@ MUTATIONS = (
         ),
     ),
     Mutation(
-        criterion=2,
+        # Доказывает ровно одно: список маркеров в тесте читается. Тест —
+        # подстрочный поиск пяти литералов, и мутация сажает первый из них,
+        # то есть проверяет саму себя. Настоящее чтение часов она не
+        # доказывает: следующая мутация сажает такое чтение и выживает.
+        criterion="в1 К2",
         name="часы: import datetime в гейте ссылок",
         module="tests.test_fixtures",
+        expect="tests.test_fixtures.TestDeterminism"
+               ".test_no_module_in_scripts_reads_the_clock",
         steps=(
             substitution(
                 "scripts/check_links.py",
@@ -197,9 +339,32 @@ MUTATIONS = (
         ),
     ),
     Mutation(
-        criterion=2,
+        # Ожидается **ВЫЖИЛА**, и это правильный вывод, а не поломка оснастки.
+        # `st_mtime` — настоящее чтение часов внутри `scan()`, и ни один из
+        # пяти маркеров теста его не содержит. Критерий 2 в этой половине
+        # держится на списке подстрок, а не на признаке обращения к часам.
+        # Ослабить мутацию, чтобы строка позеленела, запрещено: чинится тест.
+        criterion="в1 К2",
+        name="часы: st_mtime внутри scan (ожидаемо выживает)",
+        module="tests.test_fixtures",
+        expect="tests.test_fixtures.TestDeterminism"
+               ".test_no_module_in_scripts_reads_the_clock",
+        steps=(
+            substitution(
+                "scripts/check_links.py",
+                "def scan(root, today=None):\n"
+                "    root = Path(root)\n",
+                "def scan(root, today=None):\n"
+                "    _stamp = Path(__file__).stat().st_mtime\n"
+                "    root = Path(root)\n",
+            ),
+        ),
+    ),
+    Mutation(
+        criterion="в1 К2",
         name="Report молча теряет переданную дату",
         module="tests.test_fixtures",
+        expect="tests.test_fixtures.TestDeterminism.test_today_is_carried_on_the_report",
         steps=(
             substitution(
                 "scripts/findings.py",
@@ -209,9 +374,10 @@ MUTATIONS = (
         ),
     ),
     Mutation(
-        criterion=3,
+        criterion="в1 К3",
         name="матчер: любой принимается за известный",
         module="tests.test_check_package",
+        expect="tests.test_check_package.TestPackageCheck.test_matcher_typo_is_caught",
         steps=(
             # Образец — две решающие строки, а не всё тело функции: комментарий
             # внутри неё однажды уже сделал мутацию «не легшей», хотя проверять
@@ -225,37 +391,23 @@ MUTATIONS = (
         ),
     ),
     Mutation(
-        criterion=3,
+        criterion="в1 К3",
         name="absolute-path: пять префиксов, без Windows и UNC",
         module="tests.test_check_package",
+        expect="tests.test_check_package.TestPackageCheck.test_every_absolute_form_is_caught",
         steps=(
-            substitution(
-                "scripts/check_package.py",
-                '    "/" + "Users/", "/" + "home/", "/" + "root/", "/" + "opt/", "/" + "etc/",\n'
-                '    "/" + "tmp/", "/" + "var/", "/" + "usr/", "/" + "srv/", "/" + "mnt/",\n'
-                '    "/" + "media/", "/" + "private/", "/" + "Volumes/", "/" + "Applications/",\n'
-                '    "/" + "Library/", "/" + "System/",\n'
-                "    # Корни, которых список не знал вовсе. Из-за этой дыры shebang с\n"
-                "    # захардкоженным интерпретатором проходил зелёным — не потому, что\n"
-                "    # портируем, а потому что был невидим целиком; собственный `./check`\n"
-                "    # этого репозитория проверка пропускала мимо, пока комментарий рядом\n"
-                "    # и спека утверждали обратное.\n"
-                '    "/" + "bin/", "/" + "sbin/", "/" + "dev/", "/" + "sys/", "/" + "proc/",\n'
-                '    "/" + "run/", "/" + "lib/", "/" + "lib64/", "/" + "boot/", "/" + "snap/",\n'
-                '    "/" + "nix/", "/" + "cores/", "/" + "Network/",\n',
-                '    "/" + "Users/", "/" + "home/", "/" + "opt/", "/" + "etc/", "/" + "root/",\n',
-            ),
-            substitution(
-                "scripts/check_package.py",
-                _WINDOWS_AND_UNC_BRANCHES,
-                "",
-            ),
+            block_replacement("scripts/check_package.py",
+                              "_ABSOLUTE_PREFIXES = (", ")", _FIVE_PREFIXES),
+            line_removal("scripts/check_package.py", _WINDOWS_DRIVE_BRANCH),
+            line_removal("scripts/check_package.py", _UNC_BRANCH),
         ),
     ),
     Mutation(
-        criterion=3,
+        criterion="в1 К3",
         name="shebang: исключение снимает строку целиком",
         module="tests.test_check_package",
+        expect="tests.test_check_package.TestPackageCheck"
+               ".test_an_absolute_path_in_shebang_arguments_is_caught",
         steps=(
             substitution(
                 "scripts/check_package.py",
@@ -271,9 +423,11 @@ MUTATIONS = (
         ),
     ),
     Mutation(
-        criterion=3,
+        criterion="в1 К3",
         name="скан: файл с недекодируемым байтом пропускается",
         module="tests.test_check_package",
+        expect="tests.test_check_package.TestPackageCheck"
+               ".test_an_undecodable_byte_does_not_remove_the_file_from_the_scan",
         steps=(
             substitution(
                 "scripts/check_package.py",
@@ -286,9 +440,11 @@ MUTATIONS = (
         ),
     ),
     Mutation(
-        criterion=3,
+        criterion="в1 К3",
         name="скан пакета: фильтр по списку расширений",
         module="tests.test_check_package",
+        expect="tests.test_check_package.TestPackageCheck"
+               ".test_extensionless_and_yaml_files_are_scanned",
         steps=(
             substitution(
                 "scripts/check_package.py",
@@ -301,9 +457,11 @@ MUTATIONS = (
         ),
     ),
     Mutation(
-        criterion=3,
+        criterion="в1 К3",
         name="периметр снова слеп к .gitignore",
         module="tests.test_check_package",
+        expect="tests.test_check_package.TestPackageCheck"
+               ".test_gitignored_paths_are_outside_the_package",
         steps=(
             substitution(
                 "scripts/check_package.py",
@@ -313,9 +471,11 @@ MUTATIONS = (
         ),
     ),
     Mutation(
-        criterion=3,
+        criterion="в1 К3",
         name="SKIP_AT_ROOT: все восемь имён зон обратно",
         module="tests.test_check_package",
+        expect="tests.test_check_package.TestPackageCheck"
+               ".test_the_only_skipped_zones_are_the_ones_the_table_names",
         steps=(
             substitution(
                 "scripts/check_package.py",
@@ -327,9 +487,11 @@ MUTATIONS = (
         ),
     ),
     Mutation(
-        criterion=3,
+        criterion="в1 К3",
         name="skill-without-eval удалён из проверки",
         module="tests.test_check_package",
+        expect="tests.test_check_package.TestPackageCheck"
+               ".test_skill_without_trigger_eval_fails",
         steps=(
             substitution(
                 "scripts/check_package.py",
@@ -341,9 +503,10 @@ MUTATIONS = (
         ),
     ),
     Mutation(
-        criterion=4,
+        criterion="в1 К4",
         name="удалён тест, на который ссылается таблица",
         module="tests.test_gate_coverage",
+        expect="tests.test_gate_coverage.TestEveryClassIsProven.test_the_real_table_is_sound",
         steps=(
             substitution(
                 "tests/test_check_package.py",
@@ -358,23 +521,33 @@ MUTATIONS = (
         ),
     ),
     Mutation(
-        criterion=4,
-        name="цитата в таблице заменена прозой",
+        # Заменила мутацию «цитата в таблице заменена прозой». Та роняла тот
+        # же `test_the_real_table_is_sound`, что и соседняя выше, и та же
+        # ветка `_problems` уже проверена на синтетической строке
+        # (`test_prose_instead_of_a_citation_is_caught`) — второго факта она
+        # не устанавливала. Вторая половина критерия 4 — «каждый класс вообще
+        # назван в таблице» — не была атакована ничем: строку класса можно
+        # было вынести, и набор оставался зелёным по этой мутации.
+        criterion="в1 К4",
+        name="из таблицы покрытия вынут целый класс",
         module="tests.test_gate_coverage",
+        expect="tests.test_gate_coverage.TestEveryClassIsProven"
+               ".test_coverage_table_lists_every_class",
         steps=(
             substitution(
                 "docs/gate-coverage.md",
                 "| `orphan` | битая фикстура, 1 находка в `sources` | "
                 "`tests/test_fixtures.py::TestExactFindings::"
-                "test_every_link_finding_sits_on_its_own_specimen` |",
-                "| `orphan` | битая фикстура, 1 находка в `sources` | покрыто тестами |",
+                "test_every_link_finding_sits_on_its_own_specimen` |\n",
+                "",
             ),
         ),
     ),
     Mutation(
-        criterion=5,
+        criterion="в1 К5",
         name="второе определение зон: hooks/zones.py",
         module="tests.test_zones",
+        expect="tests.test_zones.TestSingleDefinition.test_no_second_zone_table_in_package",
         steps=(
             copied_file("scripts/zones.py", "hooks/zones.py"),
         ),
@@ -382,63 +555,260 @@ MUTATIONS = (
 )
 
 
-def _why_red(stderr):
-    """Почему набор покраснел: первый упавший тест и итоговый счёт.
+# Идентификаторы упавших тестов снимаются с объектов тестов, а не разбором
+# вывода `-v`: у теста с docstring исход уезжает на следующую строку, и разбор
+# по «FAIL: » уже однажды печатал первого по алфавиту вместо первого по делу.
+# Отчёт пишется в файл **вне копии дерева**: печать самих тестов в stdout
+# перемешалась бы с ним, а лишний файл внутри копии увидел бы скан пакета.
+_COLLECTOR = '''\
+import json
+import os
+import sys
+import unittest
 
-    Мутация обязана ронять набор в том месте, ради которого посажена. Без
-    имени теста «покраснел» неотличим от «покраснел по другой причине» —
-    например, потому что мутация сломала импорт.
+# Скрипт лежит вне копии, поэтому sys.path[0] указывает не туда: модули берутся
+# из рабочего каталога, то есть из копии дерева.
+sys.path.insert(0, os.getcwd())
+
+module, out = sys.argv[1], sys.argv[2]
+report = {"failed": [], "ran": 0, "crashed": None}
+try:
+    suite = unittest.TestLoader().loadTestsFromName(module)
+    with open(os.devnull, "w") as sink:
+        result = unittest.TextTestRunner(stream=sink, verbosity=0).run(suite)
+    # У subTest идентификатор несёт хвост вида ` [form=...]`: без обрезки один
+    # и тот же тест давал бы разные имена и не совпал бы с объявленным.
+    report["failed"] = sorted({t.id().split(" ")[0]
+                               for t, _ in result.failures + result.errors})
+    report["ran"] = result.testsRun
+except BaseException as error:
+    report["crashed"] = "%s: %s" % (type(error).__name__, error)
+with open(out, "w") as handle:
+    json.dump(report, handle)
+'''
+
+# Импорт по пути файла, а не по точечному имени: у `hooks/` нет `__init__.py`,
+# и точечная форма выдала бы за поломку продукта то, что ею не является.
+_IMPORT_PROBE = '''\
+import importlib.util
+import os
+import sys
+
+sys.path.insert(0, os.getcwd())
+
+for number, path in enumerate(sys.argv[1:]):
+    spec = importlib.util.spec_from_file_location("_probe_%d" % number, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+'''
+
+Run = collections.namedtuple("Run", "failed ran crashed")
+Session = collections.namedtuple("Session", "snapshot tools baselines")
+
+
+def _session(workdir):
+    """Слепок дерева и вспомогательные скрипты — один раз на прогон.
+
+    Слепок один намеренно: база и мутанты обязаны считаться от одного и того
+    же дерева. Если снимать его заново на каждую мутацию, правка в рабочем
+    каталоге посреди прогона попадёт в мутанта и не попадёт в базу — разница
+    покажет чужую работу и назовёт её убийством.
     """
-    first = ""
-    tally = ""
-    for line in stderr.split("\n"):
-        if not first and (line.startswith("FAIL: ") or line.startswith("ERROR: ")):
-            first = line.split(":", 1)[1].strip().split(" ")[0]
-        if line.startswith("FAILED") or line.startswith("OK"):
-            tally = line.strip()
-    return "%s, первым упал %s" % (tally or "красный", first or "неизвестно кто")
+    snapshot = workdir / "snapshot"
+    shutil.copytree(ROOT, snapshot,
+                    ignore=shutil.ignore_patterns(".git", "__pycache__"))
+    tools = workdir / "tools"
+    tools.mkdir()
+    (tools / "collect.py").write_text(_COLLECTOR, encoding="utf-8")
+    (tools / "probe.py").write_text(_IMPORT_PROBE, encoding="utf-8")
+    return Session(snapshot=snapshot, tools=tools, baselines={})
 
 
-def run(mutation):
+def _fresh_copy(session, tmp, name):
+    """Копия слепка под своим именем: база и мутант живут рядом, не поверх."""
+    copy = Path(tmp) / name
+    shutil.copytree(session.snapshot, copy)
+    return copy
+
+
+def _collect(session, copy, module, tmp, name):
+    """Множество упавших тестов модуля в этой копии дерева."""
+    out = Path(tmp) / ("failed-%s.json" % name)
+    result = subprocess.run(
+        [sys.executable, str(session.tools / "collect.py"), module, str(out)],
+        cwd=str(copy), capture_output=True, text=True,
+    )
+    if not out.exists():
+        return Run(failed=frozenset(), ran=0,
+                   crashed="сборщик не отчитался (код %d): %s"
+                           % (result.returncode, _last_line(result.stderr)))
+    report = json.loads(out.read_text(encoding="utf-8"))
+    return Run(failed=frozenset(report["failed"]), ran=report["ran"],
+               crashed=report["crashed"])
+
+
+def _baseline(session, module, tmp):
+    """Что в этом модуле красное **до** мутации.
+
+    Без этого набора вердикт врал самым тихим способом: посторонняя правка в
+    дереве роняла один тест, и каждая мутация этого модуля объявлялась убитой
+    тестом, к ней не относящимся. Считается один раз на модуль — несколько
+    мутаций делят его, и платить за прогон повторно незачем.
+    """
+    if module not in session.baselines:
+        copy = _fresh_copy(session, tmp, "base")
+        session.baselines[module] = _collect(session, copy, module, tmp, "base")
+    return session.baselines[module]
+
+
+def _unchanged(session, copy, touched):
+    """Правда ли, что мутация не изменила ни одного байта.
+
+    Замена строки на саму себя проходит проверку применимости и дальше
+    «выживает» — то есть врёт про слепую проверку там, где проверять было
+    нечего. Мутация без единого изменённого байта — устаревшая строка
+    таблицы, а не находка о гейте.
+    """
+    for rel in touched:
+        before = session.snapshot / rel
+        if not before.exists():
+            return False
+        if before.read_bytes() != (copy / rel).read_bytes():
+            return False
+    return True
+
+
+def _smoke(session, copy, touched, tmp):
+    """Продукт после мутации обязан разбираться и импортироваться.
+
+    Мутация, ломающая импорт или синтаксис, роняет модуль целиком — и по коду
+    возврата «покраснел от мутации» неотличим от «покраснел, потому что
+    нечего стало импортировать». Посаженный `import nonexistent_module_xyz`
+    этим и объявлялся убитым. Такая мутация — дефект строки таблицы, а не
+    доказательство, что гейт видит.
+
+    Возвращает причину поломки или None.
+    """
+    sources = [rel for rel in touched if rel.endswith(".py")]
+    if not sources:
+        return None
+    cache = Path(tmp) / "probe.pyc"
+    for rel in sources:
+        try:
+            py_compile.compile(str(copy / rel), cfile=str(cache), doraise=True)
+        except py_compile.PyCompileError as error:
+            return "%s не разбирается: %s" % (rel, _last_line(str(error)))
+    environment = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+    result = subprocess.run(
+        [sys.executable, str(session.tools / "probe.py")] + sources,
+        cwd=str(copy), capture_output=True, text=True, env=environment,
+    )
+    if result.returncode != 0:
+        return "не импортируется: %s" % _last_line(result.stderr)
+    return None
+
+
+def run(mutation, session):
     """Ставит мутацию в одноразовую копию и возвращает (исход, деталь)."""
     with tempfile.TemporaryDirectory() as tmp:
-        copy = Path(tmp) / "repo"
-        shutil.copytree(ROOT, copy,
-                        ignore=shutil.ignore_patterns(".git", "__pycache__"))
+        base = _baseline(session, mutation.module, tmp)
+        if base.crashed:
+            return BROKEN, "база %s не считается: %s" % (mutation.module, base.crashed)
+
+        copy = _fresh_copy(session, tmp, "mutant")
+        touched = []
         try:
             for step in mutation.steps:
-                step(copy)
+                # Несколько шагов правят один файл: в списке он нужен один
+                # раз, иначе дымовая проверка импортирует его трижды.
+                touched.extend(rel for rel in step(copy) if rel not in touched)
         except NotApplied as error:
             return NOT_APPLIED, str(error)
-        result = subprocess.run(
-            [sys.executable, "-m", "unittest", mutation.module, "-q"],
-            cwd=str(copy), capture_output=True, text=True,
-        )
-        if result.returncode == 0:
-            return SURVIVED, "набор остался зелёным — проверка здесь слепа"
-        return KILLED, _why_red(result.stderr)
+        if _unchanged(session, copy, touched):
+            return NOT_APPLIED, "образец найден, но ни один байт не изменился"
+
+        broken = _smoke(session, copy, touched, tmp)
+        if broken:
+            return BROKEN, broken
+
+        after = _collect(session, copy, mutation.module, tmp, "mutant")
+        if after.crashed:
+            return BROKEN, "прогон не состоялся: %s" % after.crashed
+
+        delta = sorted(after.failed - base.failed)
+        if not delta:
+            return SURVIVED, ("ничего нового не покраснело; в базе модуля "
+                              "красных: %d из %d" % (len(base.failed), base.ran))
+        if mutation.expect in delta:
+            extra = "" if len(delta) == 1 else " (+%d попутно)" % (len(delta) - 1)
+            return KILLED, _tail(mutation.expect) + extra
+        return ELSEWHERE, "ждали %s, покраснело: %s" % (
+            _tail(mutation.expect), ", ".join(_tail(name) for name in delta))
+
+
+def _self_check():
+    """Строки таблицы, противоречащие себе.
+
+    Объявленный тест обязан жить в объявленном модуле: иначе он не может
+    попасть в разницу никогда, и мутация обречена на «КРАСНОЕ НЕ ТО» по
+    опечатке, а не по существу.
+    """
+    problems = []
+    seen = set()
+    for mutation in MUTATIONS:
+        if not mutation.expect.startswith(mutation.module + "."):
+            problems.append("%s: объявлен %s, а модуль %s"
+                            % (mutation.name, mutation.expect, mutation.module))
+        if mutation.name in seen:
+            problems.append("%s: имя встречается дважды" % mutation.name)
+        seen.add(mutation.name)
+    return problems
 
 
 def main():
-    outcomes = []
-    for mutation in MUTATIONS:
-        outcome, detail = run(mutation)
-        outcomes.append(outcome)
-        print("%-9s К%d  %-50s %-25s %s"
-              % (outcome, mutation.criterion, mutation.name, mutation.module, detail),
-              flush=True)
-
-    killed = outcomes.count(KILLED)
-    survived = outcomes.count(SURVIVED)
-    stale = outcomes.count(NOT_APPLIED)
-    print("\n%d мутаций: %d убито, %d выжило, %d не легло"
-          % (len(MUTATIONS), killed, survived, stale))
-    if survived:
-        print("Выжившая мутация — находка: критерий выполнен только по виду.")
-        return 2
-    if stale:
-        print("Мутация не легла: устарела таблица в dev/mutate.py, а не гейт.")
+    problems = _self_check()
+    if problems:
+        print("Таблица мутаций противоречит себе:")
+        for problem in problems:
+            print("  %s" % problem)
         return 1
+
+    verdicts = []
+    with tempfile.TemporaryDirectory() as workdir:
+        session = _session(Path(workdir))
+        for number, mutation in enumerate(MUTATIONS, 1):
+            outcome, detail = run(mutation, session)
+            verdicts.append((outcome, mutation, detail))
+            print("[%02d] %-15s %-6s %-48s %s"
+                  % (number, outcome, mutation.criterion, mutation.name, detail),
+                  flush=True)
+
+    counts = collections.Counter(outcome for outcome, _, _ in verdicts)
+    print("\n%d мутаций: %s" % (
+        len(MUTATIONS),
+        ", ".join("%s — %d" % (name, counts[name]) for name in OUTCOMES)))
+
+    unkilled = [(o, m, d) for o, m, d in verdicts if o != KILLED]
+    if unkilled:
+        print("\nНе убиты:")
+        for outcome, mutation, detail in unkilled:
+            print("  %-15s %s — %s" % (outcome, mutation.name, detail))
+
+    if counts[SURVIVED]:
+        print("Выжившая мутация — находка: критерий выполнен только по виду.")
+    if counts[ELSEWHERE]:
+        print("Покрасневшее не тем тестом — тоже находка: место закрыто не тем, "
+              "что на него ссылается.")
+    if counts[NOT_APPLIED]:
+        print("Мутация не легла: устарела таблица в dev/mutate.py, а не гейт.")
+    if counts[BROKEN]:
+        print("Мутация сломала продукт: дефект строки таблицы; такой прогон "
+              "ничего не доказывает.")
+
+    if counts[NOT_APPLIED] or counts[BROKEN]:
+        return 1
+    if counts[SURVIVED] or counts[ELSEWHERE]:
+        return 2
     return 0
 
 
