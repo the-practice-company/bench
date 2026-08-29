@@ -2526,10 +2526,16 @@ ARCHETYPES = ("journal", "pipeline", "registry")
 # выраженного жизненного цикла нет по определению.
 VOCABULARIES = {"pipeline": ("open", "decided", "revisited")}
 
+# Форма вида — та же, что у фикстур волны 1 (`fixtures/green/decisions/
+# views.base`): `filters` верхним уровнем, `views` со `groupBy` и `order`.
+# Форма с блоком `sort:` разобрана и **отвергнута**: `_identifiers` в
+# `scripts/basefile.py` вытаскивает из неё `property`, `direction` и `DESC`
+# как имена полей, и гейт frontmatter начинает требовать их от каждой
+# записи. Проверено разбором, а не выведено из документации.
 _VIEW = {
-    "journal": ("По дате", "created", "DESC", ""),
-    "pipeline": ("По статусу", "created", "DESC", "status"),
-    "registry": ("По типу", "file.name", "ASC", "type"),
+    "journal": ("По дате", "created"),
+    "pipeline": ("По статусу", "status"),
+    "registry": ("По типу", "type"),
 }
 
 
@@ -2551,18 +2557,17 @@ def _readme(collection, archetype):
 
 
 def _views(collection, archetype):
-    name, sort_key, direction, group = _VIEW[archetype]
+    name, group = _VIEW[archetype]
     lines = [
+        "filters:",
+        "  and:",
+        '    - file.inFolder("%s/items")' % collection,
         "views:",
         "  - type: table",
         "    name: %s" % name,
-        "    filters:",
-        "      and:",
-        '        - file.inFolder("%s/items")' % collection,
-        "    sort:",
-        "      - property: %s" % sort_key,
-        "        direction: %s" % direction,
-        "    groupBy: %s" % (group or '""'),
+        "    groupBy: %s" % group,
+        "    order:",
+        "      - created",
         "",
     ]
     return "\n".join(lines)
@@ -2593,11 +2598,12 @@ def create(root, collection, archetype, record_name, record_text):
     return sorted(created)
 ```
 
-Форма `views.base` здесь — кандидат. Прогони на ней `parse_base` и оба
-гейта (Step 2 это утверждает) и **поправь форму, а не тест**, если разбор
-не сходится: `_REQUIRED_KEYS` в `scripts/basefile.py` называет `filters`,
-`sort` и `groupBy` обязательными, и `groupBy: ""` обязан считаться
-присутствующим. Расхождение — в отчёт.
+Форма `views.base` проверена разбором до написания плана. `parse_base` на
+ней даёт: pipeline — `required={status}`, `known={created}`; journal —
+`required={created}`; registry — `required={type}`. Все три требования
+покрыты стартовым набором `check_frontmatter.STARTER_ALWAYS` и правилом
+архетипа `pipeline`, поэтому гейт frontmatter на свежей коллекции молчит.
+Если у тебя выходит иначе — это расхождение, и оно идёт в отчёт.
 
 - [ ] **Step 4: Написать падающий тест на `extend`**
 
