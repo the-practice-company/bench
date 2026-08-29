@@ -31,7 +31,7 @@ class TestSurfaceIsStatic(unittest.TestCase):
              "**/README.md#frontmatter:archetype,values",
              ".claude/rules/*.md",
              "CLAUDE.md#section:Zone map,Placement rule",
-             "areas/README.md#table",
+             "areas/README.md#listing",
              "*/README.md#absent",
              "**/items/*.md#frontmatter:absent-key",
              ".gitignore#append",
