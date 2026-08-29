@@ -1324,6 +1324,14 @@ git commit -m "волна 5: слой формы механически — эт
 «игнорируется git и на него никто не сослался». Порог §7 управляет решением
 автора о `.gitignore`; MAINTAIN наблюдает следствие, а не причину.
 
+**Источник списка игнорируемого проверен на живом git.**
+`git status --ignored --porcelain` схлопывает каталог, где игнорируется всё
+содержимое, в одну строку `sources/` — и файл внутри него не попадает в
+отчёт вовсе. `--ignored=matching` схлопывает `big/` по тому же поводу.
+Поимённо файлы отдаёт только
+`git ls-files --others --ignored --exclude-standard`; строка с косой на
+конце в его выводе — вложенный репозиторий, в который git не спускается.
+
 **Files:**
 - Create: `scripts/maintain/structural.py`
 - Test: `tests/test_structural.py`
@@ -1562,12 +1570,17 @@ def run(root):
     occs, _ = check_links.occurrences(root)
     for hit in occs:
         referenced.update(hit.candidates)
-    for line in tree.git_lines(root, "status", "--ignored", "--porcelain"):
-        if not line.startswith("!!"):
+    # Источник — `ls-files`, а не `status --ignored`: последний схлопывает
+    # игнорируемый каталог в одну строку (`sources/`), и файл внутри него
+    # исчезает из отчёта целиком. Измерено: каталог, где игнорируется всё
+    # содержимое, отдаётся именно так, и `sources/dump.bin` не виден.
+    # Строка с косой на конце — вложенный репозиторий: git в него не
+    # спускается, а `foreign-repo` — не бинарь и не наша забота здесь.
+    for rel in tree.git_lines(root, "ls-files", "--others", "--ignored",
+                              "--exclude-standard"):
+        if rel.endswith("/") or rel in referenced:
             continue
-        rel = line[3:].strip().rstrip("/")
-        path = root / rel
-        if not path.is_file() or rel in referenced:
+        if not (root / rel).is_file():
             continue
         findings.append(Finding("unreferenced-ignored-binary", rel, 1,
                                 "файл вне git, на него никто не сослался"))
