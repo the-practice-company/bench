@@ -32,7 +32,15 @@ README коллекции записью; восемь зон, восемь READ
 волны утверждён по хешам объектов git: коммит из отчёта установщика равен
 каркасу побайтово, с единственным исключением `.claude/settings.json`.
 
-**Начинать с задачи 9.**
+**Задача 9 исполнена.** `skills/create-context-repo/` — первый скилл пакета,
+и он же задаёт форму каталога для волн 4 и 5: `SKILL.md` с английским
+описанием плюс `eval.txt` двумя секциями, `# triggers` и `# non-triggers`.
+Из снимка плана взято всё, кроме одного: запрет «застейджить всё» проверяется
+токеном, а не подстрокой. Подстрока `git add .` красила бы законный коммит по
+названным путям — каркас кладёт `.gitignore`, `.claude/settings.json` и
+`.twinkle-repo-builder`, и все три начинаются с точки.
+
+**Начинать с задачи 10.**
 
 ---
 
@@ -2359,7 +2367,7 @@ git commit -m "wave3: первый коммит равен каркасу — с
 - Create: `skills/create-context-repo/SKILL.md`, `skills/create-context-repo/eval.txt`
 - Test: `tests/test_create_skill.py`
 
-- [ ] **Step 1: Написать падающий тест**
+- [x] **Step 1: Написать падающий тест**
 
 ```python
 """Форма скилла CREATE и его эвал на срабатывание.
@@ -2477,12 +2485,12 @@ class TestTriggerEval(unittest.TestCase):
         self.assertIn("maintain", joined)
 ```
 
-- [ ] **Step 2: Прогнать и убедиться, что падает**
+- [x] **Step 2: Прогнать и убедиться, что падает**
 
 Run: `python3 -m unittest tests.test_create_skill -v`
 Expected: все FAIL — каталога `skills/create-context-repo` нет.
 
-- [ ] **Step 3: Реализация — `skills/create-context-repo/SKILL.md`**
+- [x] **Step 3: Реализация — `skills/create-context-repo/SKILL.md`**
 
 ```markdown
 ---
@@ -2601,7 +2609,7 @@ open threads: 5
 - Writing anything inside a connected knowledge base. Nobody does that.
 ```
 
-- [ ] **Step 4: Реализация — `skills/create-context-repo/eval.txt`**
+- [x] **Step 4: Реализация — `skills/create-context-repo/eval.txt`**
 
 ```
 # triggers
@@ -2627,14 +2635,14 @@ add a collection to an existing repository
 create a python package here
 ```
 
-- [ ] **Step 5: Прогнать — должно пройти**
+- [x] **Step 5: Прогнать — должно пройти**
 
 Run: `./check`
 Expected: код 0. Проверка пакета видит скилл: имя совпадает с папкой,
 описание непустое, `eval.txt` непустой, относительных путей к скриптам нет,
 абсолютных путей нет.
 
-- [ ] **Step 6: Коммит**
+- [x] **Step 6: Коммит**
 
 ```bash
 git add skills/create-context-repo tests/test_create_skill.py
