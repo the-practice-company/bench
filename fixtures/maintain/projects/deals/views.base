@@ -1,0 +1,8 @@
+filters:
+  and:
+    - file.inFolder("projects/deals/items")
+views:
+  - type: table
+    groupBy: status
+    order:
+      - description

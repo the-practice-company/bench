@@ -1,0 +1,8 @@
+filters:
+  and:
+    - file.inFolder("core/people/items")
+views:
+  - type: table
+    groupBy: status
+    order:
+      - description

@@ -1,0 +1,8 @@
+filters:
+  or:
+    - file.inFolder("areas/work/reviews/items")
+    - file.inFolder("areas/work/reviews/drafts")
+views:
+  - type: table
+    order:
+      - created
