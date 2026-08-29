@@ -1042,6 +1042,592 @@ MUTATIONS = (
             ),
         ),
     ),
+
+    # Волна 5. Критериев выхода пять; мутаций двадцать шесть, и распределены
+    # они неровно намеренно. Критерий 5 несёт одиннадцать: половина «дифф
+    # счётчиков» получила производителя последней, и её пробовали отдельной
+    # оснасткой — таблица оттуда перенесена сюда целиком, а не пересказана.
+    # Плюс пять под метками не в форме `вN КM`: `в5 Д1` — инвариант 2 волны
+    # («второй прогон не меняет ни байта»), `в5 Д2` — инвариант
+    # `drain-inbox`. Ни один из них не критерий выхода, и `criteria-coverage`
+    # называет их прозой, а не строкой таблицы: `tests/test_mutation_claims.py`
+    # требует строку под каждую мутацию **с меткой критерия**.
+    Mutation(
+        # Критерий 1 двусторонний: «чинит форму» и «не изменяет содержимое».
+        # Мутация сажает вторую половину и сажает её так, как она и случилась
+        # бы по-настоящему — под видом полезной починки: `unresolved` в теле
+        # записи снимает скобки и уходит из отчёта. Гейт зеленеет, автор
+        # ничего не заметил, а текст, который он писал, переписан.
+        criterion="в5 К1",
+        name="MAINTAIN чинит unresolved в теле записи",
+        module="tests.test_mechanical",
+        expect="tests.test_mechanical.TestWhatIsReported"
+               ".test_an_unresolved_link_in_a_record_body_is_reported_not_guessed",
+        steps=(
+            substitution(
+                "scripts/maintain/mechanical.py",
+                "    findings = list(check_links.scan(root).findings)\n"
+                "    findings.extend(check_frontmatter.scan(root).findings)\n"
+                "    return sorted(fixed), findings, sorted(skipped)\n",
+                "    findings = list(check_links.scan(root).findings)\n"
+                "    for finding in [f for f in findings "
+                'if f.cls == "unresolved"]:\n'
+                "        target = root / finding.path\n"
+                '        text = target.read_text(encoding="utf-8", '
+                'errors="replace")\n'
+                "        changed = text.replace(finding.detail, "
+                'finding.detail.strip("[]"))\n'
+                "        if changed == text or finding.path in dirty_paths:\n"
+                "            continue\n"
+                '        target.write_text(changed, encoding="utf-8")\n'
+                "        fixed.append(finding.path)\n"
+                "        findings.remove(finding)\n"
+                "    findings.extend(check_frontmatter.scan(root).findings)\n"
+                "    return sorted(fixed), findings, sorted(skipped)\n",
+            ),
+        ),
+    ),
+    Mutation(
+        # Первая половина того же критерия, и атакована она у корня: вся
+        # проверка «содержимое не тронуто» сравнивает дерево с **объявленной**
+        # поверхностью. Выведенная из прогона, она исключает ровно то, что
+        # прогон записал, — и `content_diff` перестаёт краснеть навсегда, ни
+        # разу не сказав об этом вслух. Здесь она выводится из каркаса: файл
+        # лежит в `scaffold/` — значит, форма.
+        criterion="в5 К1",
+        name="поверхность формы выводится из каркаса, а не объявлена",
+        module="tests.test_content_diff",
+        expect="tests.test_content_diff.TestSurfaceIsStatic"
+               ".test_the_surface_is_a_literal_and_not_derived_from_a_run",
+        steps=(
+            block_replacement(
+                "scripts/maintain/surface.py", "SURFACE = (", ")",
+                "_SCAFFOLD = Path(__file__).resolve().parent.parent.parent "
+                '/ "scaffold"\n'
+                "SURFACE = tuple(\n"
+                '    Entry(path.relative_to(_SCAFFOLD).as_posix(), "bytes",\n'
+                '          "выведено из прогона: что лежит в каркасе, то и форма")\n'
+                "    for path in sorted(_SCAFFOLD.rglob(\"*\")) if path.is_file())",
+            ),
+        ),
+    ),
+    Mutation(
+        # Критерий 2 держится на трёх мутациях, потому что «показывает спрос и
+        # не действует по нему» ломается тремя разными способами, и ни один не
+        # выводится из двух других: дата приходит не от автора; возраст мерится
+        # не по истории; порог стоит не там, где обещан.
+        #
+        # Здесь — дата. Умолчание из часов возвращает в мутирующий режим ровно
+        # ту зависимость, которую волна 1 выкорчёвывала дважды, и цена здесь
+        # выше: у гейта отсутствие даты меняет текст отчёта, тут — удаляет
+        # папку.
+        criterion="в5 К2",
+        name="--today получает умолчание из часов",
+        module="tests.test_demand",
+        expect="tests.test_demand.TestAges.test_today_is_mandatory",
+        steps=(
+            substitution(
+                "scripts/maintain/demand.py",
+                "import argparse\nimport sys\nfrom pathlib import Path\n",
+                "import argparse\nimport datetime\nimport sys\n"
+                "from pathlib import Path\n",
+            ),
+            substitution(
+                "scripts/maintain/demand.py",
+                "def run(root, today):\n"
+                '    """(отчёт, находки). Ничего не пишет на диск."""\n'
+                "    root = Path(root)\n",
+                "def run(root, today=None):\n"
+                '    """(отчёт, находки). Ничего не пишет на диск."""\n'
+                "    if today is None:\n"
+                "        today = datetime.date.today().isoformat()\n"
+                "    root = Path(root)\n",
+            ),
+        ),
+    ),
+    Mutation(
+        # Возраст по `st_mtime`. Чекаут переставляет его, и ответ начинает
+        # зависеть от того, когда гоняли набор, — та же поломка, что пережила
+        # проверку волны 1. Объявленный тест сверяет ровно число: у
+        # устаревшей коллекции фикстуры git знает 2026-07-01, а файловая
+        # система — день её развёртывания.
+        criterion="в5 К2",
+        name="возраст считается по st_mtime, а не по истории",
+        module="tests.test_prune",
+        expect="tests.test_prune.TestFalsifiers"
+               ".test_st_mtime_instead_of_git_gives_a_different_age",
+        steps=(
+            substitution(
+                "scripts/maintain/demand.py",
+                "import argparse\nimport sys\nfrom pathlib import Path\n",
+                "import argparse\nimport sys\nimport time\n"
+                "from pathlib import Path\n",
+            ),
+            substitution(
+                "scripts/maintain/demand.py",
+                "def age(root, rel, today):\n"
+                '    """Дней с последнего коммита, затронувшего путь, либо '
+                'токен."""\n'
+                "    root = Path(root)\n"
+                "    return _age(last_touch(root, rel), first_commit(root), today)\n",
+                "def age(root, rel, today):\n"
+                '    """Дней с последнего коммита, затронувшего путь, либо '
+                'токен."""\n'
+                "    root = Path(root)\n"
+                '    touched = time.strftime("%Y-%m-%d",\n'
+                "                            time.localtime("
+                "(root / rel).stat().st_mtime))\n"
+                "    return _age(touched, first_commit(root), today)\n",
+            ),
+        ),
+    ),
+    Mutation(
+        # Порог, сдвинутый на день: ровно разница между `>=` и `>`. Граница
+        # объявлена включающей, и утверждается она поимённо — 30 дней удалено,
+        # 29 нет. Сдвиг на единицу невидим в любом отчёте и виден только на
+        # самой границе.
+        criterion="в5 К2",
+        name="порог пустой коллекции сдвинут на день",
+        module="tests.test_prune",
+        expect="tests.test_prune.TestThreshold"
+               ".test_exactly_thirty_days_is_removed_and_twenty_nine_is_not",
+        steps=(
+            substitution("scripts/maintain/demand.py",
+                         "THRESHOLD_DAYS = 30\n", "THRESHOLD_DAYS = 31\n"),
+        ),
+    ),
+    Mutation(
+        # Критерий 3 — «единица не заводится без содержимого» — у `add-view`
+        # читается так: вид над папкой с нулём записей есть структурная
+        # единица без содержимого. Проверка снимается целиком, разбор вида
+        # остаётся: краснеет отказ, а не парсер.
+        criterion="в5 К3",
+        name="add-view перестаёт проверять пустоту папки",
+        module="tests.test_extend",
+        expect="tests.test_extend.TestAddView"
+               ".test_a_view_over_an_empty_folder_is_refused",
+        steps=(
+            substitution(
+                "scripts/maintain/extend.py",
+                "    for folder in sorted(set(base.folders)):\n"
+                "        target = root / folder\n"
+                '        if not target.is_dir() or not sorted(target.glob("*.md")):\n'
+                '            return ("отказ: file.inFolder называет папку с нулём '
+                'записей: %s\\n"\n'
+                "                    % folder), EXIT_VIOLATION\n",
+                "",
+            ),
+        ),
+    ),
+    Mutation(
+        # Вторая половина того же критерия, у `add-area`: папка направления
+        # заведена, строки в перечислении нет. Единица есть, содержимого о ней
+        # — ни строки, и дрейф заведён по построению. Обязательство это волна 3
+        # передала волне 5 отдельной строкой roadmap'а.
+        criterion="в5 К3",
+        name="add-area не трогает areas/README.md",
+        module="tests.test_extend",
+        expect="tests.test_extend.TestAddArea"
+               ".test_a_direction_with_a_purpose_gets_a_folder_and_a_row",
+        steps=(
+            substitution("scripts/maintain/extend.py",
+                         '    readme.write_text(listing, encoding="utf-8")\n', ""),
+        ),
+    ),
+    Mutation(
+        # Критерий 4 — «не пишет синтетику молча». Первая половина: писать
+        # вообще нечего там, где значение уже стоит. Снятая проверка «ключ
+        # есть» переписывает авторское — и делает это тихо, потому что вторым
+        # таким же ключом frontmatter перестаёт разбираться вовсе.
+        criterion="в5 К4",
+        name="backfill переписывает существующее значение",
+        module="tests.test_backfill",
+        expect="tests.test_backfill.TestNothingIsOverwritten"
+               ".test_a_collection_where_everyone_has_the_field_produces_nothing",
+        steps=(
+            substitution("scripts/maintain/backfill.py",
+                         "        if field in fields:\n            continue\n", ""),
+        ),
+    ),
+    Mutation(
+        # Вторая половина: `unknown` в поле с объявленным словарём — починка,
+        # производящая ошибку гейта (`value-outside-vocabulary`). Ветка
+        # `deferred` подменяется штампом, и подменяется молча: отчёт про такую
+        # запись не говорит ничего, потому что синтетике отчёт не положен —
+        # токен виден в самой записи.
+        criterion="в5 К4",
+        name="backfill штампует unknown в поле со словарём",
+        module="tests.test_backfill",
+        expect="tests.test_backfill.TestDeferred"
+               ".test_a_field_with_a_declared_vocabulary_is_deferred_not_stamped",
+        steps=(
+            substitution(
+                "scripts/maintain/backfill.py",
+                "        elif declared:\n"
+                '            rows.append((rel, field, "", "", "deferred", '
+                '"vocabulary-declared"))\n',
+                "        elif declared:\n"
+                '            rows.append((rel, field, "", UNKNOWN, "synthetic", '
+                '"no-rule"))\n',
+            ),
+        ),
+    ),
+    Mutation(
+        # Критерий 5, первая половина на уровне самого диффа: недостача
+        # перестаёт называться находкой. Обход остаётся, множество ожидаемых
+        # считается, сверка происходит — и молчит. Ровно тот случай, ради
+        # которого дифф и заведён: таблица накрыла не то, что собиралась, и
+        # сказать об этом некому.
+        criterion="в5 К5",
+        name="дифф счётчиков молча проглатывает недостачу",
+        module="tests.test_field_map",
+        expect="tests.test_field_map.TestCounts"
+               ".test_a_shortfall_without_a_token_is_unexplained_count",
+        steps=(
+            substitution(
+                "scripts/maintain/field_map.py",
+                "    for rel in sorted(expected):\n"
+                "        if rel in present:\n"
+                "            continue\n"
+                "        if explained.get(rel) in TOKENS:\n"
+                "            continue\n"
+                "        findings.append(Finding(\n"
+                '            "unexplained-count", rel, 1,\n'
+                '            "запись ожидалась в таблице и её там нет, '
+                'объяснения тоже"))\n',
+                "    for rel in sorted(expected):\n"
+                "        continue\n",
+            ),
+        ),
+    ),
+
+    # Десять мутаций критерия 5 на уровне производителя. Прогнаны они были
+    # отдельной оснасткой — задача, строившая дифф, не имела права трогать
+    # этот файл, — и перенесены сюда дословно, а не пересказаны. Каждая
+    # перепрогнана здесь: перенесённая строка, которая на самом деле не
+    # краснеет, хуже отсутствующей.
+    Mutation(
+        # **Анти-тавтология, и это главная строка критерия 5.** Ожидаемое
+        # берётся у вида коллекции (`check_frontmatter.record_paths`), а не у
+        # обхода `plan`. Взятое у обхода, оно сверяет обход с самим собой:
+        # дифф зеленеет по построению и не краснеет уже никогда. Запись в
+        # `drafts` — запись для вида и невидимка для `**/items/*.md`.
+        criterion="в5 К5",
+        name="ожидаемое берётся у обхода backfill, а не у вида",
+        module="tests.test_backfill",
+        expect="tests.test_backfill.TestTheCounterDiff"
+               ".test_a_record_the_view_names_and_the_walk_misses_is_unexplained",
+        steps=(
+            substitution(
+                "scripts/maintain/backfill.py",
+                "    for rel in check_frontmatter.record_paths("
+                "root, base_path, base, ignored):\n",
+                "    for rel in sorted(p.relative_to(root).as_posix()\n"
+                '                      for p in (root / collection / "items")'
+                '.glob("*.md")):\n',
+            ),
+        ),
+    ),
+    Mutation(
+        # Канал объяснённой недостачи отрезан: `skipped` не доезжает до
+        # `reconcile`. Непрочитанная запись для вида — запись, для обхода —
+        # пропуск с токеном, и без третьего аргумента каждая такая становится
+        # сюрпризом. Дифф начинает краснеть там, где всё сошлось.
+        criterion="в5 К5",
+        name="skipped не доезжает до reconcile",
+        module="tests.test_backfill",
+        expect="tests.test_backfill.TestTheCounterDiff"
+               ".test_a_shortfall_carrying_a_token_of_the_closed_list_is_explained",
+        steps=(
+            substitution(
+                "scripts/maintain/backfill.py",
+                "    return findings + field_map.reconcile(expected, rows, skipped)",
+                "    return findings + field_map.reconcile(expected, rows, {})",
+            ),
+        ),
+    ),
+    Mutation(
+        # «Ожидаемых ноль» вместо «ожидаемое не установлено». Коллекция без
+        # вида перечислять нечем, и тихий ноль объявляет сюрпризом каждую
+        # строку таблицы разом — то есть красит сошедшийся прогон и молчит про
+        # разошедшийся.
+        criterion="в5 К5",
+        name="коллекция без вида тихо ожидает ноль записей",
+        module="tests.test_backfill",
+        expect="tests.test_backfill.TestTheCounterDiff"
+               ".test_a_collection_without_a_view_does_not_quietly_expect_zero",
+        steps=(
+            substitution(
+                "scripts/maintain/backfill.py",
+                "    if not base_path.is_file():\n"
+                '        return refused("вида у коллекции нет")',
+                "    if not base_path.is_file():\n        return [], []",
+            ),
+        ),
+    ),
+    Mutation(
+        # Порядок: ожидаемое считается **после** мутации. Посчитанное после,
+        # оно пусто — поле уже стоит у каждой записи, — и каждая строка
+        # таблицы становится строкой без ожидаемой записи. Два шага, потому
+        # что мутация не удаляет вычисление, а переносит его вниз: удалённое,
+        # оно уронило бы `Report(diff)` именем, а не диффом.
+        criterion="в5 К5",
+        name="ожидаемое считается после мутации, а не до",
+        module="tests.test_backfill",
+        expect="tests.test_backfill.TestCommandLine"
+               ".test_the_expected_set_is_taken_before_the_mutation",
+        steps=(
+            substitution(
+                "scripts/maintain/backfill.py",
+                "    diff = counter_diff(root, args.collection, args.field, "
+                "rows, skipped)\n\n    if args.silently:",
+                "    if args.silently:",
+            ),
+            substitution(
+                "scripts/maintain/backfill.py",
+                '    sys.stdout.write("таблица: %s\\n"\n'
+                "                     % write_table(root, args.collection, "
+                "args.field, rows))",
+                '    sys.stdout.write("таблица: %s\\n"\n'
+                "                     % write_table(root, args.collection, "
+                "args.field, rows))\n"
+                "    diff = counter_diff(root, args.collection, args.field, "
+                "rows, skipped)",
+            ),
+        ),
+    ),
+    Mutation(
+        # Дифф посчитан и никуда не поехал: ни в stdout, ни в код возврата.
+        # Половина критерия, требующая «emit», — про то, что расхождение
+        # доезжает до вызвавшего, а не про то, что оно вычислено.
+        criterion="в5 К5",
+        name="дифф счётчиков не печатается и не красит код",
+        module="tests.test_backfill",
+        expect="tests.test_backfill.TestCommandLine"
+               ".test_the_counter_diff_reaches_stdout_and_paints_the_code",
+        steps=(
+            substitution(
+                "scripts/maintain/backfill.py",
+                "    report = Report(diff)\n    rendered = report.render()\n"
+                '    if rendered:\n        sys.stdout.write(rendered + "\\n")\n'
+                "    return report.exit_code()",
+                "    return 0",
+            ),
+        ),
+    ),
+    Mutation(
+        # Нечитаемый `.gitignore` проглочен: периметр молча сужается до
+        # умолчаний, а вместе с ним и множество записей коллекции. Гейт
+        # frontmatter называет этот отказ своим последствием — дифф обязан
+        # назвать своим, иначе он сверяет два множества, собранные не из того
+        # текста.
+        criterion="в5 К5",
+        name="нечитаемый .gitignore не называется диффом",
+        module="tests.test_backfill",
+        expect="tests.test_backfill.TestTheCounterDiff"
+               ".test_an_unreadable_gitignore_is_named_rather_than_narrowed_silently",
+        steps=(
+            substitution(
+                "scripts/maintain/backfill.py",
+                "    if ignored.undecodable is not None:\n"
+                "        findings.append(_undecodable(\n"
+                '            ".gitignore", ignored.undecodable,\n'
+                '            "множество записей коллекции собрано без него"))',
+                "    if False:\n        pass",
+            ),
+        ),
+    ),
+    Mutation(
+        # Вид, не назвавший ни одной папки, читается как пустая коллекция.
+        # Разница та же, что и у вида, которого нет вовсе: перечислять нечем,
+        # а ответ выглядит перечислением.
+        criterion="в5 К5",
+        name="вид без папок читается как пустая коллекция",
+        module="tests.test_backfill",
+        expect="tests.test_backfill.TestTheCounterDiff"
+               ".test_a_view_naming_no_folder_is_named_too",
+        steps=(
+            substitution(
+                "scripts/maintain/backfill.py",
+                '    if not base.folders:\n        return refused("вид не назвал '
+                'ни одной папки")',
+                "    if False:\n        pass",
+            ),
+        ),
+    ),
+    Mutation(
+        # Непрочитанная запись выпадает из ожидаемого молча. Стоит ли у неё
+        # поле — неизвестно, и выкинуть её отсюда значит решить за неё: дифф
+        # перестаёт видеть недостачу ровно там, где о записи не известно
+        # ничего.
+        criterion="в5 К5",
+        name="непрочитанная запись выпадает из ожидаемого",
+        module="tests.test_backfill",
+        expect="tests.test_backfill.TestTheCounterDiff"
+               ".test_a_shortfall_carrying_a_token_of_the_closed_list_is_explained",
+        steps=(
+            substitution(
+                "scripts/maintain/backfill.py",
+                "        except (UnicodeDecodeError, FrontmatterError):\n"
+                "            expected.add(rel)\n            continue",
+                "        except (UnicodeDecodeError, FrontmatterError):\n"
+                "            continue",
+            ),
+        ),
+    ),
+    Mutation(
+        # Нечитаемый вид читается с заменой байта. Папка `"\ufffd\ufffd"`
+        # существует не больше, чем не прочитанный вид называет папок, — но
+        # выглядит названной, и сверка идёт с пустым множеством вместо отказа.
+        criterion="в5 К5",
+        name="нечитаемый вид читается с заменой байта",
+        module="tests.test_backfill",
+        expect="tests.test_backfill.TestTheCounterDiff"
+               ".test_a_view_that_does_not_decode_is_not_read_as_an_empty_one",
+        steps=(
+            substitution(
+                "scripts/maintain/backfill.py",
+                "        base = parse_base(_read(base_path))",
+                "        base = parse_base(base_path.read_text("
+                'encoding="utf-8", errors="replace"))',
+            ),
+        ),
+    ),
+    Mutation(
+        # Та же правка гейта, что и у мутации `периметр frontmatter снят у
+        # записи`, — и это не дубль: там объявленный тест принадлежит гейту
+        # frontmatter, здесь диффу счётчиков. Утверждения разные: гейт обязан
+        # не читать игнорируемую запись, дифф обязан заметить строку таблицы,
+        # написанную по пути, который записью не считается.
+        criterion="в5 К5",
+        name="периметр .gitignore снят с перечисления записей (дифф)",
+        module="tests.test_backfill",
+        expect="tests.test_backfill.TestTheCounterDiff"
+               ".test_a_row_for_a_path_the_view_does_not_count_as_a_record_"
+               "is_unexplained",
+        steps=(
+            block_replacement(
+                "scripts/check_frontmatter.py",
+                "_in_perimeter(rel,",
+                "continue",
+                "",
+            ),
+        ),
+    ),
+
+    # Инвариант 2 волны: второй прогон по тому же дереву не меняет ни байта.
+    # Ни одному критерию выхода не принадлежит, метка поэтому не в форме
+    # `вN КM`.
+    Mutation(
+        # Ключ нити снят. Отчёт продолжает дописываться, дерево грязнеет на
+        # каждом ходе — а грязное дерево по решению §8 значит «здесь работал
+        # человек». Проверку «содержимое не тронуто» такая правка проходит:
+        # дописывание поверхность разрешает.
+        criterion="в5 Д1",
+        name="нить дописывается без ключа",
+        module="tests.test_maintain_run",
+        expect="tests.test_maintain_run.TestRun"
+               ".test_open_threads_is_appended_idempotently",
+        steps=(
+            substitution(
+                "scripts/maintain/run.py",
+                "        mark = MARK % (cls, rel)\n"
+                "        if mark in text:\n"
+                "            continue\n"
+                '        added.append("- %s %s: %s %s"\n'
+                '                     % (cls, rel, "; ".join(sorted(details)), '
+                "mark))\n",
+                '        added.append("- %s %s: %s"\n'
+                '                     % (cls, rel, "; ".join(sorted(details))))\n',
+            ),
+        ),
+    ),
+
+    # Инвариант `drain-inbox`: элемент покидает зону, содержимое остаётся в
+    # истории. Четыре мутации, по одной на исход §6, и все четыре правят
+    # **вход** — снимают крестик у одной строки плана, — а не продукт. Иначе и
+    # нельзя: инвариант утверждает не поведение одной команды, а то, что
+    # цепочка из четырёх разных исходов опустошает зону. Снятый крестик —
+    # единственная правка, которая останавливает ровно один исход и не трогает
+    # остальные три.
+    #
+    # Объявленный тест у всех четырёх один и тот же — сам инвариант. Это
+    # намеренно: доказывается, что он читает дерево, а не отчёт команды, и
+    # читает его для каждого из четырёх исходов по отдельности. Тест про
+    # «свой» исход краснеет попутно и назван в документе покрытия.
+    #
+    # **Метка `в5 Д2`, а не имя зоны, и это не вкусовщина.** Первая редакция
+    # подписывала эти четыре строки самой зоной; голое её имя оказалось в
+    # файле шестым именем зоны, а шесть имён в одном файле пакета
+    # `tests/test_zones.py` считает второй таблицей зон — набор покраснел на
+    # `test_no_second_zone_table_in_package`. Тот же довод, что у
+    # `_ZONES_AS_LITERALS` выше: оснастка, доказывающая критерий 5, не имеет
+    # права его нарушать. Имена мутаций уцелели дефисом: в `drain-inbox`
+    # признака голого имени нет.
+    Mutation(
+        criterion="в5 Д2",
+        name="drain-inbox: не согласована строка «стало записью»",
+        module="tests.test_drain_inbox",
+        expect="tests.test_drain_inbox.TestFourOutcomesOnOneInbox"
+               ".test_the_zone_holds_nothing_but_its_readme",
+        steps=(
+            substitution(
+                "tests/test_drain_inbox.py",
+                "    out.extend(_entry(True, source, target, why) "
+                "for source, target, why in triage)",
+                "    out.extend(_entry(source != RECORD, source, target, why)\n"
+                "                for source, target, why in triage)",
+            ),
+        ),
+    ),
+    Mutation(
+        criterion="в5 Д2",
+        name="drain-inbox: не согласована строка «растворилось»",
+        module="tests.test_drain_inbox",
+        expect="tests.test_drain_inbox.TestFourOutcomesOnOneInbox"
+               ".test_the_zone_holds_nothing_but_its_readme",
+        steps=(
+            substitution(
+                "tests/test_drain_inbox.py",
+                "    out.extend(_entry(True, source, target, why) "
+                "for source, target, why in triage)",
+                "    out.extend(_entry(source != DISSOLVED, source, target, why)\n"
+                "                for source, target, why in triage)",
+            ),
+        ),
+    ),
+    Mutation(
+        criterion="в5 Д2",
+        name="drain-inbox: не согласована строка «это было сырьё»",
+        module="tests.test_drain_inbox",
+        expect="tests.test_drain_inbox.TestFourOutcomesOnOneInbox"
+               ".test_the_zone_holds_nothing_but_its_readme",
+        steps=(
+            substitution(
+                "tests/test_drain_inbox.py",
+                "    out.extend(_entry(True, source, target, why) "
+                "for source, target, why in triage)",
+                "    out.extend(_entry(source != RAW, source, target, why)\n"
+                "                for source, target, why in triage)",
+            ),
+        ),
+    ),
+    Mutation(
+        criterion="в5 Д2",
+        name="drain-inbox: не согласована строка «отвергнуто»",
+        module="tests.test_drain_inbox",
+        expect="tests.test_drain_inbox.TestFourOutcomesOnOneInbox"
+               ".test_the_zone_holds_nothing_but_its_readme",
+        steps=(
+            substitution(
+                "tests/test_drain_inbox.py",
+                "    out.extend(_entry(True, source, target, why) "
+                "for source, target, why in triage)",
+                "    out.extend(_entry(source != REJECTED, source, target, why)\n"
+                "                for source, target, why in triage)",
+            ),
+        ),
+    ),
 )
 
 

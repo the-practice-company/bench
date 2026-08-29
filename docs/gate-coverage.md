@@ -101,3 +101,60 @@
 | `foreign-repo` | отчёт: папка с `.git` внутри названа `init-tree` и не тронута — ни `git add -A` gitlink'ом, ни переездом | `tests/test_adopt_tree.py::TestInit::test_the_nested_repository_is_reported_not_touched` |
 | `foreign-repo` | второй производитель: подметание `revert`. Неисключённый чужой репозиторий приезжает из `ls-files --others` каталогом; удалить его как файл — уронить откат посередине, удалить рекурсивно — снести чужое безвозвратно. Поэтому он называется и остаётся | `tests/test_revert.py::TestSweep::test_a_repository_that_appeared_after_the_base_commit_is_not_deleted` |
 | `created-unrecoverable` | отчёт поимённо, а не одним числом: имя грепается, число — нет. Записи без восстановимой даты создания перечисляются, а в поле уезжает токен `unknown` — незыблемое №4 даёт две ветки, и здесь взяты обе | `tests/test_dates.py::TestReport::test_every_unrecoverable_record_is_named` |
+
+## Классы волны 5 (MAINTAIN)
+
+Десять классов, и ни одного на битой фикстуре. Причина своя, не та, что у
+волны 4: там классы производились на чужом дереве, здесь — на своём, но
+битая фикстура ломает **ссылки и поля**, а эти десять говорят про режим
+сопровождения — что MAINTAIN записал, чего он не записал молча и что в
+дереве объявлено и не используется. Доказывает их
+`fixtures/maintain/` — репозиторий, построенный рецептом, с посаженным, —
+развёрнутая во временный каталог с настоящей git-историей
+(`tests/maintain_fixture.py`). Колонка «чем доказан» чисел на битой фикстуре
+не заявляет; заявила бы — `_miscounts` обязан был бы покраснеть.
+
+Четыре из десяти — ошибки, шесть — отчёты, и граница проходит ровно по линии
+ответственности. Ошибка — там, где плагин нарушил обещание **о себе**:
+тронул содержимое (`content-modified`), подставил молча
+(`silent-substitution`), не сошёлся счётчиками (`unexplained-count`), завёл
+единицу без содержимого (`structure-without-content`). Отчёт — там, где
+наблюдение о **дереве**: пустая коллекция, неиспользуемая зона, вид, который
+ничего не отбирает, расхождение карты с деревом, архетип, к которому записи
+не приведены, игнорируемый бинарник, на который никто не ссылается. Сделать
+второе ошибкой значило бы объявить виноватым автора за форму его собственного
+домена.
+
+**Чего в этой таблице нет — строки про read-only.** Read-only из команд волны
+одна — `demand`: остальные пишут по обязанности, `prune` и вовсе удаляет.
+Кортеж `check_read_only` в проверке пакета её не получил, и не по недосмотру:
+он зовёт гейт **одним** аргументом-корнем, а `--today` у `demand` обязателен —
+такой вызов удостоверил бы read-only на ветке отказа argparse'а. Обещание
+держится в своём наборе, `tests/test_demand.py::TestNothingOnDiskChanged`:
+хеш дерева до и после прогона плюс второй прогон, слово в слово. Разница с
+`check_read_only` названа, а не замолчана: тот хеширует **весь корень
+репозитория** и потому видит запись мимо фикстуры, а этот — только временное
+дерево, в которое фикстура развёрнута. Запись двумя уровнями выше он бы не
+увидел; ловит её граница рабочего каталога волны 2, а не он. Соседний слой
+пишет ровно одно и утверждает это списком:
+`tests/test_structural.py::TestReadOnlyExceptTheZone`.
+
+| класс | чем доказан | тест |
+|---|---|---|
+| `content-modified` | появившееся поле — содержимое, и оправдывает его ровно строка `field-map` с тем же путём, полем и значением. Без строки то же самое дописывание — находка; с чужой строкой — тоже | `tests/test_content_diff.py::TestContentDiff::test_a_new_frontmatter_key_is_legal_only_with_a_field_map_row` |
+| `content-modified` | второй производитель, и он же единственный, работающий в бою: само-проверка `maintain run`. Находка не печатается, а откатывает прогон целиком через `revert` волны 4 — режим идёт без присмотра по дереву, полному авторской работы | `tests/test_maintain_run.py::TestSelfCheck::test_a_run_that_touches_content_rolls_itself_back_and_refuses` |
+| `unexplained-count` | недостача: запись, которую вид коллекции называет, а обход `**/items/*.md` не видит. Два перечисления независимы ровно в том, **какие пути вообще записи**, и расхождение этих двух ответов — единственное, что дифф ловит | `tests/test_backfill.py::TestTheCounterDiff::test_a_record_the_view_names_and_the_walk_misses_is_unexplained` |
+| `unexplained-count` | излишек: строка таблицы по пути, который гейт записью не считает. Половина не декоративна — строка таблицы оправдывает появление поля в `content_diff`, то есть открывает заодно гейт содержимого | `tests/test_backfill.py::TestTheCounterDiff::test_a_row_for_a_path_the_view_does_not_count_as_a_record_is_unexplained` |
+| `unexplained-count` | третья причина: множество записей не установлено вовсе — вида нет, вид не читается, вид не назвал ни одной папки. «Ожидаемых ноль» и «ожидаемое не установлено» — разные утверждения, и тихий ноль объявил бы сюрпризом каждую строку таблицы разом | `tests/test_backfill.py::TestTheCounterDiff::test_a_collection_without_a_view_does_not_quietly_expect_zero` |
+| `silent-substitution` | отложенное значение без строки в отчёте: не записано и никому не сказано. Названным считается путь и поле **в одной строке** — путь из одного сообщения и поле из другого вместе не говорят про эту запись ничего | `tests/test_field_map.py::TestSilentSubstitution::test_a_deferred_row_absent_from_the_report_is_a_finding` |
+| `silent-substitution` | вторая причина, зеркальная: значение на диске без строки в таблице — записано и не названо. Сверка идёт с диском, а не с намерением модуля | `tests/test_field_map.py::TestSilentSubstitution::test_a_written_value_absent_from_the_table_is_a_finding` |
+| `structure-without-content` | постусловие `add-collection`, а не обход дерева: единица дошла до диска без записи, и созданное сносится. Обходом класс ловил бы и пустые коллекции слоя спроса, у которых своё имя | `tests/test_extend.py::TestAddCollection::test_the_post_condition_catches_a_unit_that_reached_the_disk_empty` |
+| `structure-without-content` | обратная сторона: пустая коллекция, которая в дереве уже лежит, этим классом не называется никогда — это `empty-collection`, наблюдение о дереве. Нарушенное обещание команды о себе и наблюдение о чужом дереве — разные утверждения | `tests/test_extend.py::TestAddCollection::test_an_empty_collection_of_the_fixture_is_not_this_class` |
+| `empty-collection` | отчёт слоя спроса: виды есть, записей ноль. Две такие коллекции фикстуры названы поимённо, и `.gitkeep` записью не считается — он существует только потому, что git не хранит пустых каталогов | `tests/test_demand.py::TestObservations::test_both_empty_collections_are_named` |
+| `declared-unused` | отчёт: зона или направление объявлены, материала нет. README формой считается и материалом не бывает, иначе объявленной без материала не оказалась бы ни одна папка каркаса | `tests/test_demand.py::TestObservations::test_a_declared_direction_without_material_is_named` |
+| `view-selects-nothing` | отчёт: `file.inFolder` называет папку с нулём записей. Проверяется только статически разрешимый случай — фильтр не вычисляется, потому что движка фильтров Obsidian Bases пакет не строит, и вид на догадке **удалять** нельзя | `tests/test_demand.py::TestObservations::test_a_view_selecting_an_empty_folder_is_named` |
+| `map-tree-divergence` | отчёт: папка верхнего уровня вне карты зон. Названа и не тронута — переезд папки автора без спроса и есть та правка содержимого, которой волна не делает | `tests/test_structural.py::TestReported::test_a_top_level_folder_outside_the_map_is_reported_not_moved` |
+| `map-tree-divergence` | вторая причина: направление есть в дереве, строки в `areas/README.md` нет. Строку пишет `add-area`, а не этот слой: фраза назначения — содержимое, и выдумать её значило бы ответить за автора | `tests/test_structural.py::TestReported::test_a_direction_without_a_line_in_areas_readme_is_reported` |
+| `archetype-mismatch` | отчёт **числами**, а не вердиктом: сколько записей коллекции ведут себя как архетип обещает и сколько нет. §19 велел приводить молча, §20 относит выбор архетипа к суждению — расхождение показывается, а не чинится | `tests/test_structural.py::TestReported::test_the_archetype_mismatch_carries_numbers_not_a_verdict` |
+| `unreferenced-ignored-binary` | отчёт: файл под `.gitignore`, на который не ссылается ничто. Ни удаления, ни переезда — вложение, лежащее вне истории, восстановить нечем | `tests/test_structural.py::TestReported::test_an_ignored_binary_nobody_links_to_is_reported` |
+| `unreferenced-ignored-binary` | вторая половина предиката, без которой класс накрыл бы все вложения разом: на файл ссылаются — находки нет | `tests/test_structural.py::TestTheReferenceHalfOfThePredicate::test_a_referenced_ignored_file_is_not_reported` |
