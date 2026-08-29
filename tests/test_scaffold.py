@@ -136,3 +136,120 @@ class TestDecisionsVocabulary(unittest.TestCase):
         text = zone_readme("decisions")
         for condition in ("rejected alternative", "costs more", "later"):
             self.assertIn(condition, text)
+
+
+# Права записи в карте — единственное исключение из теста «какая проверка
+# упадёт» (секция 9). Их держит PreToolUse, но агент обязан знать до попытки,
+# иначе тратит ход на exit 2. Одно слово в колонке, не правило.
+WRITE_RULE = {
+    "core": "confirm before rewriting",
+    "areas": "confirm before rewriting",
+    "projects": "free",
+    "knowledge": "do not write",
+    "inbox": "append only",
+    "sources": "append only",
+    "tmp": "free",
+    "decisions": "append only",
+}
+
+DOMAIN_PLACEHOLDER = "Domain not described yet"
+
+# Три раздела скелета секции 9 — весь его состав. «Указатели» из него удалены
+# вместе с появлением path-scoped rules: раздел был суррогатом доставки,
+# и возвращать его нельзя.
+CLAUDE_SECTIONS = ("## Zone map", "## Placement rule",
+                   "## What cannot be derived and cannot be linted")
+
+MEMBERSHIP_TEST = ("Before writing one here, ask which check would fail if "
+                   "someone broke it. If a gate or an artefact could hold it, "
+                   "it goes there instead.")
+
+LANGUAGE_LINE = ("This file is English by convention. The conversation and "
+                 "the content of the repository are in the author's language.")
+
+ZONE_ROW = re.compile(r"^\| (\w+)/ +\| ([^|]+?) +\| ([^|]+?) +\|$", re.M)
+
+
+class TestGeneratedClaudeMd(unittest.TestCase):
+    """Скелет секции 9: карта, правило размещения, домен не заполнен."""
+
+    def setUp(self):
+        self.text = (SCAFFOLD / "CLAUDE.md").read_text(encoding="utf-8")
+
+    def test_the_zone_map_names_the_eight_zones_in_order(self):
+        self.assertEqual([row[0] for row in ZONE_ROW.findall(self.text)],
+                         list(zones.ZONES))
+
+    def test_every_zone_row_carries_its_write_rule(self):
+        self.assertEqual({row[0]: row[2] for row in ZONE_ROW.findall(self.text)},
+                         WRITE_RULE)
+
+    def test_the_placement_rule_asks_the_pipeline_question_first(self):
+        """Секция 1: два вопроса задаются по порядку, статус перебивает тему.
+
+        Утверждается точный список пар «номер — ось», а не наличие слов:
+        перестановка двух строк местами меняет правило на обратное и обязана
+        краснеть.
+        """
+        steps = re.findall(r"^(\d)\. .+ → an? (\w+) zone$", self.text, re.M)
+        self.assertEqual(steps, [("1", "pipeline"), ("2", "semantic")])
+
+    def test_it_lists_no_files(self):
+        """Критерий 4 волны: карта зон и правило размещения — да, файлы — нет.
+
+        Признак механический: токен с закрытым расширением. Перечисление
+        файлов начинается именно с него, в backtick'ах или без — backtick
+        в класс символов не входит, поэтому обе формы ловятся одним проходом.
+        Список от руки гниёт, а на вопрос «что здесь лежит» лучше отвечает
+        обход дерева.
+        """
+        offenders = [token for token in re.findall(r"[\w./-]+", self.text)
+                     if token.endswith(paths.PATH_EXTENSIONS)]
+        self.assertEqual(offenders, [])
+
+    def test_the_domain_line_is_an_explicit_placeholder(self):
+        """Незыблемое №4: невосстановимое помечается, а не подставляется молча.
+
+        Домен в коммите 1 неизвестен, и строка об этом говорит вслух — сразу
+        под заголовком, на месте описания домена из скелета. CREATE заменяет
+        её ответом автора в коммите 2; в headless без брифа она остаётся,
+        а вопрос уезжает в открытые нити.
+        """
+        lines = self.text.split("\n")
+        self.assertEqual([i for i, line in enumerate(lines)
+                          if line.startswith(DOMAIN_PLACEHOLDER)], [2])
+
+    def test_it_says_which_language_it_is_in(self):
+        """Секция 25: без этой строки агент в русскоязычном репозитории
+        подстраивается под инструкции и начинает отвечать по-английски."""
+        self.assertEqual(" ".join(self.text.split()).count(LANGUAGE_LINE), 1)
+
+    def test_the_sections_are_these_three_and_pointers_is_gone(self):
+        """Точный список разделов, а не отсутствие одного.
+
+        «Указатели» ушли не потому, что раздел плох, а потому что доставку
+        политики зоны взял на себя path-scoped rule. Утверждение о составе
+        держит и это, и любой другой самовольно доросший раздел.
+        """
+        self.assertEqual(re.findall(r"^## .+$", self.text, re.M),
+                         list(CLAUDE_SECTIONS))
+
+    def test_it_asks_whether_a_gate_could_hold_the_rule(self):
+        """Тест на добавление из секции 9 — единственное, что держит жанр.
+
+        Без него раздел «чего нельзя вывести» собирает пересказ гейтов: файл
+        превращается из пола в планку, и происходит это по одному правилу
+        за раз, незаметно.
+        """
+        self.assertEqual(" ".join(self.text.split()).count(MEMBERSHIP_TEST), 1)
+
+    def test_it_is_english(self):
+        """Секция 25: форму везёт плагин, значит форма английская.
+
+        Тот же исполняемый признак, что у README зон: этот репозиторий пишет
+        по-русски всё, кроме каркаса, и без проверки правило держится только
+        вниманием того, кто правит файл следующим (незыблемое №2).
+        """
+        self.assertEqual([lineno for lineno, line
+                          in enumerate(self.text.split("\n"), start=1)
+                          if _CYRILLIC.search(line)], [])
