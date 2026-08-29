@@ -690,6 +690,187 @@ MUTATIONS = (
             ),
         ),
     ),
+
+    # Волна 3. Критериев выхода четыре — четыре мутации, по одной на каждый.
+    # Плюс три под меткой `в3 гейт`: они правят `check_frontmatter`, ни одному
+    # критерию выхода не принадлежат и потому подписаны не критерием. Метка не
+    # в форме `вN КM` намеренно — `tests/test_mutation_claims.py` требует
+    # строку в `docs/criteria-coverage.md` под каждую мутацию с меткой
+    # критерия, а таких у этих трёх нет. Названы они там прозой.
+    Mutation(
+        # Посажена так, что **полный** каркас остаётся зелёным: файл, на
+        # который указывает токен, существует, и оба гейта на нём молчат.
+        # Краснеет ровно прогон с удалённым `.claude/` — вторая половина
+        # критерия, у которой своего фальсификатора не было ни одного.
+        # Несуществующий путь убил бы мутацию любым гейтовым тестом, и вторая
+        # половина осталась бы недоказанной.
+        #
+        # Попутно краснеют ещё два теста того же модуля, и оба — про то же
+        # самое: `test_no_surviving_file_points_into_the_claude_directory`
+        # (он и назван «причина, по которой предыдущий тест зелёный») и
+        # `test_no_zone_readme_lists_files` (токен с закрытым расширением
+        # в README зоны). Это не «КРАСНОЕ НЕ ТО»: объявленный тест в разнице
+        # есть, а соседи проверяют ту же ссылку с двух других сторон.
+        criterion="в3 К1",
+        name="каркас ссылается в свой .claude",
+        module="tests.test_scaffold",
+        expect="tests.test_scaffold.TestScaffoldPassesBothGates"
+               ".test_both_gates_are_still_silent_without_the_claude_directory",
+        steps=(
+            substitution(
+                "scaffold/core/README.md",
+                "**Nothing here yet.**",
+                "The zone rule lives in `.claude/rules/core.md`.\n\n"
+                "**Nothing here yet.**",
+            ),
+        ),
+    ),
+    Mutation(
+        # Один добавленный байт на файл: копия перестаёт быть копией, а
+        # каталог инстанса по-прежнему выглядит правильным. Критерий 2
+        # утверждает равенство **побайтовое**, и мутация сажает ровно то,
+        # что отличает его от «файлы на месте».
+        criterion="в3 К2",
+        name="установщик правит байты по дороге",
+        module="tests.test_install_scaffold",
+        expect="tests.test_install_scaffold.TestFirstCommit"
+               ".test_the_commit_carries_the_scaffold_blob_for_blob",
+        steps=(
+            substitution(
+                "scripts/install_scaffold.py",
+                "        target.write_bytes(source.read_bytes())\n",
+                '        target.write_bytes(source.read_bytes() + b"\\n")\n',
+            ),
+        ),
+    ),
+    Mutation(
+        # Вид берётся из зелёной фикстуры, а не пишется здесь: файл с
+        # `views.base` в каркасе — это ровно «структурная единица без
+        # настоящей записи», которую критерий 3 запрещает, и взятый из
+        # фикстуры он ещё и валиден, то есть краснеет инвентарь, а не разбор.
+        criterion="в3 К3",
+        name="каркас везёт коллекцию без записей",
+        module="tests.test_scaffold",
+        expect="tests.test_scaffold.TestScaffoldInventory"
+               ".test_the_scaffold_carries_no_collection",
+        steps=(
+            copied_file("fixtures/green/decisions/views.base",
+                        "scaffold/decisions/views.base"),
+        ),
+    ),
+    Mutation(
+        criterion="в3 К4",
+        name="перечисление файлов в порождённом CLAUDE.md",
+        module="tests.test_scaffold",
+        expect="tests.test_scaffold.TestGeneratedClaudeMd.test_it_lists_no_files",
+        steps=(
+            substitution(
+                "scaffold/CLAUDE.md",
+                "## Placement rule\n",
+                "## Files\n\n- core/me.md — who we are\n\n## Placement rule\n",
+            ),
+        ),
+    ),
+    Mutation(
+        # **Метка — не критерий, и это не опечатка.** План волны предлагал
+        # подписать эту строку «в3 К1», и своей же прозой рядом называл её
+        # «одной на правку гейта» — то есть пятой сверх четырёх критериев.
+        # Критерий 1 говорит о каркасе («проходит оба гейта с нулём находок»),
+        # а каркас не везёт ни одного `views.base`: `check_frontmatter.scan`
+        # в него не заходит вовсе, и эта мутация не меняет на каркасе ничего.
+        # Зелёная фикстура тоже не меняется — её вид отбирает из
+        # `decisions/items`, где README коллекции не лежит. Подписать строку
+        # критерием 1 значило бы приписать ему доказательство, которого у него
+        # нет: ровно тот подлог, который аудит уже нашёл однажды у мутации
+        # «глоб снова считается конкретным путём».
+        #
+        # Метка не в форме `вN КM` намеренно: `tests/test_mutation_claims.py`
+        # требует строку в `docs/criteria-coverage.md` под каждую мутацию
+        # своей волны, а строки таблицы там — критерии. Мутация, не
+        # принадлежащая ни одному, названа прозой того же документа.
+        #
+        # Анкер — на поведении, а не на строках Task 1. Мутация снимает
+        # **ветку, исключающую README коллекции из перечисления**, и
+        # опознаёт её по двум коротким приметам: сама сверка (`== declaration`,
+        # без отступа и без имени слева) и её `continue`. Как записана
+        # сверка — `rel == declaration_rel`, `record.resolve() == declaration`
+        # или что-то третье — мутации всё равно, отступ в маркер не входит,
+        # комментарий внутри ветки её не сдвигает.
+        #
+        # Почему не дословный кусок: первая редакция этой строки цитировала
+        # две строки Task 1 вместе с шестнадцатью пробелами отступа — и
+        # устарела до первого прогона, потому что Task 1 переписали. Таблица
+        # мутаций, цитирующая реализацию, гниёт при каждом касании
+        # реализации; `substitution` отчиталась бы «не легла», то есть о
+        # чужой правке, а не о гейте (тот же довод, что у `line_removal`
+        # и `block_replacement` в их докстрингах).
+        #
+        # `line_removal` здесь не годится: снятая одна строка `if` оставляет
+        # голый `continue`, гейт перестаёт проверять записи вовсе и
+        # `test_the_collections_own_readme_is_not_a_record` — он ждёт пустого
+        # списка — становится **зелёным**. Мутация выжила бы, ничего не сказав.
+        criterion="в3 гейт",
+        name="README коллекции снова перечисляется как запись",
+        module="tests.test_check_frontmatter",
+        expect="tests.test_check_frontmatter.TestCollectionOwnReadme"
+               ".test_the_collections_own_readme_is_not_a_record",
+        steps=(
+            block_replacement(
+                "scripts/check_frontmatter.py",
+                "== declaration",
+                "continue",
+                "",
+            ),
+        ),
+    ),
+    Mutation(
+        # Два рубежа периметра, закрывавшие друг друга. Проба задачи 1 волны 3
+        # сняла каждый по отдельности и получила зелёный набор из 466 тестов:
+        # фикстуры `TestPerimeter` клали за периметр коллекцию целиком, поэтому
+        # вид отсекался первым рубежом, записи — вторым, и отсутствие любого
+        # было невидимо. Тесты под оба заведены тогда же, трекер записал
+        # «обе мутации стоит завести» — вот они.
+        #
+        # Этот снимает рубеж у `views.base`. Собой находку дают вид и
+        # объявление: кривой README архивной коллекции — `unparseable`.
+        # Через записи это не видно, их отсекает второй рубеж.
+        criterion="в3 гейт",
+        name="периметр frontmatter снят у views.base",
+        module="tests.test_check_frontmatter",
+        expect="tests.test_check_frontmatter.TestPerimeter"
+               ".test_a_declaration_outside_the_perimeter_is_not_read_at_all",
+        steps=(
+            block_replacement(
+                "scripts/check_frontmatter.py",
+                "_in_perimeter(rel_base",
+                "continue",
+                "",
+            ),
+        ),
+    ),
+    Mutation(
+        # Второй рубеж, у записи. Держит он случай, когда коллекция жива, а
+        # часть её записей — нет: игнорируемое поддерево внутри `items/` либо
+        # живой вид с `file.inFolder("archive/...")`. `archive/` снимается
+        # префиксом **от корня**, поэтому такой вид первый рубеж проходит.
+        #
+        # Маркер — `_in_perimeter(rel,` с запятой: без неё он совпал бы и с
+        # `_in_perimeter(rel_base`, то есть с соседним рубежом, и мутация
+        # отчиталась бы «строк с маркером две».
+        criterion="в3 гейт",
+        name="периметр frontmatter снят у записи",
+        module="tests.test_check_frontmatter",
+        expect="tests.test_check_frontmatter.TestPerimeter"
+               ".test_an_ignored_subtree_under_a_live_collection_is_outside",
+        steps=(
+            block_replacement(
+                "scripts/check_frontmatter.py",
+                "_in_perimeter(rel,",
+                "continue",
+                "",
+            ),
+        ),
+    ),
 )
 
 
@@ -938,7 +1119,7 @@ def main():
         for number, mutation in enumerate(MUTATIONS, 1):
             outcome, detail = run(mutation, session)
             verdicts.append((outcome, mutation, detail))
-            print("[%02d] %-15s %-6s %-48s %s"
+            print("[%02d] %-15s %-7s %-48s %s"
                   % (number, outcome, mutation.criterion, mutation.name, detail),
                   flush=True)
 
