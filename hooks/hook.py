@@ -16,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from hooks import boundary, turnfiles
+from hooks import boundary, summary, turnfiles
 from scripts import check_frontmatter, check_links, zones
 from scripts.findings import EXIT_OK, EXIT_VIOLATION
 
@@ -106,13 +106,12 @@ def _absolute(target, base):
     return target if os.path.isabs(target) else os.path.join(base, target)
 
 
-def _resolved_target(payload):
-    """Корень репозитория и абсолютный путь записи, либо `(None, None)`.
+def _root_of(payload):
+    """Корень репозитория или None, с напечатанной причиной.
 
-    Прелюдия у обеих веток записи — `PreToolUse` и `PostToolUse` — одна, и
-    разъезжаться ей нельзя: обе причины «не смог» утверждаются тестами обеих
-    веток дословно, а две копии одного сообщения однажды разойдутся. Здесь же
-    печатается причина: ни одна ветка не имеет права выйти отсюда молча
+    Причина одна на все события, и разъезжаться ей нельзя: её текст
+    утверждается тестами трёх веток дословно, а три копии одного сообщения
+    однажды разойдутся. Молча выйти отсюда не имеет права ни одна ветка
     (незыблемое №4).
     """
     base = _base_of(payload)
@@ -121,6 +120,19 @@ def _resolved_target(payload):
         print("гейт не выполнился: корень репозитория не найден "
               "(маркер %s не найден вверх от %s)" % (boundary.MARKER, base),
               file=sys.stderr)
+    return root
+
+
+def _resolved_target(payload):
+    """Корень репозитория и абсолютный путь записи, либо `(None, None)`.
+
+    Прелюдия у обеих веток записи — `PreToolUse` и `PostToolUse` — одна, и
+    разъезжаться ей нельзя: обе причины «не смог» утверждаются тестами обеих
+    веток дословно.
+    """
+    base = _base_of(payload)
+    root = _root_of(payload)
+    if root is None:
         return None, None
 
     target = tool_path(payload)
@@ -186,25 +198,32 @@ def on_pre_tool_use(payload):
     return EXIT_OK
 
 
-def _gate_findings(root, rel):
-    """Находки обоих гейтов, оставленные только по одному файлу.
+def _gate_findings(root, wanted):
+    """Находки обоих гейтов по названным файлам и список не сработавших гейтов.
 
     Гейты зовутся модулями, а не подпроцессом: три процесса на запись файла
     против одного импорта, и второй разбор JSON. Индекс ссылок всё равно
     строится по всему дереву — фильтр стоит **после** разбора, а не вместо
     него: иначе `unresolved` неотличим от «цель есть, но её не просканировали».
 
-    Сравнение идёт с `Finding.path`, и `rel` собран ровно так же, как его
-    собирают гейты: `relative_to(root).as_posix()`. Любая другая форма пути
-    молча не совпала бы ни с одной находкой, и гейт выглядел бы работающим.
+    Сравнение идёт с `Finding.path`, и пути в `wanted` собраны ровно так же,
+    как их собирают гейты: `relative_to(root).as_posix()`. Любая другая форма
+    пути молча не совпала бы ни с одной находкой, и гейт выглядел бы
+    работающим.
 
-    Упавший гейт называет себя и не уносит с собой второй. Поломка
-    наблюдённая, не гипотеза: `check_links.scan` читает всякий `*.md` как
-    utf-8 и падает `UnicodeDecodeError` на файле в cp1251 — один такой файл
+    Упавший гейт называет себя и не уносит с собой второй, но и не исчезает
+    из ответа: `SessionStart` коммитит по итогу прогона, и коммит на власти
+    прогона, который не состоялся, — подпись под непроверенным.
+
+    Поломка наблюдённая, не гипотеза: `check_links.scan` обходит `*.md` и
+    читает каждое совпадение как файл, а каталог с таким именем — одно
+    движение мыши в Obsidian — даёт `IsADirectoryError`. Один такой каталог
     где угодно в дереве иначе гасил бы `PostToolUse` на каждой записи, а
-    причиной в stderr значился бы код возврата hook.py.
+    причиной в stderr значился бы код возврата hook.py. Прежним образцом
+    здесь был файл в cp1251; ронять гейт он перестал в `cc3c7ea`, ветка
+    осталась.
     """
-    out = []
+    out, failed = [], []
     for gate in (check_links, check_frontmatter):
         name = gate.__name__.rsplit(".", 1)[-1]
         try:
@@ -212,9 +231,10 @@ def _gate_findings(root, rel):
         except Exception as error:
             print("гейт не выполнился: %s упал на %s — %s"
                   % (name, type(error).__name__, error), file=sys.stderr)
+            failed.append(name)
             continue
-        out.extend(f for f in report.findings if f.path == rel)
-    return out
+        out.extend(f for f in report.findings if f.path in wanted)
+    return out, failed
 
 
 def on_post_tool_use(payload):
@@ -246,15 +266,91 @@ def on_post_tool_use(payload):
               "Stop сочтёт правки этого хода чужими и ограничится сообщением"
               % (Path(root) / ".git"), file=sys.stderr)
 
-    findings = _gate_findings(root, rel)
+    findings, _ = _gate_findings(root, {rel})
     if findings:
         print("\n".join(f.render() for f in findings), file=sys.stderr)
+    return EXIT_OK
+
+
+def on_session_start(payload):
+    """Сводка в контекст и чекпоинт чужой работы, если она зелёная.
+
+    Незакоммиченное на старте по определению чужое: сессия только что
+    началась, агент ещё ничего не писал, — значит, там человек в Obsidian
+    или соседний агент. Зелёное сохраняется чекпоинтом, чтобы эта работа
+    не потерялась; красное показывается и не коммитится: плагин не
+    подписывается под тем, чего не чинил.
+
+    Печатается всё в stdout, а не в stderr: только у `SessionStart` и двух
+    соседей по промпту stdout попадает в контекст сессии, а адресат этих
+    строк — агент. В stderr уходит одно — «гейт не выполнился»: общий канал
+    отказа у всех хуков. Невосстановимое при этом названо и в сводке словом,
+    чтобы молчание git не читалось как чистое дерево (незыблемое №4).
+
+    Код всегда 0. Нарушения здесь нет по построению: никто ещё ничего не
+    сделал, судить не о чем.
+    """
+    root = _root_of(payload)
+    if root is None:
+        return EXIT_OK
+
+    state = summary.collect(root)
+    print(summary.render(state))
+    for problem in state.problems:
+        print("гейт не выполнился: %s" % problem, file=sys.stderr)
+
+    if not state.dirty:
+        # Ни `None`, ни пустой список поводом для коммита не являются, и
+        # причины у них разные: в первом случае неизвестно что коммитить,
+        # во втором нечего.
+        return EXIT_OK
+
+    if state.git_root is not None and Path(state.git_root) != Path(root):
+        # `--porcelain` печатает пути от корня git, а гейты — от корня рецепта.
+        # Разошлись корни — разошлись и списки, на целую приставку пути: ни
+        # одна находка не найдёт своего файла, и красное уедет в чекпоинт
+        # молча. Отказ вслух лучше правки, посчитанной на разъехавшихся путях.
+        print("чекпоинт не сделан: корень рецепта %s не совпадает с корнем "
+              "git %s, и пути в них разной длины" % (root, state.git_root))
+        return EXIT_OK
+
+    if state.unmerged:
+        # `git add` по конфликтному файлу помечает конфликт разрешённым.
+        # Плагин выдал бы за решение то, чего не решал, — и закоммитил текст
+        # вместе с маркерами `<<<<<<<`. Гейты этого не ловят: маркер конфликта
+        # не ссылка и не frontmatter.
+        print("чекпоинт не сделан: в дереве незавершённое слияние. Развести "
+              "чужой конфликт плагин не имеет права")
+        return EXIT_OK
+
+    findings, failed = _gate_findings(root, set(state.dirty))
+    if failed:
+        print("чекпоинт не сделан: не отработал %s, и зелени никто не видел"
+              % ", ".join(failed))
+        return EXIT_OK
+
+    red = summary.errors(findings)
+    if red:
+        print("незакоммиченное не прошло гейты, чекпоинт не сделан:")
+        print("\n".join(f.render() for f in sorted(red, key=lambda f: f.key())))
+        return EXIT_OK
+
+    staged, skipped = summary.committable(root, state.dirty)
+    for rel in skipped:
+        print("чекпоинт не берёт %s: это каталог, а сдвиг указателя сабмодуля "
+              "коммитит его владелец, не плагин" % rel)
+    try:
+        summary.checkpoint(root, staged)
+    except summary.GitSilent as error:
+        print("гейт не выполнился: чекпоинт не записан: %s" % error,
+              file=sys.stderr)
     return EXIT_OK
 
 
 # Обработчики регистрируются задачами волны. Пустая таблица — не заглушка:
 # каждое незарегистрированное событие называет себя вслух строкой выше.
 HANDLERS = {
+    "SessionStart": on_session_start,
     "PreToolUse": on_pre_tool_use,
     "PostToolUse": on_post_tool_use,
 }

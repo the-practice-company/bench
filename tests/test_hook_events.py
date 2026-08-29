@@ -475,14 +475,19 @@ class TestPostToolUse(unittest.TestCase):
         self.assertNotIn("Traceback", result.stderr)
 
     def test_a_gate_that_fails_names_itself_and_lets_the_other_run(self):
-        """Наблюдённая поломка, а не гипотеза: `check_links.scan` читает всякий
-        `*.md` как utf-8 и падает `UnicodeDecodeError` на файле в cp1251.
+        """Наблюдённая поломка, а не гипотеза: `check_links.scan` обходит
+        `*.md` и читает каждое совпадение как файл, а каталог с таким именем
+        даёт `IsADirectoryError`. Заводится он одним движением мыши в Obsidian.
 
-        Один такой файл где угодно в дереве иначе гасил бы `PostToolUse` на
-        каждой записи, а причиной в stderr значился бы код возврата hook.py.
-        Провалившийся гейт называет себя, второй досчитывает.
+        Прежним образцом здесь был файл в cp1251; он перестал ломать гейт
+        в `cc3c7ea`, где чтение стало `errors="replace"`. Проверка ветки
+        осталась — сама ветка никуда не делась.
+
+        Один такой каталог где угодно в дереве иначе гасил бы `PostToolUse`
+        на каждой записи, а причиной в stderr значился бы код возврата
+        hook.py. Провалившийся гейт называет себя, второй досчитывает.
         """
-        (self.root / "areas" / "cp1251.md").write_bytes("привет".encode("cp1251"))
+        (self.root / "areas" / "каталог.md").mkdir()
         result = call("PostToolUse", self._payload(self._broken()), self.root)
         self.assertEqual(result.returncode, 0)
         self.assertIn("check_links", result.stderr)
@@ -498,3 +503,284 @@ class TestPostToolUse(unittest.TestCase):
         result = call("PostToolUse", self._payload(self._broken()), self.root)
         self.assertEqual(result.returncode, 0)
         self.assertIn("список файлов хода", result.stderr)
+
+
+def git(root, *args, **kwargs):
+    """Личность коммиттера — флагами, а не глобальным конфигом среды прогона."""
+    return subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        cwd=str(root), capture_output=True, text=True, **kwargs)
+
+
+def status_of(root):
+    """`git status` теста — с `-uall`, и это не украшение.
+
+    Без `-uall` git схлопывает целиком неотслеженный каталог в одну строку
+    `?? areas/`: файла внутри не видит ни тест, ни хук. Проверка «красное
+    не закоммичено», написанная на схлопнутом выводе, зелена и при
+    реализации, которая красное коммитит.
+    """
+    return git(root, "status", "--porcelain", "-uall").stdout
+
+
+def tree_of(root):
+    """Слепок дерева мимо `.git`: сводка не имеет права ничего туда положить."""
+    return sorted(p.relative_to(root).as_posix()
+                  for p in Path(root).rglob("*")
+                  if ".git" not in p.relative_to(root).parts)
+
+
+class TestSessionStart(unittest.TestCase):
+    """Сводка старта: печатается в контекст, на диск не ложится, чекпоинтом
+    забирает только зелёное."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = make_repo(self._tmp.name)
+        commit_all(self.root)
+        self.addCleanup(self._tmp.cleanup)
+
+    def _payload(self, **extra):
+        payload = {"hook_event_name": "SessionStart", "cwd": str(self.root),
+                   "session_id": "s1", "source": "startup"}
+        payload.update(extra)
+        return payload
+
+    def test_summary_goes_to_stdout(self):
+        """stdout попадает в контекст только у `SessionStart` — сводка идёт
+        туда. В stderr она была бы видна лишь в отладочном выводе."""
+        result = call("SessionStart", self._payload(), self.root)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("inbox", result.stdout)
+
+    def test_clean_tree_says_nothing_uncommitted(self):
+        result = call("SessionStart", self._payload(), self.root)
+        self.assertIn("незакоммиченного: нет", result.stdout)
+
+    def test_summary_writes_no_file(self):
+        """Хук, перезаписывающий файл на каждом старте, делает дерево грязным,
+        а грязное дерево означает «здесь работал человек», — и ветка
+        «пусто → тишина» не наступила бы уже никогда. Вычисляемое не обязано
+        лежать на диске: оно вычисляется."""
+        before_status, before_tree = status_of(self.root), tree_of(self.root)
+        call("SessionStart", self._payload(), self.root)
+        self.assertEqual(status_of(self.root), before_status)
+        self.assertEqual(tree_of(self.root), before_tree)
+
+    def test_summary_names_the_last_checkpoint_and_its_size(self):
+        """Строка сводки — из секции 1 спеки дословно: дата и объём.
+
+        Число в единственном числе пишется единственным: «1 файл», не
+        «1 файлов». Сводку читает человек, и грамматический мусор в ней —
+        такой же шум, как неверная дата.
+        """
+        result = call("SessionStart", self._payload(), self.root)
+        date = git(self.root, "log", "-1", "--format=%ad",
+                   "--date=short").stdout.strip()
+        self.assertIn("последний чекпоинт: %s, 1 файл\n" % date, result.stdout)
+
+    def test_inbox_age_comes_from_git_not_from_the_clock(self):
+        """Обе даты приходят из git, поэтому отчёт воспроизводим: он не зависит
+        ни от часов машины, ни от дня прогона."""
+        (self.root / "inbox" / "old.md").write_text("старое\n", encoding="utf-8")
+        git(self.root, "add", "--", "inbox/old.md")
+        git(self.root, "commit", "-qm", "инбокс", "--date=2026-08-01T10:00:00")
+        (self.root / "areas" / "later.md").write_text("позже\n", encoding="utf-8")
+        git(self.root, "add", "--", "areas/later.md")
+        git(self.root, "commit", "-qm", "позже", "--date=2026-08-10T10:00:00")
+        result = call("SessionStart", self._payload(), self.root)
+        self.assertIn("inbox: 1, старшему 9 дней", result.stdout)
+
+    def test_an_inbox_item_outside_git_is_named_not_dated_silently(self):
+        """Возраст файла, которого в git нет, невосстановим. Подставить ему
+        ноль дней — молчаливая заглушка (незыблемое №4): сводка соврала бы,
+        что элемент свежий, ровно про тот элемент, который дольше всех лежит
+        неучтённым."""
+        (self.root / "inbox" / "old.md").write_text("старое\n", encoding="utf-8")
+        git(self.root, "add", "--", "inbox/old.md")
+        git(self.root, "commit", "-qm", "инбокс", "--date=2026-08-01T10:00:00")
+        (self.root / "areas" / "later.md").write_text("позже\n", encoding="utf-8")
+        git(self.root, "add", "--", "areas/later.md")
+        git(self.root, "commit", "-qm", "позже", "--date=2026-08-10T10:00:00")
+        (self.root / "inbox" / "новое.md").write_text("ещё не в git\n",
+                                                      encoding="utf-8")
+        result = call("SessionStart", self._payload(), self.root)
+        self.assertIn("inbox: 2, старшему 9 дней (1 ещё не в git)", result.stdout)
+
+    def test_green_uncommitted_work_is_checkpointed(self):
+        """Незакоммиченное на старте — по определению чужое: сессия только что
+        началась. Зелёное сохраняется, чтобы работа человека не потерялась."""
+        (self.root / "areas" / "ok.md").write_text("# ок\n", encoding="utf-8")
+        result = call("SessionStart", self._payload(), self.root)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(status_of(self.root).strip(), "")
+
+    def test_red_uncommitted_work_is_shown_and_not_committed(self):
+        """Красное показывается и не коммитится. Показывается в stdout:
+        у `SessionStart` только он доходит до агента."""
+        (self.root / "areas" / "bad.md").write_text("[[нет цели]]\n",
+                                                    encoding="utf-8")
+        result = call("SessionStart", self._payload(), self.root)
+        self.assertIn("areas/bad.md", status_of(self.root))
+        self.assertIn("areas/bad.md", result.stdout)
+
+    def test_a_red_file_alone_in_an_untracked_directory_is_still_seen(self):
+        """Тот же случай, но написанный так, чтобы поймать `git status` без
+        `-uall`, — и он ловит.
+
+        Git схлопывает целиком неотслеженный каталог в одну строку `?? areas/`.
+        Находка гейта приходит на `areas/bad.md`, в списке незакоммиченного
+        лежит `areas/`, они не совпадают ни одним символом — и красное молча
+        уезжает в чекпоинт. Здесь у каталога нет ни одного отслеженного файла,
+        то есть схлопывание гарантировано.
+        """
+        (self.root / "projects" / "bad.md").write_text("[[нет цели]]\n",
+                                                       encoding="utf-8")
+        head = git(self.root, "rev-parse", "HEAD").stdout.strip()
+        result = call("SessionStart", self._payload(), self.root)
+        self.assertEqual(git(self.root, "rev-parse", "HEAD").stdout.strip(), head)
+        self.assertIn("projects/bad.md", result.stdout)
+
+    def test_a_non_ascii_path_is_checkpointed(self):
+        """Кириллица в имени — обычный случай, а не край: репозиторий ведут
+        по-русски. `git status --porcelain` без `-z` отдаёт такой путь
+        закавыченным и в octal-escape'ах, и `git add` по этой строке
+        не находит ничего."""
+        (self.root / "areas" / "заметка.md").write_text("текст\n",
+                                                        encoding="utf-8")
+        call("SessionStart", self._payload(), self.root)
+        self.assertEqual(status_of(self.root).strip(), "")
+
+    def test_missing_git_never_reads_as_a_clean_tree(self):
+        """Маркер рецепта ищется раньше `.git`, поэтому корень может найтись
+        там, где git не ответит. Пустой ответ от неспросившего git
+        неотличим от чистого дерева — и сводка соврала бы «незакоммиченного:
+        нет» ровно там, где не знает ничего (незыблемое №4)."""
+        import shutil
+        shutil.rmtree(self.root / ".git")
+        result = call("SessionStart", self._payload(), self.root)
+        self.assertEqual(result.returncode, 0)
+        self.assertNotIn("незакоммиченного: нет", result.stdout)
+        self.assertIn("неизвестно", result.stdout)
+        self.assertIn("гейт не выполнился", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_an_unfinished_merge_is_not_checkpointed(self):
+        """Конфликт в дереве — незавершённая работа человека. `git add` по
+        такому файлу помечает конфликт разрешённым и коммитит текст вместе
+        с маркерами `<<<<<<<`: плагин выдал бы за решение то, чего не решал.
+        Гейты этого не поймают — маркеры конфликта не ссылка и не frontmatter.
+        """
+        ours = git(self.root, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        (self.root / "areas" / "x.md").write_text("наше\n", encoding="utf-8")
+        git(self.root, "add", "--", "areas/x.md")
+        git(self.root, "commit", "-qm", "наше")
+        git(self.root, "checkout", "-q", "-b", "их", "HEAD~1")
+        # Уходя на коммит без единого отслеженного файла в `areas/`, git
+        # уносит и сам каталог: он не хранит пустых каталогов.
+        (self.root / "areas").mkdir(exist_ok=True)
+        (self.root / "areas" / "x.md").write_text("их\n", encoding="utf-8")
+        git(self.root, "add", "--", "areas/x.md")
+        git(self.root, "commit", "-qm", "их")
+        merged = git(self.root, "merge", "--no-edit", ours)
+        self.assertNotEqual(merged.returncode, 0, "слияние обязано конфликтовать")
+        head = git(self.root, "rev-parse", "HEAD").stdout.strip()
+        result = call("SessionStart", self._payload(), self.root)
+        self.assertEqual(git(self.root, "rev-parse", "HEAD").stdout.strip(), head)
+        self.assertIn("слияние", result.stdout)
+
+    def test_a_gate_that_could_not_run_stops_the_checkpoint(self):
+        """Коммит на власти прогона, который не состоялся, — подпись под
+        непроверенным.
+
+        Та же наблюдённая поломка, что и у `PostToolUse`: каталог с именем
+        на `.md` роняет `check_links.scan`. Там она стоила отчёта, здесь
+        стоила бы чекпоинта дерева, которое никто не смотрел.
+        """
+        (self.root / "areas" / "каталог.md").mkdir()
+        (self.root / "areas" / "ok.md").write_text("# ок\n", encoding="utf-8")
+        head = git(self.root, "rev-parse", "HEAD").stdout.strip()
+        result = call("SessionStart", self._payload(), self.root)
+        self.assertEqual(git(self.root, "rev-parse", "HEAD").stdout.strip(), head)
+        self.assertIn("check_links", result.stderr)
+        self.assertIn("чекпоинт не сделан", result.stdout)
+        self.assertIn("areas/ok.md", status_of(self.root))
+
+    def test_a_root_below_the_git_root_is_not_checkpointed(self):
+        """Пути `--porcelain` считаются от корня git, пути гейтов — от корня
+        рецепта. Контекстный репозиторий подкаталогом кодового разводит эти
+        корни на приставку, и списки перестают совпадать целиком: находка
+        не найдёт своего файла, и красное уедет в чекпоинт молча."""
+        outer = Path(self._tmp.name) / "outer"
+        (outer / "context").mkdir(parents=True)
+        subprocess.run(["git", "init", "-q"], cwd=str(outer), check=True)
+        for zone in ("areas", "inbox"):
+            (outer / "context" / zone).mkdir()
+        (outer / "context" / ".twinkle-repo-builder").write_text(
+            '{"version": "1"}', encoding="utf-8")
+        (outer / "context" / "areas" / "ok.md").write_text("# ок\n",
+                                                           encoding="utf-8")
+        commit_all(outer)
+        (outer / "context" / "areas" / "later.md").write_text("# ещё\n",
+                                                              encoding="utf-8")
+        payload = {"hook_event_name": "SessionStart", "session_id": "s1",
+                   "cwd": str(outer / "context"), "source": "startup"}
+        result = call("SessionStart", payload, outer / "context")
+        self.assertIn("не совпадает с корнем git", result.stdout)
+        self.assertIn("context/areas/later.md", status_of(outer))
+
+    def test_a_missing_root_is_visible_and_not_a_crash(self):
+        (self.root / ".twinkle-repo-builder").unlink()
+        result = call("SessionStart", self._payload(), self.root)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("корень", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_checkpoint_never_uses_add_all(self):
+        """`git add -A` заберёт сдвиги указателей сабмодулей `knowledge/`
+        и параллельные правки человека в Obsidian."""
+        source = (ROOT / "hooks" / "summary.py").read_text(encoding="utf-8")
+        self.assertNotIn('"-A"', source)
+        self.assertNotIn("'-A'", source)
+        self.assertNotIn("--all", source)
+
+
+class TestCheckpointArithmetic(unittest.TestCase):
+    """Две развилки чекпоинта, у которых нет наблюдаемого следа в дереве:
+    что считается красным и что вообще можно ставить в индекс."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = make_repo(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def test_only_errors_block_the_checkpoint(self):
+        """Красное — это ошибка, а не всякая находка.
+
+        `orphan` — тяжесть `report`, `ambiguous` — `warning`; ни одна не делает
+        `./check` красным. Считать красной всякую находку значит запретить
+        чекпоинт репозиторию, где просто есть файл, на который никто не
+        сослался, — то есть запретить навсегда: ветка «зелёное сохраняется»
+        не наступит уже никогда.
+        """
+        from hooks import summary
+        from scripts.findings import Finding
+        soft = [Finding("orphan", "areas/a.md", 1, "на файл никто не сослался"),
+                Finding("ambiguous", "areas/a.md", 2, "две цели")]
+        self.assertEqual(summary.errors(soft), [])
+        red = Finding("unresolved", "areas/a.md", 3, "нет такой цели")
+        self.assertEqual(summary.errors(soft + [red]), [red])
+
+    def test_a_dirty_directory_is_never_staged(self):
+        """Сдвинутый указатель сабмодуля приходит в `git status` одной строкой
+        с путём каталога. Назвать его поимённо не лучше, чем забрать `-A`:
+        спека запрещает `-A` именно потому, что он уносит указатели
+        `knowledge/`, а чужой репозиторий двигает его владелец, не плагин.
+        """
+        from hooks import summary
+        (self.root / "knowledge" / "чужой").mkdir()
+        (self.root / "areas" / "a.md").write_text("текст\n", encoding="utf-8")
+        staged, skipped = summary.committable(
+            self.root, ["areas/a.md", "knowledge/чужой"])
+        self.assertEqual(staged, ["areas/a.md"])
+        self.assertEqual(skipped, ["knowledge/чужой"])
