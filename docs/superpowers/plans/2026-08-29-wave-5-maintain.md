@@ -666,25 +666,31 @@ SURFACE = (
 NEVER = frozenset(zones.READ_ONLY | {"core", "sources", "inbox"})
 
 
+def _match(rel, pattern):
+    """Посегментное сопоставление. `fnmatchcase` здесь не годится: его `*`
+    пересекает косую, и `*/README.md` совпал бы с `a/b/c/README.md`, то есть
+    поверхность формы стала бы шире отсуженной. Подгонять поверхность под
+    сопоставитель нельзя — она и есть предмет спора."""
+    if pattern.startswith("**/"):
+        tail = pattern[3:]
+        parts = rel.split("/")
+        return any(_match("/".join(parts[start:]), tail)
+                   for start in range(len(parts)))
+    expected = pattern.split("/")
+    actual = rel.split("/")
+    if len(expected) != len(actual):
+        return False
+    return all(fnmatchcase(part, want)
+               for part, want in zip(actual, expected))
+
+
 def covers(rel, what):
     """Разрешает ли поверхность правку такого рода по этому пути."""
-    zone = zones.zone_of(rel)
-    if zone in NEVER:
+    if zones.zone_of(rel) in NEVER:
         return False
-    for entry in SURFACE:
-        pattern = entry.pattern.split("#")[0]
-        if entry.what != what:
-            continue
-        if fnmatchcase(rel, pattern) or fnmatchcase(rel, pattern.replace("**/", "")):
-            return True
-    return False
+    return any(_match(rel, entry.pattern.split("#")[0])
+               for entry in SURFACE if entry.what == what)
 ```
-
-`fnmatchcase` с `**/` работает не так, как ожидается: `*` в `fnmatch`
-пересекает косые. Поэтому вторая форма сравнения — без префикса. Если это
-даёт ложные совпадения на глубоких путях, **замени сопоставление на
-посегментное и скажи об этом**: подгонять поверхность под сопоставитель
-нельзя, она отсуждена.
 
 - [ ] **Step 5: Реализация — `scripts/maintain/content_diff.py`**
 
