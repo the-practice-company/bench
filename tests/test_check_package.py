@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts import check_package
+from scripts import check_package, zones
 from scripts.check_package import check, check_read_only, _check_tests_touched_product
 from scripts.findings import Finding
 
@@ -94,6 +94,38 @@ class TestPackageCheck(unittest.TestCase):
                     ]}}), encoding="utf-8")
                 self.assertNotIn("unknown-matcher", check(root).counts())
 
+    def test_the_empty_matcher_is_the_documented_everything_form(self):
+        """Пустой матчер — законная запись для событий без инструментов.
+
+        Разбор ронял её на ровном месте: `"".split("|")` даёт `[""]`, пустой
+        строки в `TOOL_NAMES` нет, и `{"matcher": ""}` объявлялся
+        `unknown-matcher`. Это дефект разбора, а не вопрос о составе
+        закрытого множества инструментов.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "hooks" / "hooks.json").write_text(
+                json.dumps({"hooks": {"SessionStart": [
+                    {"matcher": "", "hooks": []}
+                ]}}), encoding="utf-8")
+            self.assertEqual(places(check(root)), [])
+
+    def test_an_empty_member_of_an_alternation_is_still_unknown(self):
+        """Пустая строка законна как весь матчер и незаконна внутри `|`.
+
+        `Edit|` — опечатка, а не форма «совпадает со всем»: послабление для
+        пустого матчера обязано остаться ровно на одном значении.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "hooks" / "hooks.json").write_text(
+                json.dumps({"hooks": {"PreToolUse": [
+                    {"matcher": "Edit|", "hooks": []}
+                ]}}), encoding="utf-8")
+            self.assertEqual(
+                places(check(root)),
+                [("hooks/hooks.json", 1, "unknown-matcher", "Edit|")])
+
     def test_alternation_with_one_bad_member_is_caught(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = _minimal_package(Path(tmp))
@@ -109,7 +141,10 @@ class TestPackageCheck(unittest.TestCase):
             (root / "skills" / "drain-inbox" / "SKILL.md").write_text(
                 "---\nname: drain-inbox\ndescription: x\n---\nЗовёт /Users/artem/x.py\n",
                 encoding="utf-8")
-            self.assertIn("absolute-path", check(root).counts())
+            self.assertEqual(
+                places(check(root)),
+                [("skills/drain-inbox/SKILL.md", 5, "absolute-path",
+                  "Зовёт /Users/artem/x.py")])
 
     def test_every_absolute_form_is_caught(self):
         """Критерий 3: пять префиксов оставляли зелёными шесть форм.
@@ -375,27 +410,154 @@ class TestPackageCheck(unittest.TestCase):
             self.assertIn("skill-name-mismatch", counts)
 
     def test_extensionless_and_yaml_files_are_scanned(self):
-        """Критерий 3: фильтр по расширению уводил из-под скана целые форматы."""
+        """Критерий 3: фильтр по расширению уводил из-под скана целые форматы.
+
+        Список находок точный, и в нём назван каждый файл. С `assertIn` тест
+        держался зелёным, когда `Makefile` не сканировался вовсе: находку
+        поднимал любой другой файл пакета, и утверждение «что-то нашлось»
+        выполнялось при полностью выключенной проверяемой возможности.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             root = _minimal_package(Path(tmp))
             (root / "Makefile").write_text(
                 "run:\n\tpython3 /Users/artem/x.py\n", encoding="utf-8")
-            self.assertIn("absolute-path", check(root).counts())
+            (root / "config.yaml").write_text(
+                "path: /Users/artem/x.yaml\n", encoding="utf-8")
+            self.assertEqual(
+                places(check(root)),
+                [("Makefile", 2, "absolute-path", "python3 /Users/artem/x.py"),
+                 ("config.yaml", 1, "absolute-path", "path: /Users/artem/x.yaml")])
 
     def test_a_package_dir_named_like_a_zone_is_still_scanned(self):
-        """Восемь имён зон в SKIP_DIRS снимали со скана целые поддеревья."""
+        """Восемь имён зон в списке пропуска снимали со скана целые поддеревья.
+
+        `core/` — не чужое содержимое, а содержимое пакета: каталог с таким
+        именем в корне сканируется наравне с остальными.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             root = _minimal_package(Path(tmp))
             core = root / "core"
             core.mkdir()
             (core / "notes.md").write_text("Смотри /Users/artem/x.md\n", encoding="utf-8")
-            self.assertIn("absolute-path", check(root).counts())
+            self.assertEqual(
+                places(check(root)),
+                [("core/notes.md", 1, "absolute-path", "Смотри /Users/artem/x.md")])
 
     def test_binary_files_do_not_break_the_scan(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = _minimal_package(Path(tmp))
             (root / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n\xff\xfe")
-            self.assertEqual(check(root).counts(), {})
+            self.assertEqual(places(check(root)), [])
+
+    def test_the_claude_directory_is_package_content(self):
+        """`.claude` в списке пропуска снимал со скана два живых периметра.
+
+        Регрессия была тихой: имя добавили без теста и без названной поломки,
+        а `.claude/rules/*.md` гейт ссылок читает по имени, и битая фикстура
+        держит там свой образец. Обе строки уходили из проверки пакета
+        целиком: тот же вход давал `absolute-path` до правки и тишину после.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / ".claude" / "rules").mkdir(parents=True)
+            (root / ".claude" / "settings.json").write_text(
+                json.dumps({"cmd": "/Users/artem/bin/tool"}), encoding="utf-8")
+            (root / ".claude" / "rules" / "areas.md").write_text(
+                "Смотри /Users/artem/x.md\n", encoding="utf-8")
+            self.assertEqual(
+                places(check(root)),
+                [(".claude/rules/areas.md", 1, "absolute-path",
+                  "Смотри /Users/artem/x.md"),
+                 (".claude/settings.json", 1, "absolute-path",
+                  '{"cmd": "/Users/artem/bin/tool"}')])
+
+    def test_a_read_only_zone_is_foreign_content_and_is_not_scanned(self):
+        """`knowledge/` — чужие git-сабмодули (`zones.READ_ONLY`).
+
+        Абсолютный путь в чужой цитате — не находка проверки *нашего*
+        пакета: ровно та мотивировка, по которой из скана исключены `inbox/`
+        и `sources/`. Убрав из списка все восемь имён зон разом, её потеряли
+        вместе с ними: тот же файл был тишиной до правки и находкой после.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            vendor = root / "knowledge" / "vendor"
+            vendor.mkdir(parents=True)
+            (vendor / "README.md").write_text(
+                "См. /Users/someone/else/x\n", encoding="utf-8")
+            self.assertEqual(places(check(root)), [])
+
+    def test_the_only_skipped_zones_are_the_ones_the_table_names(self):
+        """Имена зон в периметре берутся из `scripts/zones.py`, а не литералами.
+
+        Тест видит расхождение с таблицей зон, которого не видит
+        `tests/test_zones.py::TestSingleDefinition`: его эвристике нужно
+        шесть имён и больше, и частичную копию из двух-трёх она пропускает
+        по построению.
+        """
+        self.assertEqual(
+            check_package.SKIP_AT_ROOT & set(zones.ZONES),
+            set(zones.READ_ONLY) | set(zones.SELF_DEVELOPMENT))
+
+    def test_gitignored_paths_are_outside_the_package(self):
+        """Вердикт не зависит от неотслеживаемого локального состояния.
+
+        `.gitignore` не читался вовсе; мусор держал за периметром фильтр по
+        расширениям, и с его снятием `python3 -m venv .venv` стал красить
+        `./check` на чистом коммите — `.venv/bin/activate` расширения не
+        имеет, в пакет не входит и держит абсолютный путь по построению.
+        Обе формы записи в `.gitignore` проверяются здесь: поддерево
+        (`.venv/`) и отдельный файл (`.claude/settings.local.json`).
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / ".gitignore").write_text(
+                ".venv/\n.claude/settings.local.json\n", encoding="utf-8")
+            venv = root / ".venv" / "bin"
+            venv.mkdir(parents=True)
+            (venv / "activate").write_text(
+                'VIRTUAL_ENV="/Users/artem/.venv"\n', encoding="utf-8")
+            (root / ".claude").mkdir()
+            (root / ".claude" / "settings.local.json").write_text(
+                json.dumps({"cmd": "/Users/artem/bin/tool"}), encoding="utf-8")
+            (root / "notes.md").write_text(
+                "Смотри /Users/artem/x.md\n", encoding="utf-8")
+            self.assertEqual(
+                places(check(root)),
+                [("notes.md", 1, "absolute-path", "Смотри /Users/artem/x.md")])
+
+    def test_service_directories_are_skipped_at_any_depth(self):
+        """`__pycache__` в списке первого сегмента был мёртвой строкой.
+
+        В корне он не лежит никогда, а `scripts/__pycache__/note.txt`
+        первым сегментом не отсеивался и уходил в скан. Вложенный `.git` —
+        та же история: каталог сабмодуля руками не пишется и в пакет не
+        входит. `_tree_hash` и `_product_hash` обе формы исключают давно.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            cache = root / "scripts" / "__pycache__"
+            cache.mkdir(parents=True)
+            (cache / "note.txt").write_text("/Users/artem/x.py\n", encoding="utf-8")
+            gitdir = root / "vendor" / ".git"
+            gitdir.mkdir(parents=True)
+            (gitdir / "config").write_text(
+                "worktree = /Users/artem/vendor\n", encoding="utf-8")
+            self.assertEqual(places(check(root)), [])
+
+    def test_a_root_file_named_like_a_skipped_directory_is_scanned(self):
+        """Пропуск первого сегмента — про каталог, а не про имя.
+
+        Файл `docs` в корне репозитория — файл пакета: проверка первого
+        сегмента не отличала его от каталога `docs/`, и он уходил из скана
+        целиком.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _minimal_package(Path(tmp))
+            (root / "docs").write_text("Смотри /Users/artem/x.md\n", encoding="utf-8")
+            self.assertEqual(
+                places(check(root)),
+                [("docs", 1, "absolute-path", "Смотри /Users/artem/x.md")])
 
     def test_absolute_path_inside_a_copy_of_check_package_is_reported(self):
         """Дефект 4: check_package.py не должен исключать себя из периметра.

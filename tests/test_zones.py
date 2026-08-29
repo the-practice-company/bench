@@ -1,3 +1,4 @@
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -26,8 +27,33 @@ class TestZones(unittest.TestCase):
     def test_deny_patterns_close_foreign_git(self):
         self.assertIn("knowledge/*/**", zones.DENY_PATTERNS)
 
+    def test_self_development_zones_are_named_in_the_table(self):
+        """Зоны собственной разработки — часть таблицы, а не литералы у потребителя.
+
+        Их читает периметр проверки пакета: этот репозиторий удваивается под
+        контекст-репозиторий своей же разработки, и абсолютный путь в чужой
+        цитате внутри них не находка о пакете. Пока имена стояли строками в
+        `check_package.py`, это была частичная копия таблицы зон — из двух
+        имён, то есть невидимая для `TestSingleDefinition` по построению.
+        """
+        self.assertEqual(zones.SELF_DEVELOPMENT, frozenset({"inbox", "sources"}))
+        self.assertLessEqual(zones.SELF_DEVELOPMENT, frozenset(zones.ZONES))
+
 
 _NOT_PACKAGE = {".git", "__pycache__", "tests", "fixtures", "docs"}
+
+# Имя зоны, как оно встречается в тексте: в кавычках или без. Счёт только по
+# кавычкам не видел копию таблицы, написанную одним литералом —
+# `tuple("core areas projects ... decisions".split())` набирал ноль вхождений
+# и проходил. Это тот же вид дыры, что и пропуск офендера по имени файла:
+# копия таблицы, невидимая для проверки на копии.
+#
+# Границы шире `\b` на дефис: `drain-inbox` — имя скилла, а не зона, и
+# считать его за вхождение значило бы подтягивать счёт файлам, которые
+# таблицы не держат. Косая и точка границей остаются: `knowledge/*/**` в
+# комментарии — вхождение, и это верно, поэтому порог в шесть имён.
+_BARE = {name: re.compile(r"(?<![\w-])%s(?![\w-])" % re.escape(name))
+         for name in zones.ZONES}
 
 
 def _offenders(root):
@@ -55,7 +81,7 @@ def _offenders(root):
         if any(part in _NOT_PACKAGE for part in rel.parts):
             continue
         text = path.read_text(encoding="utf-8")
-        hits = {n for n in names if f'"{n}"' in text or f"'{n}'" in text}
+        hits = {n for n in names if _BARE[n].search(text)}
         if len(hits) >= 6:
             out.append(f"{rel.as_posix()}: {sorted(hits)}")
     return out
@@ -64,10 +90,11 @@ def _offenders(root):
 class TestSingleDefinition(unittest.TestCase):
     """Критерий выхода 5: второе определение восьми зон валит тест.
 
-    Эвристика намеренно грубая — файл, перечисляющий шесть и более имён зон
-    строковыми литералами, почти наверняка держит свою копию таблицы.
-    Спека измерила цену обратного: три разошедшиеся таблицы зон в одном
-    репозитории.
+    Эвристика намеренно грубая — файл, называющий шесть и более имён зон,
+    почти наверняка держит свою копию таблицы. Как именно они записаны,
+    значения не имеет: счёт по кавычкам пропускал копию, собранную из одной
+    строки. Спека измерила цену обратного: три разошедшиеся таблицы зон в
+    одном репозитории.
     """
 
     def test_no_second_zone_table_in_package(self):
@@ -83,6 +110,25 @@ class TestSingleDefinition(unittest.TestCase):
             (fake / "hooks").mkdir()
             (fake / "scripts" / "zones.py").write_bytes(source)
             (fake / "hooks" / "zones.py").write_bytes(source)
+            offenders = _offenders(fake)
+        self.assertEqual(len(offenders), 1, offenders)
+        self.assertIn("hooks/zones.py", offenders[0])
+
+    def test_a_split_string_copy_of_the_table_is_an_offender(self):
+        """Копия таблицы одной строкой: счёт по кавычкам её не видел вовсе.
+
+        Восемь имён внутри одного литерала не дают ни одного вхождения вида
+        `"core"` — детектор копий насчитывал ноль и пропускал файл. Это тот
+        же вид дыры, который тут уже чинили: копия таблицы, невидимая для
+        проверки на копии.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp)
+            (fake / "hooks").mkdir()
+            (fake / "hooks" / "zones.py").write_text(
+                'ZONES = tuple("core areas projects knowledge inbox sources tmp'
+                ' decisions".split())\n',
+                encoding="utf-8")
             offenders = _offenders(fake)
         self.assertEqual(len(offenders), 1, offenders)
         self.assertIn("hooks/zones.py", offenders[0])

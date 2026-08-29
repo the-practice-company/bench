@@ -19,7 +19,7 @@
 Рабочее дерево не трогается: мутация живёт в одноразовой копии под
 `tempfile.TemporaryDirectory()` и умирает вместе с ней.
 
-В `./check` инструмент не включается: шестнадцать копий дерева и шестнадцать
+В `./check` инструмент не включается: семнадцать копий дерева и семнадцать
 прогонов тестового модуля в них — десятки секунд, а `./check` обязан оставаться
 достаточно дешёвым, чтобы его гоняли постоянно. Запускается руками:
 
@@ -213,15 +213,13 @@ MUTATIONS = (
         name="матчер: любой принимается за известный",
         module="tests.test_check_package",
         steps=(
+            # Образец — две решающие строки, а не всё тело функции: комментарий
+            # внутри неё однажды уже сделал мутацию «не легшей», хотя проверять
+            # она собиралась не комментарий.
             substitution(
                 "scripts/check_package.py",
-                "def matcher_is_known(matcher):\n"
-                "    matcher = str(matcher)\n"
-                '    if matcher == "*":\n'
-                "        return True\n"
                 '    parts = matcher.split("|")\n'
                 "    return all(part in TOOL_NAMES for part in parts)\n",
-                "def matcher_is_known(matcher):\n"
                 "    return True\n",
             ),
         ),
@@ -294,11 +292,7 @@ MUTATIONS = (
         steps=(
             substitution(
                 "scripts/check_package.py",
-                "        if path.relative_to(root).parts[0] in SKIP_DIRS:\n"
-                "            continue\n"
                 "        yield path\n",
-                "        if path.relative_to(root).parts[0] in SKIP_DIRS:\n"
-                "            continue\n"
                 '        if (path.suffix not in {".md", ".py", ".sh", ".json", ".base", ".txt"}\n'
                 '                and path.name != "check"):\n'
                 "            continue\n"
@@ -308,15 +302,27 @@ MUTATIONS = (
     ),
     Mutation(
         criterion=3,
-        name="SKIP_DIRS: все восемь имён зон обратно",
+        name="периметр снова слеп к .gitignore",
         module="tests.test_check_package",
         steps=(
             substitution(
                 "scripts/check_package.py",
-                'SKIP_DIRS = {".git", ".claude", "fixtures", "tests", "docs", "__pycache__",\n'
-                '             "inbox", "sources"}\n',
-                'SKIP_DIRS = {".git", ".claude", "fixtures", "tests", "docs", "__pycache__",\n'
-                "             " + _ZONES_AS_LITERALS + "}\n",
+                "    ignored = ignored_prefixes(root)\n",
+                "    ignored = ()\n",
+            ),
+        ),
+    ),
+    Mutation(
+        criterion=3,
+        name="SKIP_AT_ROOT: все восемь имён зон обратно",
+        module="tests.test_check_package",
+        steps=(
+            substitution(
+                "scripts/check_package.py",
+                'SKIP_AT_ROOT = ({"fixtures", "tests", "docs"}\n'
+                "                | set(zones.READ_ONLY) | set(zones.SELF_DEVELOPMENT))\n",
+                'SKIP_AT_ROOT = {"fixtures", "tests", "docs",\n'
+                "                " + _ZONES_AS_LITERALS + "}\n",
             ),
         ),
     ),
