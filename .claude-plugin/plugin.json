@@ -1,5 +1,8 @@
 {
   "name": "twinkle-repo-builder",
   "version": "0.1.0",
-  "description": "Creates, adopts and maintains context repositories"
+  "description": "Creates, adopts and maintains context repositories",
+  "author": {
+    "name": "Artem"
+  }
 }
