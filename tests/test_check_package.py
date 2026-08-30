@@ -1472,6 +1472,99 @@ class TestTestsTouchedProductMechanism(unittest.TestCase):
                       "продукт изменился после прогона тестов")])
 
 
+class TestPackageComposition(unittest.TestCase):
+    """Раскладка §21 против дерева: пять вещей едут, остальное остаётся.
+
+    Таблица §21 — проза, и до этого набора она сходилась с деревом только
+    глазами. Стоил этот класс дрейфа уже дорого: `dev/` завели позже
+    `SKIP_AT_ROOT`, и собственный `./check` покраснел тремя `absolute-path`
+    в оснастке мутаций, которая пользователю не уезжает вовсе.
+
+    Второго списка состава здесь не заводится, и это условие задачи: сверяются
+    два уже существующих перечисления продукта с тем, что лежит в корне.
+    Литерал ниже — только сторона «остаётся», у которой своей константы в
+    продукте нет.
+    """
+
+    # Каталоги корня, которые пользователю не уезжают. Список здесь, а не в
+    # продукте: продукт называет продукт, а тест сверяет, что корень разобран
+    # этими двумя сторонами целиком. Новый каталог в корне красит набор, и
+    # его придётся отнести к одной из сторон — руками и видимо.
+    NOT_SHIPPED = ("dev", "docs", "fixtures", "inbox", "sources", "tests")
+
+    def directories(self):
+        """Каталоги корня, в которых лежит хоть один хранимый файл.
+
+        Периметр — тот же `.gitignore`, которым живёт скан пакета, и это не
+        косметика. `.claude/` в этом репозитории несёт один только
+        `settings.local.json`, который git не хранит: на свежем клоне каталога
+        нет вовсе, и сверка по `iterdir()` краснела бы у всякого, кто клонирует
+        — то есть утверждала бы о дереве разработчика вместо дерева пакета.
+        """
+        ignored = check_package.ignored_prefixes(ROOT)
+        out = []
+        for top in sorted(ROOT.iterdir()):
+            if not top.is_dir() or top.name in check_package.SKIP_ANY_DEPTH:
+                continue
+            for path in top.rglob("*"):
+                if not path.is_file():
+                    continue
+                rel = path.relative_to(ROOT).as_posix()
+                if any(part in check_package.SKIP_ANY_DEPTH
+                       for part in Path(rel).parts[:-1]):
+                    continue
+                if check_package._is_ignored(rel, ignored):
+                    continue
+                out.append(top.name)
+                break
+        return out
+
+    def test_the_shipped_side_is_the_layout_of_section_21(self):
+        """Пять вещей раскладки, дословно: манифест, хуки, скрипты, скиллы,
+        каркас. Снятие любой из них — не «не понадобилось», а другой пакет."""
+        self.assertEqual(sorted(check_package._PRODUCT_DIRS),
+                         [".claude-plugin", "hooks", "scaffold", "scripts",
+                          "skills"])
+
+    def test_every_directory_of_the_root_is_on_one_of_the_two_sides(self):
+        """Тест спрашивает дерево, а не константу.
+
+        Сверенный только с литералом рядом, состав остаётся зелёным и тогда,
+        когда в корне появился каталог, о котором не знает ни одна из двух
+        сторон: снимок продукта его не сторожит, периметр скана не пропускает,
+        а §21 про него не говорит ничего.
+        """
+        shipped = [name for name in self.directories()
+                   if name in check_package._PRODUCT_DIRS]
+        rest = [name for name in self.directories()
+                if name not in check_package._PRODUCT_DIRS]
+        self.assertEqual(shipped, sorted(check_package._PRODUCT_DIRS))
+        self.assertEqual(rest, sorted(self.NOT_SHIPPED))
+
+    def test_nothing_that_ships_is_skipped_by_the_scan(self):
+        """Отгружаемое обязано сканироваться. `SKIP_AT_ROOT` снимает каталог
+        с `absolute-path`, `relative-path-in-skill` и `destructive-example`
+        разом — на продукте это молчаливое отключение всех трёх классов."""
+        self.assertEqual(
+            sorted(set(check_package._PRODUCT_DIRS)
+                   & set(check_package.SKIP_AT_ROOT)), [])
+
+    def test_every_name_of_either_side_names_a_directory_of_the_root(self):
+        """Опечатка снимает каталог с проверки молча: имени нет в дереве,
+        а константа про это не знает."""
+        present = set(self.directories())
+        for name in check_package._PRODUCT_DIRS:
+            self.assertIn(name, present)
+        for name in self.NOT_SHIPPED:
+            self.assertIn(name, present)
+
+    def test_the_development_tools_of_section_21_stay_out_of_the_scan(self):
+        """§21 называет фикстуры, тесты и проверку пакета инструментами
+        разработки. Первые две — каталоги, и в скан пакета они не входят."""
+        for name in ("fixtures", "tests"):
+            self.assertIn(name, check_package.SKIP_AT_ROOT)
+
+
 class TestThisPackage(unittest.TestCase):
     def test_our_own_package_is_green(self):
         result = subprocess.run(

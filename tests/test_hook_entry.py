@@ -1,11 +1,14 @@
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+from scripts import check_package
 
 ROOT = Path(__file__).resolve().parent.parent
 SHIM = ROOT / "hooks" / "hook.sh"
@@ -25,6 +28,85 @@ def run_hook(event, payload, env=None, cwd=None):
         capture_output=True, text=True,
         cwd=str(cwd or ROOT), env=environ,
     )
+
+
+HOOKS_JSON = ROOT / "hooks" / "hooks.json"
+
+# Пять моментов секции 15, по одной регистрации на момент. Событий ядра при
+# этом четыре: перед записью и перед командой в терминале — одно и то же
+# `PreToolUse`, разведённое матчером.
+FIVE_MOMENTS = (
+    ("SessionStart", "", "SessionStart"),
+    ("PreToolUse", "Edit|NotebookEdit|Write", "PreToolUse"),
+    ("PreToolUse", "Bash", "PreToolUseBash"),
+    ("PostToolUse", "Edit|NotebookEdit|Write", "PostToolUse"),
+    ("Stop", "", "Stop"),
+)
+
+
+def registrations():
+    """(событие, матчер, аргумент маршрута) для каждой команды `hooks.json`.
+
+    Читается отгружаемый файл, а не выдуманный: `tests/test_check_package.py`
+    проверяет разбор на синтетических `hooks.json` и ни разу — на том, что
+    уезжает пользователю.
+    """
+    data = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
+    out = []
+    for event, entries in data["hooks"].items():
+        for entry in entries:
+            for hook in entry["hooks"]:
+                out.append((event, entry.get("matcher", ""),
+                            hook["command"].rsplit(" ", 1)[-1]))
+    return out
+
+
+class TestShippedHooksRegistration(unittest.TestCase):
+    """`hooks.json` против `hook.py`: два артефакта дерева, а не список рядом.
+
+    Строка с неподдерживаемым типом хука жила у изученного аналога три с
+    половиной месяца. Здесь ловится соседняя поломка того же семейства:
+    событие, которое зарегистрировано и не обслуживается (или обслуживается
+    и не зарегистрировано). Ровно так волна 2 однажды и вышла — сканер
+    команд Bash был мёртвым кодом при 62 зелёных тестах, потому что маршрута
+    `PreToolUseBash` в `hooks.json` не было.
+    """
+
+    def test_every_registration_names_a_route_that_hook_py_handles(self):
+        source = (ROOT / "hooks" / "hook.py").read_text(encoding="utf-8")
+        for event, matcher, route in registrations():
+            self.assertIn('"%s": on_' % route, source,
+                          "%s/%s ведёт в необслуживаемый маршрут %s"
+                          % (event, matcher, route))
+
+    def test_every_route_hook_py_handles_is_registered(self):
+        """Обратная сторона: обработчик без строки в `hooks.json` — мёртвый
+        код, который ни одним прогоном не отличить от работающего."""
+        source = (ROOT / "hooks" / "hook.py").read_text(encoding="utf-8")
+        handled = sorted(re.findall(r'^    "(\w+)": on_\w+,$', source, re.M))
+        self.assertEqual(sorted({route for _, _, route in registrations()}),
+                         handled)
+
+    def test_the_shipped_file_registers_exactly_the_five_moments(self):
+        """Пять моментов §15 и §21 — утверждение спеки, и оно исполняемо."""
+        self.assertEqual(registrations(), list(FIVE_MOMENTS))
+
+    def test_every_command_goes_through_the_plugin_root(self):
+        """Относительный путь разрешится от репозитория пользователя: восемь
+        скиллов у изученного аналога так и не работали. Класс держит проверка
+        пакета; здесь утверждается сам отгружаемый файл."""
+        data = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
+        for entries in data["hooks"].values():
+            for entry in entries:
+                for hook in entry["hooks"]:
+                    self.assertTrue(
+                        hook["command"].startswith("${CLAUDE_PLUGIN_ROOT}/"),
+                        hook["command"])
+
+    def test_the_shipped_file_is_green_on_the_package_check(self):
+        """Разбор из `check_package` — единственный судья формы `hooks.json`,
+        и на отгружаемом файле он обязан молчать."""
+        self.assertEqual(check_package._check_hooks(ROOT), [])
 
 
 class TestEntryContract(unittest.TestCase):
