@@ -1,0 +1,7 @@
+filters:
+  and:
+    - file.inFolder("areas/work/journal/items")
+views:
+  - type: table
+    order:
+      - created

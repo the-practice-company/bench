@@ -1,0 +1,9 @@
+filters:
+  and:
+    - file.inFolder("decisions/items")
+    - 'type == "decision"'
+views:
+  - type: table
+    groupBy: status
+    order:
+      - description

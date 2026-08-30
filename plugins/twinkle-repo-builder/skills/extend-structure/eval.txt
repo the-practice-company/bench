@@ -1,0 +1,23 @@
+# triggers
+заведи коллекцию под сделки
+добавь направление в areas
+нужен ещё один вид у коллекции людей
+добавь вид по статусу
+проставь created во всех записях журнала
+заполни недостающее поле в коллекции
+add a collection for deals
+add an area for sales
+add another view to the people collection
+create a view grouped by status
+backfill the created field across the journal
+fill in the missing field for this collection
+
+# non-triggers
+create a context repository from scratch
+создай контекстный репозиторий с нуля
+adopt this folder of notes
+усынови чужое дерево заметок
+почини форму в репозитории
+maintain the repository and fix the form
+разбери inbox
+add a column to the users table

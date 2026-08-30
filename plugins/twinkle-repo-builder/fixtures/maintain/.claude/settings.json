@@ -1,0 +1,11 @@
+{
+  "claudeMdExcludes": [
+    "**/knowledge/**"
+  ],
+  "permissions": {
+    "deny": [
+      "Edit(./knowledge/*/**)",
+      "Write(./knowledge/*/**)"
+    ]
+  }
+}

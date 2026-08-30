@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {"hooks": [{"type": "command",
+                  "command": "${CLAUDE_PLUGIN_ROOT}/hooks/hook.sh SessionStart"}]}
+    ],
+    "PreToolUse": [
+      {"matcher": "Edit|NotebookEdit|Write",
+       "hooks": [{"type": "command",
+                  "command": "${CLAUDE_PLUGIN_ROOT}/hooks/hook.sh PreToolUse"}]},
+      {"matcher": "Bash",
+       "hooks": [{"type": "command",
+                  "command": "${CLAUDE_PLUGIN_ROOT}/hooks/hook.sh PreToolUseBash"}]}
+    ],
+    "PostToolUse": [
+      {"matcher": "Edit|NotebookEdit|Write",
+       "hooks": [{"type": "command",
+                  "command": "${CLAUDE_PLUGIN_ROOT}/hooks/hook.sh PostToolUse"}]}
+    ],
+    "Stop": [
+      {"hooks": [{"type": "command",
+                  "command": "${CLAUDE_PLUGIN_ROOT}/hooks/hook.sh Stop"}]}
+    ]
+  }
+}

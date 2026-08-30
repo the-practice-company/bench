@@ -1,0 +1,9 @@
+# Rewritten on every click in Obsidian.
+.obsidian/workspace*.json
+
+# Deleted notes: Obsidian keeps them, the repository does not.
+.trash/
+
+.DS_Store
+node_modules/
+__pycache__/

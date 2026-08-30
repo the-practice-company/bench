@@ -1,0 +1,21 @@
+# triggers
+усынови этот репозиторий
+у меня есть папка с заметками, сделай из неё контекстный репозиторий
+разложи мои старые заметки по зонам
+прими это дерево под рецепт, тут уже всё лежит
+собери план усыновления для этой папки
+тут чужая свалка markdown, приведи её в порядок
+adopt this folder of notes
+turn my existing notes into a context repository
+take this vault over and lay it out by zones
+we already have a tree of notes, adopt it
+build an adoption plan for this directory
+inventory this folder and agree a plan before moving anything
+
+# non-triggers
+create a context repository from scratch
+создай контекстный репозиторий, каталог пустой
+maintain the repository and fix the form
+почини форму в уже готовом репозитории
+add a collection to an existing repository
+adopt this python package into the monorepo

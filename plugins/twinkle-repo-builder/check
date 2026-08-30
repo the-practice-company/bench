@@ -1,0 +1,6 @@
+#!/bin/sh
+# verify_cmd прогона. Один код возврата на всё: тесты плюс проверка пакета.
+set -e
+cd "$(dirname "$0")"
+python3 -m unittest discover -s tests -t . -q
+python3 scripts/check_package.py .

@@ -1,0 +1,21 @@
+# triggers
+создай контекстный репозиторий
+заведи репозиторий для контекста
+разверни контекстный репозиторий с нуля
+сделай из этой папки контекстный репозиторий
+нужен репозиторий под домен, начни с нуля
+собери восемь зон и каркас
+create a context repository
+set up a context repo from scratch
+turn this empty directory into a context repository
+scaffold a new context repository
+start a context repository for this domain
+bootstrap the eight zones here
+
+# non-triggers
+adopt this existing vault
+усынови этот репозиторий, тут уже всё лежит
+maintain the repository and fix the form
+почини форму в уже готовом репозитории
+add a collection to an existing repository
+create a python package here
