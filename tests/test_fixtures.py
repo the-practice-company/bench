@@ -96,8 +96,9 @@ from scripts import check_frontmatter, check_links
 from scripts.findings import Finding
 
 ROOT = Path(__file__).resolve().parent.parent
-BROKEN = ROOT / "fixtures" / "broken"
-GREEN = ROOT / "fixtures" / "green"
+FIXTURES = ROOT / "fixtures"
+BROKEN = FIXTURES / "broken"
+GREEN = FIXTURES / "green"
 
 
 def places(report):
@@ -109,6 +110,81 @@ def places(report):
     """
     return [(f.path, f.line, f.cls, f.detail)
             for f in sorted(report.findings, key=Finding.key)]
+
+
+def tracked(path):
+    """Пути под `path`, которые git действительно несёт, — от корня набора.
+
+    `-z` и байты, а не текст: `git ls-files` без него берёт непечатаемое и
+    не-ASCII в кавычки с восьмеричными escape'ами, и `созвон.md` приехал бы
+    сюда как последовательность вида `\\321\\201...`, ни с чем не совпав.
+    Вывод относителен рабочему каталогу, поэтому `cwd` — корень набора:
+    сравнивать есть с чем без второго преобразования.
+    """
+    out = subprocess.run(["git", "ls-files", "-z", "--", str(path)],
+                         cwd=str(ROOT), capture_output=True, check=True)
+    return {name.decode("utf-8") for name in out.stdout.split(b"\0") if name}
+
+
+class TestFixturesAreCarriedByGit(unittest.TestCase):
+    """Фикстура — это то, что лежит в git, а не то, что лежит в дереве.
+
+    Файл, угодивший под правило игнорирования — своё, репозитория или
+    глобальное, — живёт только в рабочей копии того, кто его положил.
+    `git clone` его не получает, и набор краснеет у всех остальных, а
+    здесь остаётся зелёным: рабочее дерево, по которому меряли, и было
+    тем, что врало.
+
+    Ровно это и случилось: `fixtures/maintain/sources/dump.bin` подпадал
+    под `sources/*.bin` в `.gitignore` самой фикстуры (строка нужная —
+    без неё нечем предъявить `unreferenced-ignored-binary`), в пакет не
+    попал, и шесть тестов зависели от файла, которого в свежем клоне нет.
+    Свойство «игнорируемый бинарь» пакетом не хранится; такие файлы
+    собирает `materialise`, а не `git`.
+
+    Проверка общая и не про `dump.bin`: любой будущий файл любой фикстуры,
+    попавший под ignore, краснеет здесь — а не в чужом клоне через месяц.
+    """
+
+    def test_every_file_of_every_fixture_is_tracked(self):
+        untracked = []
+        for fixture in sorted(p for p in FIXTURES.iterdir() if p.is_dir()):
+            carried = tracked(fixture)
+            untracked.extend(
+                rel for rel in sorted(
+                    p.relative_to(ROOT).as_posix()
+                    for p in fixture.rglob("*") if p.is_file())
+                if rel not in carried)
+        self.assertEqual(untracked, [])
+
+    def test_no_fixture_carries_an_empty_directory(self):
+        """Пустой каталог git не несёт вовсе: ему не нужен ни `.gitignore`,
+        чтобы пропасть, ни `add -f`, чтобы вернуться. Ложь ровно та же, что
+        у неотслеживаемого файла — у автора каталог есть, в клоне его нет,
+        и разойтись эти два прочтения могут молча.
+
+        Намеренно пустой каталог фикстуры держится `.gitkeep`; так сделаны
+        `projects/fresh/items` и `areas/work/reviews/drafts` в MAINTAIN,
+        и оба поэтому пустыми на диске не бывают. Пустой каталог здесь —
+        значит, никакого решения на его счёт не принимали.
+
+        Нашлось одно: `fixtures/broken/inbox`, заведённый вместе с битой
+        фикстурой 8 августа и не получивший файла ни разу. В клоне его не
+        существовало никогда, и ни один тест этого не заметил.
+        """
+        empty = sorted(p.relative_to(ROOT).as_posix()
+                       for p in FIXTURES.rglob("*")
+                       if p.is_dir() and not any(p.iterdir()))
+        self.assertEqual(empty, [])
+
+    def test_the_fixtures_named_here_are_the_fixtures_on_disk(self):
+        """Обход каталога, а не список: фикстура, заведённая завтра, входит
+        в проверку выше сама. Утверждается, что обход непустой и что все
+        четыре сегодняшние в него попали, — иначе `iterdir()`, вернувший
+        пустоту, читался бы как зелёный прогон."""
+        self.assertEqual(sorted(p.name for p in FIXTURES.iterdir()
+                                if p.is_dir()),
+                         ["broken", "foreign", "green", "maintain"])
 
 
 class TestExactFindings(unittest.TestCase):
