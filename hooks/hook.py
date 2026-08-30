@@ -19,7 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from hooks import bashscan, summary, turnfiles
-from scripts import boundary, check_frontmatter, check_links, zones
+from scripts import boundary, check_frontmatter, check_links, manifest, zones
 from scripts.findings import EXIT_OK, EXIT_VIOLATION
 
 # Коды рукопожатия с шимом. Их единственная работа — доказать, что hook.py
@@ -429,6 +429,16 @@ def on_session_start(payload):
     print(summary.render(state))
     for problem in state.problems:
         print("гейт не выполнился: %s" % problem, file=sys.stderr)
+
+    # Расхождение версий — событие (§21, «Обновление ленивое»; таблица
+    # событий спеки волны 5). Объявляется, но не исполняется: миграция из
+    # хука мутировала бы дерево на каждом старте и убила бы разводку
+    # «незакоммиченное значит, что здесь работал человек», на которой стоят
+    # и эта ветка, и `Stop`. В stdout, а не в stderr: адресат — агент,
+    # а в контекст сессии попадает только stdout.
+    divergence = manifest.divergence(root)
+    if divergence is not None:
+        print(divergence)
 
     if not state.dirty:
         # Ни `None`, ни пустой список поводом для коммита не являются, и

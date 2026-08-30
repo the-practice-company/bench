@@ -5,6 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from scripts import manifest
+
 ROOT = Path(__file__).resolve().parent.parent
 SHIM = ROOT / "hooks" / "hook.sh"
 
@@ -982,6 +984,70 @@ class TestSessionStart(unittest.TestCase):
         self.assertNotIn('"-A"', source)
         self.assertNotIn("'-A'", source)
         self.assertNotIn("--all", source)
+
+
+class TestRecipeVersionAtStart(unittest.TestCase):
+    """Расхождение версий — событие старта сессии (§21, спека волны 5).
+
+    Строка печатается, дерево не трогается, ход не блокируется. Ровно так
+    §21 и говорит: «Инстанс новее плагина — сообщение, не блок»; а миграцию
+    хук не запускает потому, что хук, мутирующий дерево на старте, ломает
+    разводку «незакоммиченное значит, что здесь работал человек», на которой
+    стоят и он сам, и `Stop`.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = make_repo(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def _payload(self):
+        return {"hook_event_name": "SessionStart", "cwd": str(self.root),
+                "session_id": "s1", "source": "startup"}
+
+    def _marker(self, text):
+        (self.root / ".twinkle-repo-builder").write_text(text, encoding="utf-8")
+        commit_all(self.root)
+
+    def test_a_divergent_version_is_printed_into_the_context(self):
+        """Фикстура несёт версию `1`, пакет — свою: расхождение налицо.
+
+        В stdout, а не в stderr: адресат строки — агент, а в контекст сессии
+        попадает только stdout.
+        """
+        self._marker('{"version": "0.0.1"}')
+        result = call("SessionStart", self._payload(), self.root)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("версии разошлись", result.stdout)
+        self.assertIn("0.0.1", result.stdout)
+
+    def test_the_same_version_says_nothing_about_versions(self):
+        """Строка на каждом старте, когда чинить нечего, — шум, который
+        читатель перестаёт читать первым же."""
+        self._marker(json.dumps({"version": manifest.plugin_version()}))
+        result = call("SessionStart", self._payload(), self.root)
+        self.assertEqual(result.returncode, 0)
+        self.assertNotIn("версии разошлись", result.stdout)
+
+    def test_a_broken_marker_is_named_and_the_hook_goes_on(self):
+        """§22: битый JSON — не отсутствие. Файл есть, значит мы внутри
+        контекстного репозитория; сообщение есть, гейты работают как обычно,
+        обновление версии не запускается."""
+        self._marker("{не json")
+        result = call("SessionStart", self._payload(), self.root)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("сравнивать не с чем", result.stdout)
+        self.assertIn("inbox", result.stdout)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_the_comparison_writes_no_file(self):
+        """Сверка версий вычисляется, а не складывается на диск: хук старта
+        на диск не пишет (решение волны 2)."""
+        self._marker('{"version": "0.0.1"}')
+        before_status, before_tree = status_of(self.root), tree_of(self.root)
+        call("SessionStart", self._payload(), self.root)
+        self.assertEqual(status_of(self.root), before_status)
+        self.assertEqual(tree_of(self.root), before_tree)
 
 
 class TestCheckpointArithmetic(unittest.TestCase):
