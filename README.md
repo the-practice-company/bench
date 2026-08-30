@@ -8,6 +8,7 @@ context window.
 | Plugin | What it is |
 |---|---|
 | **[baton](plugins/baton)** | Keeps goal and state coherent across multi-day autonomous runs. Durable state in git, one-command checkpoint, verified resume after compaction, an append-only decision journal, and unattended execution gated against the run's own rules. |
+| **[twinkle-repo-builder](plugins/twinkle-repo-builder)** | Creates, adopts and maintains context repositories — markdown domains for a company, a project, a hiring pipeline. Form is held by executable gates rather than discipline: nothing is a rule here unless a check fails on it. Obsidian is the human frontend, Claude Code the agent. |
 
 ## Install
 

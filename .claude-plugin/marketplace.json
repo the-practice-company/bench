@@ -12,6 +12,12 @@
       "description": "Durable run state, checkpoint, resume and decision journal for multi-day autonomous sessions",
       "category": "development",
       "source": "./plugins/baton"
+    },
+    {
+      "name": "twinkle-repo-builder",
+      "description": "Creates, adopts and maintains context repositories: markdown domains kept in shape by executable gates, with Obsidian as the human frontend",
+      "category": "development",
+      "source": "./plugins/twinkle-repo-builder"
     }
   ]
 }
