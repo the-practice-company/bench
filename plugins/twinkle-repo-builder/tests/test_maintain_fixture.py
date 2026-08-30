@@ -17,8 +17,10 @@ import unittest
 from pathlib import Path
 
 from scripts.adopt import dates
-from tests.maintain_fixture import (ABSENT, EDITED, EXTRA, FIXTURE, DOC,
-                                    SCAFFOLD, TOUCHED, materialise)
+from tests.maintain_fixture import (ABSENT, BINARY, BINARY_BYTES, EDITED,
+                                    EXTRA, FIXTURE, DOC, ROOT, SCAFFOLD,
+                                    TOUCHED, materialise)
+from tests.test_fixtures import tracked
 
 # Точный состав посаженного. Потерянное свойство обязано уронить набор здесь,
 # а не тихо ослабить одиннадцать задач ниже. Сверяется с `ЧТО-ПОСАЖЕНО.md`
@@ -92,20 +94,40 @@ class TestStored(unittest.TestCase):
         self.assertNotEqual(same, [])
 
     def test_the_package_carries_exactly_these_files_beyond_the_scaffold(self):
-        """Второй половине фикстуры — посаженному — тоже нужен точный список."""
+        """Второй половине фикстуры — посаженному — тоже нужен точный список.
+
+        Список сверяется с `git ls-files`, а не с рабочим деревом. Пока
+        мерили деревом, `EXTRA` заявляла `sources/dump.bin`, которого в
+        пакете не было ни дня: файл подпадает под `sources/*.bin` в
+        `.gitignore` фикстуры, git его не берёт, и свежий клон терял шесть
+        тестов. Дерево — то, что лежит у автора; пакет — то, что уезжает.
+        """
         from_scaffold = {p.relative_to(SCAFFOLD).as_posix()
                          for p in SCAFFOLD.rglob("*") if p.is_file()}
-        found = sorted(p.relative_to(FIXTURE).as_posix()
-                       for p in FIXTURE.rglob("*")
-                       if p.is_file()
-                       and p.relative_to(FIXTURE).as_posix() not in from_scaffold)
+        prefix = FIXTURE.relative_to(ROOT).as_posix() + "/"
+        found = sorted(rel for rel in (name[len(prefix):]
+                                       for name in tracked(FIXTURE))
+                       if rel not in from_scaffold)
         self.assertEqual(found, sorted(EXTRA))
 
     def test_the_binary_is_not_decodable_as_text(self):
         """«Игнорируемый бинарь» — свойство, а не украшение: слой формы обязан
-        назвать его, не пытаясь прочитать."""
+        назвать его, не пытаясь прочитать.
+
+        Утверждается о константе, а не о файле на диске: файла в пакете нет,
+        и чтение его отсюда и было тем, что делало набор незелёным в клоне.
+        """
         with self.assertRaises(UnicodeDecodeError):
-            (FIXTURE / "sources" / "dump.bin").read_text(encoding="utf-8")
+            BINARY_BYTES.decode("utf-8")
+
+    def test_the_package_does_not_carry_the_generated_binary(self):
+        """Обратная сторона `BINARY`: файл собирается, значит в пакете его
+        нет. Сторожит от `git add -f` — единственного хода, которым ловушку
+        можно вернуть: у того, кто его сделает, всё зелено, а клон снова
+        теряет шесть тестов. Тогда краснеет здесь."""
+        self.assertEqual(
+            [rel for rel in tracked(FIXTURE) if rel.endswith(".bin")], [])
+        self.assertFalse((FIXTURE / BINARY).exists())
 
 
 class TestMaterialised(unittest.TestCase):
@@ -134,10 +156,13 @@ class TestMaterialised(unittest.TestCase):
             self.assertEqual(records, [], rel)
 
     def test_the_ignored_binary_is_ignored_and_present(self):
-        out = subprocess.run(["git", "check-ignore", "sources/dump.bin"],
+        """Оба свойства сразу: файл в дереве есть, а git его не несёт. Без
+        первого нечего предъявить `unreferenced-ignored-binary`, без второго
+        предикат не срабатывает вовсе."""
+        out = subprocess.run(["git", "check-ignore", BINARY],
                              cwd=str(self.root), capture_output=True, text=True)
         self.assertEqual(out.returncode, 0)
-        self.assertTrue((self.root / "sources" / "dump.bin").exists())
+        self.assertEqual((self.root / BINARY).read_bytes(), BINARY_BYTES)
 
     def test_the_tree_has_a_history_not_a_single_commit(self):
         """Слой спроса меряет последним коммитом, затронувшим путь. Один
