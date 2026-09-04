@@ -1,0 +1,17 @@
+{
+  "name": "workflow-routing",
+  "description": "Model-routing policy for the Workflow tool: every dispatched agent names a cheaper tier than the orchestrator, and stock workflows are materialized and pinned before launch instead of run by name",
+  "version": "0.1.0",
+  "author": {
+    "name": "Artem Kononov",
+    "email": "artemkononov2000@gmail.com"
+  },
+  "license": "MIT",
+  "keywords": [
+    "workflow",
+    "orchestration",
+    "model-routing",
+    "cost",
+    "subagents"
+  ]
+}

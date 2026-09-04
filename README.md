@@ -9,6 +9,7 @@ context window.
 |---|---|
 | **[baton](plugins/baton)** | Keeps goal and state coherent across multi-day autonomous runs. Durable state in git, one-command checkpoint, verified resume after compaction, an append-only decision journal, and unattended execution gated against the run's own rules. |
 | **[twinkle-repo-builder](plugins/twinkle-repo-builder)** | Creates, adopts and maintains context repositories — markdown domains for a company, a project, a hiring pipeline. Form is held by executable gates rather than discipline: nothing is a rule here unless a check fails on it. Obsidian is the human frontend, Claude Code the agent. |
+| **[workflow-routing](plugins/workflow-routing)** | Model-routing policy for the `Workflow` tool, and a procedure for running stock workflows without their workers inheriting the session tier. Written from the July 2026 deep-research incident; one copy here instead of a dozen drifting ones. |
 
 ## Install
 

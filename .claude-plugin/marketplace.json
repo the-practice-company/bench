@@ -18,6 +18,12 @@
       "description": "Creates, adopts and maintains context repositories: markdown domains kept in shape by executable gates, with Obsidian as the human frontend",
       "category": "development",
       "source": "./plugins/twinkle-repo-builder"
+    },
+    {
+      "name": "workflow-routing",
+      "description": "Model-routing policy for the Workflow tool and a materialize-and-pin procedure for stock workflows, so dispatched agents never inherit the orchestrator's tier",
+      "category": "development",
+      "source": "./plugins/workflow-routing"
     }
   ]
 }
