@@ -27,7 +27,10 @@ assert_contains "$(cat "$MARKETPLACE")" '"./plugins/baton"' "marketplace points 
 plugin_names="$(python3 -c \
     "import json,sys; print(' '.join(p['name'] for p in json.load(open(sys.argv[1]))['plugins']))" \
     "$MARKETPLACE")"
-assert_equals "$plugin_names" "baton" "marketplace ships baton and nothing else"
+# Every entry is a local ./plugins/ directory; the list is the full set of
+# them, so a third-party entry cannot appear without this line changing.
+assert_equals "$plugin_names" "baton twinkle-repo-builder workflow-routing" \
+    "marketplace ships the local plugins and nothing else"
 assert_not_contains "$(cat "$MARKETPLACE")" 'obra/superpowers' \
     "marketplace does not re-export superpowers"
 
