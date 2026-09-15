@@ -35,10 +35,15 @@ VOCABULARIES = {"pipeline": ("open", "decided", "revisited")}
 
 # Форма вида — та же, что у фикстур волны 1 (`fixtures/green/decisions/
 # views.base`): `filters` верхним уровнем, `views` со `groupBy` и `order`.
-# Форма с блоком `sort:` разобрана и **отвергнута**: `_identifiers` в
-# `scripts/basefile.py` вытаскивает из неё `property`, `direction` и `DESC`
-# как имена полей, и гейт frontmatter начинает требовать их от каждой
-# записи. Проверено разбором, а не выведено из документации.
+# `groupBy` пишется объектом (`property` + `direction`), а не строкой: строку
+# Obsidian не разбирает вовсе — «Unable to parse your base file: "groupBy"
+# must be a object in view», — и вид не показывается. Наблюдено 2026-09-15 на
+# файле, выпущенном этим же генератором.
+#
+# Прежний вывод — «форма с `property`/`direction` отвергнута, потому что гейт
+# начинает требовать их от каждой записи» — чинил симптом: требовал их не
+# YAML, а `_identifiers`, читавший структурированный блок как выражение.
+# Разбор этой формы держит `_structured` в `scripts/basefile.py`.
 _VIEW = {
     "journal": ("По дате", "created"),
     "pipeline": ("По статусу", "status"),
@@ -72,7 +77,9 @@ def _views(collection, archetype):
         "views:",
         "  - type: table",
         "    name: %s" % name,
-        "    groupBy: %s" % group,
+        "    groupBy:",
+        "      property: %s" % group,
+        "      direction: ASC",
         "    order:",
         "      - created",
         "",

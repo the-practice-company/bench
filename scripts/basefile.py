@@ -23,6 +23,11 @@ _SQUOTED_LITERAL = re.compile(r"(?:!=|==)\s*'[^']*'")
 # Где упомянуто поле — таково требование к нему (секция 14).
 _REQUIRED_KEYS = ("filters", "sort", "groupBy")
 _KNOWN_KEYS = ("order", "columnSize")
+# Ключи, значение которых — структурированный YAML, а не выражение: поле там
+# ровно одно и лежит значением ключа `property`. Читать их как выражение —
+# требовать `property`, `direction` и `ASC` от каждой записи коллекции.
+_STRUCTURED_KEYS = ("sort", "groupBy")
+_FLOW_PUNCTUATION = re.compile(r"[{},]")
 
 _STOPWORDS = {
     "and", "or", "not", "file", "note", "inFolder", "hasProperty",
@@ -63,6 +68,45 @@ def _identifiers(chunk):
 
     idents = {m.group(0) for m in _IDENT.finditer(chunk)} - _STOPWORDS
     return idents | props
+
+
+def _structured(chunk):
+    """Имена полей из структурированного блока (`sort`, `groupBy`).
+
+    Форма, которую принимает Obsidian, — YAML, а не DQL-выражение:
+
+        groupBy:
+          property: status
+          direction: ASC
+
+    Поле здесь ровно одно — значение `property`. Остальные ключи называют не
+    поля, а как по ним идти; `_identifiers` вытаскивал из этого блока все
+    четыре идентификатора, и гейт frontmatter требовал `property`,
+    `direction` и `ASC` от каждой записи.
+
+    Голый скаляр (`groupBy: status`, `- created`) — легаси-форма, которой
+    выпущены уже созданные репозитории: она читается как раньше, тем же
+    `_identifiers`, чтобы `file.name` и имена формул судились одним правилом.
+    """
+    kept = []
+    # Потоковое отображение (`{property: status, direction: ASC}`) — тот же
+    # YAML в одну строку; разбор построчный, поэтому строк из неё и делаем.
+    for line in _FLOW_PUNCTUATION.sub("\n", chunk).split("\n"):
+        stripped = line.strip().lstrip("-").strip()
+        if not stripped:
+            continue
+        if ":" in stripped:
+            key, value = stripped.split(":", 1)
+            if key.strip() != "property":
+                continue
+            stripped = value.strip()
+        kept.append(stripped)
+    return _identifiers("\n".join(kept))
+
+
+def _fields(text, key):
+    reader = _structured if key in _STRUCTURED_KEYS else _identifiers
+    return reader(_section(text, key))
 
 
 def _section(text, key):
@@ -108,9 +152,9 @@ def parse_base(text):
     required = set()
     known = set()
     for key in _REQUIRED_KEYS:
-        required |= _identifiers(_section(text, key))
+        required |= _fields(text, key)
     for key in _KNOWN_KEYS:
-        known |= _identifiers(_section(text, key))
+        known |= _fields(text, key)
 
     # Формула — не поле записи. Её имя вычитается, а поля из её выражения
     # наследуют уровень требования того места, где формула употреблена.

@@ -110,3 +110,42 @@ class TestBaseFile(unittest.TestCase):
         base = parse_base(text)
         self.assertEqual(base.required, {"stage"})
         self.assertNotIn("done", base.required)
+
+    def test_groupby_as_an_object_names_one_field_not_three(self):
+        """Форма, которую Obsidian принимает: `property` и `direction` —
+        ключи YAML, а не имена полей. Разобранные как поля, они требуют
+        `property`, `direction` и `ASC` от каждой записи коллекции."""
+        text = (
+            "views:\n"
+            "  - type: table\n"
+            "    groupBy:\n"
+            "      property: status\n"
+            "      direction: ASC\n"
+        )
+        base = parse_base(text)
+        self.assertEqual(base.required, {"status"})
+
+    def test_groupby_as_a_flow_mapping_names_the_same_field(self):
+        """Потоковая форма — тот же YAML в одну строку. Тихо потерять
+        требование хуже, чем потребовать лишнее: гейт ослаб бы, выглядя
+        рабочим."""
+        text = (
+            "views:\n"
+            "  - type: table\n"
+            "    groupBy: {property: status, direction: ASC}\n"
+        )
+        base = parse_base(text)
+        self.assertEqual(base.required, {"status"})
+
+    def test_sort_as_a_list_of_objects_names_the_sorted_field(self):
+        """`sort` — тот же структурированный YAML, что и `groupBy`, только
+        списком: поле берётся из `property`, а не из каждого идентификатора."""
+        text = (
+            "views:\n"
+            "  - type: table\n"
+            "    sort:\n"
+            "      - property: created\n"
+            "        direction: DESC\n"
+        )
+        base = parse_base(text)
+        self.assertEqual(base.required, {"created"})
