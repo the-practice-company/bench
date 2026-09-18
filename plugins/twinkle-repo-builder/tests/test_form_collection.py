@@ -158,6 +158,18 @@ class TestForm(unittest.TestCase):
             "registry": (["type"], ["created"]),
         })
 
+    def test_the_view_groups_by_an_object_and_not_by_a_string(self):
+        """Наблюдено на выпущенном `views.base`: Obsidian отказывается
+        разбирать файл целиком — «Unable to parse your base file: "groupBy"
+        must be a object in view» — и вид не показывается вовсе. Движка
+        Obsidian в наборе нет и не будет (незыблемое №5), поэтому
+        утверждается форма, а не рендер."""
+        self._make("pipeline")
+        text = ((self.root / "projects" / "deals" / "views.base")
+                .read_text(encoding="utf-8"))
+        self.assertIn("    groupBy:\n      property: status\n"
+                      "      direction: ASC\n", text)
+
     def test_both_gates_are_silent_on_what_it_produced(self):
         """Форма, которую производит плагин, обязана проходить гейты плагина.
         Красное здесь — дефект пакета, а не инстанса."""

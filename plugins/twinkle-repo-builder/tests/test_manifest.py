@@ -128,9 +128,14 @@ class TestDivergence(unittest.TestCase):
     def test_the_same_version_spelled_differently_is_still_named(self):
         """Маркер обязан нести версию манифеста, а не эквивалентную ей:
         сравнение формы идёт побайтово, и «1» вместо «1.0.0» — расхождение
-        формы, даже когда номер тот же."""
+        формы, даже когда номер тот же.
+
+        Написание выводится из манифеста, а не стоит литералом: `"0.1"`
+        здесь был равен версии только до первого бампа, и релиз `0.1.1`
+        покрасил тест, не тронув ни строки продукта."""
+        respelled = manifest.plugin_version() + ".0"
         with tempfile.TemporaryDirectory() as tmp:
-            root = instance(tmp, '{"version": "0.1"}')
+            root = instance(tmp, json.dumps({"version": respelled}))
             line = manifest.divergence(root)
         self.assertIsNotNone(line)
         self.assertIn("написаны по-разному", line)
